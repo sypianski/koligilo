@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>koligilo</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell" id="shell">
+  <aside class="side" data-drag>
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="12" r="5.2"/><circle cx="15" cy="12" r="5.2"/><path class="gap" d="M13.26 14.98A5.2 5.2 0 0 1 9.9 17.12"/><path d="M13.5 14.6A5.2 5.2 0 0 1 9.45 17.18"/></svg>
+      <span>koligilo</span>
+    </div>
+    <nav id="nav" class="nav" aria-label="Widoki panelu"></nav>
+  </aside>
+
+  <main id="app" class="content" tabindex="-1">
+    <p class="loading">Ładowanie…</p>
+  </main>
+
+  <footer class="status" role="status" aria-live="polite">
+    <div id="conn" class="conn" hidden></div>
+    <span id="sync" class="sync"></span>
+    <span class="spacer"></span>
+    <span class="keys" aria-hidden="true"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>7</kbd> widoki</span>
+    <span id="ver"></span>
+  </footer>
+</div>
+
+<script src="lua.js"></script>
+<script src="koreader_opts.js"></script>
+<script src="preview.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
