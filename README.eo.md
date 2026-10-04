@@ -10,6 +10,8 @@
   ![Legilo](https://img.shields.io/badge/reader-KOReader-lightgrey)
   ![Interfaco](https://img.shields.io/badge/interface-Polski-orange)
 
+  <p><a href="https://sypian.ski/koligilo/">Retejo</a></p>
+
   <p><a href="README.md">English</a> · <a href="README.pl.md">Polski</a> · <b>Esperanto</b></p>
 </div>
 

@@ -10,6 +10,8 @@
   ![Czytnik](https://img.shields.io/badge/reader-KOReader-lightgrey)
   ![Interfejs](https://img.shields.io/badge/interface-Polski-orange)
 
+  <p><a href="https://sypian.ski/koligilo/">Strona aplikacji</a></p>
+
   <p><a href="README.md">English</a> · <b>Polski</b> · <a href="README.eo.md">Esperanto</a></p>
 </div>
 
