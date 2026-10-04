@@ -66,7 +66,7 @@ Tylko parowanie sześciocyfrowym kodem z innej sieci korzysta z punktu kontaktow
 
 - **Własny serwer.** Zamiast komputera serwerem może być VPS (`koligilo serve`). Dane przenoszą się między nimi bez ponownego parowania czytników. Szczegóły: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md).
 - **Wtyczki.** Galeria wtyczek KOReadera z GitHuba, przypiętych do konkretnego commita. Instalacja, aktualizacja i usunięcie wtyczki dzieją się dopiero po potwierdzeniu na czytniku (KOReader 2025.08 lub nowszy).
-- **Czego koligilo nie robi.** Nie przenosi książek ani postępu czytania. Postęp i statystyki dalej synchronizują mechanizmy KOReadera; koligilo rozwozi tylko ich konfigurację.
+- **Czego koligilo nie robi.** Nie przenosi książek ani postępu czytania. Jak je synchronizujesz, zależy od Ciebie (np. wbudowana synchronizacja postępu w KOReaderze albo Syncthing); koligilo zajmuje się tylko ustawieniami.
 
 ## Uwagi
 

@@ -68,7 +68,7 @@ Only pairing with a 6-digit code from another network uses a rendezvous point at
 
 - **Your own server.** Instead of the computer, a VPS can be the server (`koligilo serve`). Data moves between the two without pairing the readers again. Details: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md) (Polish).
 - **Plugins.** A gallery of KOReader plugins from GitHub, pinned to a commit. Installing, updating or removing a plugin happens only after you confirm it on the reader (KOReader 2025.08 or newer).
-- **What koligilo does not do.** It does not move books or reading progress. Progress and statistics keep syncing through KOReader's own mechanisms; koligilo only distributes their configuration.
+- **What koligilo does not do.** It does not move books or reading progress. How you sync those is up to you (for example KOReader's built-in progress sync, or Syncthing); koligilo only handles settings.
 
 ## Feedback
 
