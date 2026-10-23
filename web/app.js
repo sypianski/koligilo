@@ -6,6 +6,23 @@
 "use strict";
 
 const app = document.getElementById("app");
+
+// Zakładki wewnętrzne widoku „Wtyczki” (TASK-19; TASK-26 dodał „Ustawienia wtyczek”).
+// Stałe stoją PRZED S, bo S.pluginTab czyta zapamiętany wybór już przy
+// inicjalizacji: `const` zadeklarowany niżej dawał tu ReferenceError (TDZ),
+// połknięty przez try/catch, więc zapamiętana zakładka nigdy nie wracała po
+// przeładowaniu strony.
+const PLUGSET = "ustawienia-wtyczek"; // id zakładki z ustawieniami samych wtyczek (nie koliduje z widokiem „ustawienia” = Aplikacja)
+const PLUGIN_TABS = [["urzadzenia", "Wg urządzeń"], ["wtyczki", "Wg wtyczek"], ["galeria", "Galeria"], [PLUGSET, "Ustawienia wtyczek"]];
+const PLUGTAB_KEY = "koligilo.pluginTab";
+function pluginTabGet() {
+  try {
+    const t = localStorage.getItem(PLUGTAB_KEY);
+    return PLUGIN_TABS.some(([id]) => id === t) ? t : "urzadzenia";
+  } catch { return "urzadzenia"; }
+}
+function pluginTabSet(id) { try { localStorage.setItem(PLUGTAB_KEY, id); } catch {} }
+
 const S = {
   mode: null,          // "desktop" | "serve"
   local: null,         // /api/local/config: {mode, chosen, server, public_url, moved_to, …}
@@ -19,6 +36,8 @@ const S = {
   usb: null,           // {readers, adb} — tylko tryb desktop
   usbBusy: null,       // id czytnika w trakcie parowania
   usbMsg: null,
+  addTab: null,        // zakładka karty „Dodaj czytnik”: "usb" | "code" | "plugin" (null = zapamiętana lub domyślna, TASK-29)
+  devEdit: null,       // otwarty pasek pod wierszem czytnika: {id, mode: "rename"|"forget", name, busy, error} (TASK-29)
   rvCode: "",          // wpisywany kod z czytnika
   rvFound: null,       // {name, platform, ...} po sprawdzeniu kodu
   rvMsg: null,
@@ -36,11 +55,12 @@ const S = {
   valAdv: false,       // sekcja „Zaawansowane” rozwinięta?
   valOpen: {},         // rozwinięte kategorie/opisy w widoku ustawień: klucz -> true
   ctl: {},             // szkice pól liczbowych/tekstowych kontrolek: id(+część) -> tekst
+  pad: { layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
 
   // wtyczki (TASK-10/11); TASK-19: jedna pozycja nawigacji z zakładkami
   // wewnętrznymi (S.pluginTab), TASK-20: gwiazdki ulubionych.
   plugins: null,       // /api/admin/plugins → lista PluginVersion
-  pluginTab: pluginTabGet(), // "urzadzenia" | "wtyczki" | "galeria" — zapamiętane lokalnie
+  pluginTab: pluginTabGet(), // id z PLUGIN_TABS: "urzadzenia" | "wtyczki" | "galeria" | "ustawienia-wtyczek" — zapamiętane lokalnie
   favBusy: null,       // klucz ulubionej w trakcie zapisu
   favOnly: false,      // filtr „Tylko ulubione” w zakładce „Wg wtyczek” (TASK-20 AC2)
   gallery: null,       // /api/admin/gallery → {repos, total, page, updated_at, note, stale}
@@ -82,20 +102,12 @@ function h(tag, attrs, ...kids) {
 
 // ---------------------------------------------------------------- powłoka aplikacji (TASK-16)
 // Ikony: własne ścieżki SVG (stałe napisy, żadnych danych z serwera), bez bibliotek.
+// Tylko motyw — zakładki widoków mają wyłącznie napisy (z samych ikon nie było wiadomo, co jest gdzie).
 
 const ICONS = {
-  urzadzenia: '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 7.5h6M9 11h6M9 14.5h3.5"/>',
-  grupy: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
-  konta: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M15.5 7.5l3 3"/>',
-  wspolne: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
-  wtyczki: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
-  galeria: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
-  serwer: '<rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/>',
-  jak: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.6 2.3c-.7.3-1.2.9-1.2 1.6v.5M12 17h.01"/>',
   auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>',
   light: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
   dark: '<path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/>',
-  ustawienia: '<circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.6M12 18.4V21M21 12h-2.6M5.6 12H3M18.02 5.98l-1.84 1.84M7.82 16.18l-1.84 1.84M18.02 18.02l-1.84-1.84M7.82 7.82L5.98 5.98"/>',
 };
 function icon(name) {
   const s = h("span", { class: "ico", "aria-hidden": "true" });
@@ -107,7 +119,9 @@ function icon(name) {
 // (dawne „Ustawienia” w stopce paska) to zwykła zakładka; „Ustawienia czytników”
 // to dawne „Wspólne ustawienia” — dwie różne rzeczy, więc dwie różne nazwy.
 // TASK-19: "Wtyczki" i dawna "Galeria wtyczek" to teraz jedna pozycja z
-// zakładkami wewnętrznymi (S.pluginTab, patrz pluginsTab()).
+// zakładkami wewnętrznymi (S.pluginTab, patrz pluginsTab()). TASK-26: „Ustawienia
+// czytników” to ustawienia urządzenia/KOReadera; ustawienia samych wtyczek (np.
+// mapowanie przycisków KOPada) żyją w Wtyczki → „Ustawienia wtyczek”.
 const VIEWS = [
   ["urzadzenia", "Urządzenia", st => st.devices.length],
   ["grupy", "Co synchronizować"],
@@ -118,12 +132,18 @@ const VIEWS = [
   ["ustawienia", "Aplikacja"],
 ];
 
-// Zakładka wtyczek zapamiętana w tej przeglądarce (wzorzec jak themeGet/Set).
-const PLUGTAB_KEY = "koligilo.pluginTab";
-function pluginTabGet() { try { return localStorage.getItem(PLUGTAB_KEY) || "urzadzenia"; } catch { return "urzadzenia"; } }
-function pluginTabSet(id) { try { localStorage.setItem(PLUGTAB_KEY, id); } catch {} }
+// (Zakładka wewnętrzna „Wtyczek” zapamiętana w tej przeglądarce: PLUGTAB_KEY, na górze pliku.)
 
 // Motyw: "auto" (wg prefers-color-scheme) | "light" (papier) | "dark" (odwrócony e-ink).
+// Podpis pod nagłówkiem widoku (TASK-29): jedna linia zamiast karty ze wstępem. Widok bez wpisu go nie ma.
+function plPl(n, one, few, many) {
+  return n === 1 ? one : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? few : many;
+}
+const VIEW_SUB = {
+  urzadzenia: st => st.devices.length === 0 ? "Nie połączono jeszcze żadnego czytnika"
+    : `${st.devices.length} ${plPl(st.devices.length, "czytnik połączony", "czytniki połączone", "czytników połączonych")}`,
+};
+
 const THEME_KEY = "koligilo.theme";
 function themeGet() { try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; } }
 function themeApply(t) {
@@ -155,20 +175,44 @@ themeApply(themeGet());
 // Kreator tylko przy pierwszym uruchomieniu — wbudowany serwer działa już wtedy.
 function needsWizard() { return S.mode === "desktop" && !(S.local?.chosen && S.local?.configured); }
 
+// Zakładki mają zawsze napis (bez samych ikon). Gdy pasek jest za wąski, przewija się
+// poziomo: przy zmianie widoku aktywna zakładka ląduje na środku, a przy zwykłym
+// odświeżeniu (co 3 s) zostaje tam, gdzie ją ustawił użytkownik. Przyciemniona krawędź
+// (.more-l / .more-r) mówi, że po tamtej stronie są kolejne zakładki.
+let navShownTab = null;
+function navFit() {
+  const nav = document.getElementById("nav");
+  nav.classList.toggle("more-l", nav.scrollLeft > 4);
+  nav.classList.toggle("more-r", nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 4);
+}
+document.getElementById("nav").addEventListener("scroll", navFit, { passive: true });
+window.addEventListener("resize", navFit);
+
 function renderNav() {
   const ready = !!S.state && !needsWizard() && !(S.mode === "serve" && !adminToken());
   document.getElementById("shell").classList.toggle("bare", !ready);
   const nav = document.getElementById("nav");
-  if (!ready) { nav.replaceChildren(); return; }
-  nav.replaceChildren(h("ul", {}, VIEWS.map(([id, label, count], i) => h("li", {},
-    h("button", {
-      type: "button", class: "nav-item", id: "nav-" + id, "data-view": id, "aria-label": label,
-      "aria-current": S.tab === id ? "page" : null, "aria-keyshortcuts": "Alt+" + (i + 1),
-      title: `${label} (Alt+${i + 1})`, onclick: () => showTab(id),
-    },
-      icon(id), h("span", { class: "label" }, label),
-      id === "urzadzenia" && S.state.pending.length > 0 && h("span", { class: "pend", title: "Czytnik czeka na połączenie" }),
-      count && h("span", { class: "count" }, count(S.state)))))));
+  if (!ready) { nav.replaceChildren(); navShownTab = null; navFit(); return; }
+  const keep = nav.scrollLeft;
+  nav.replaceChildren(h("ul", {}, VIEWS.map(([id, label, count], i) => {
+    const n = count ? count(S.state) : 0;
+    return h("li", {},
+      h("button", {
+        type: "button", class: "nav-item", id: "nav-" + id, "data-view": id, "aria-label": label,
+        "aria-current": S.tab === id ? "page" : null, "aria-keyshortcuts": "Alt+" + (i + 1),
+        title: `${label} (Alt+${i + 1})`, onclick: () => showTab(id),
+      },
+        h("span", { class: "label" }, label),
+        id === "urzadzenia" && S.state.pending.length > 0 && h("span", { class: "pend", title: "Czytnik czeka na połączenie" }),
+        n > 0 && h("span", { class: "count" }, n)));
+  })));
+  nav.scrollLeft = keep;
+  if (navShownTab !== S.tab) {
+    const cur = nav.querySelector('[aria-current="page"]');
+    if (cur) nav.scrollLeft = cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2;
+    navShownTab = S.tab;
+  }
+  navFit();
 }
 
 function renderSync() {
@@ -179,6 +223,28 @@ function renderSync() {
 
 function explain(...paras) {
   return h("div", { class: "explain" }, paras.map(p => h("p", {}, p)));
+}
+
+// Wstęp, który po przeczytaniu tylko zabiera miejsce nad treścią: <details> z jednozdaniowym
+// nagłówkiem (zawiera sedno, więc zwinięty dalej coś mówi). Domyślnie rozwinięty, dopóki
+// użytkownik go nie zwinie; wybór zapamiętany w tej przeglądarce (localStorage), a gdy
+// storage nie działa — w pamięci strony, żeby odświeżenie co 3 s nie rozwijało go z powrotem.
+const FOLD_KEY = "koligilo.fold.";
+const foldMem = {};
+function foldOpen(key) {
+  if (key in foldMem) return foldMem[key];
+  try { return localStorage.getItem(FOLD_KEY + key) !== "0"; } catch { return true; }
+}
+function explainFold(key, title, ...paras) {
+  return h("details", {
+    class: "explain fold", open: foldOpen(key),
+    ontoggle: ev => {
+      const now = ev.target.open;
+      if (now === foldOpen(key)) return;
+      foldMem[key] = now;
+      try { localStorage.setItem(FOLD_KEY + key, now ? "1" : "0"); } catch {}
+    },
+  }, h("summary", {}, title), paras.map(p => h("p", {}, p)));
 }
 
 function ago(iso) {
@@ -261,14 +327,18 @@ async function refresh() {
   try {
     S.state = await api("GET", "/api/admin/state");
     S.error = null;
+    const plugSet = S.tab === "wtyczki" && S.pluginTab === PLUGSET; // Wtyczki → Ustawienia wtyczek (TASK-26)
     if (S.tab === "wspolne") await valLoadFull();
+    if (plugSet) await padLoadFull(); // pełny padmap (565 znaków) przekracza podgląd 400 znaków
     if (S.tab === "konta") {
       try { S.acc = await api("GET", "/api/admin/accounts"); } catch (e) { S.acc = null; S.error = e.message; }
     }
-    if (S.tab === "wtyczki") {
+    // lista wtyczek, aktualizacje i galeria są potrzebne tylko w pozostałych zakładkach —
+    // „Ustawienia wtyczek” odświeżają się w tle co 3 s i nie ma sensu pobierać ich za każdym razem
+    if (S.tab === "wtyczki" && !plugSet) {
       try { S.plugins = (await api("GET", "/api/admin/plugins")).plugins; } catch (e) { S.plugins = null; S.error = e.message; }
     }
-    if (S.tab === "wtyczki" && !S.galUpdates) {
+    if (S.tab === "wtyczki" && !plugSet && !S.galUpdates) {
       try { S.galUpdates = await api("GET", "/api/admin/gallery/updates"); } catch (e) { S.galUpdates = null; S.error = e.message; }
     }
     if (S.tab === "wtyczki" && S.pluginTab === "galeria") {
@@ -635,7 +705,8 @@ function main() {
   // nawigację rysuje renderNav() w pasku zakładek; tu tylko nagłówek widoku
   const view = VIEWS.find(v => v[0] === S.tab) || VIEWS[0];
   return h("div", { class: "view", role: "region", "aria-labelledby": "view-title" },
-    h("header", { class: "view-head", "data-drag": true }, h("h1", { id: "view-title" }, view[1])),
+    h("header", { class: "view-head", "data-drag": true }, h("h1", { id: "view-title" }, view[1]),
+      VIEW_SUB[S.tab] && h("span", { class: "sub" }, VIEW_SUB[S.tab](st))),
     st.pending.map(pairBanner),
     S.error && h("p", { class: "err" }, S.error),
     { urzadzenia: devicesTab, grupy: groupsTab, konta: accountsTab, wspolne: valuesTab,
@@ -643,15 +714,17 @@ function main() {
 }
 
 function pairBanner(p) {
+  // TASK-29: zwarty baner — kod, nazwa i przyciski w jednej linii, zdanie ostrzegawcze zostaje
+  // (zatwierdzenie jest zawsze ręczne i wymaga porównania kodu z ekranem czytnika)
   return h("section", { class: "card pair", "aria-live": "polite" },
     h("div", { class: "code", "aria-label": "Kod parowania " + p.code.split("").join(" ") }, p.code),
     h("div", { class: "what" },
-      h("h3", {}, `„${p.name || p.model}” chce dołączyć`),
-      h("p", {}, [p.platform, p.ko_version && "KOReader " + p.ko_version].filter(Boolean).join(" · ")),
-      h("p", { class: "muted small" }, "Porównaj kod z tym na ekranie czytnika. Jeśli jest inny albo nikt teraz niczego nie łączy — odrzuć."),
-      h("div", { class: "row" },
-        h("button", { class: "primary", onclick: () => decide(p.id, true) }, "Kody się zgadzają — połącz"),
-        h("button", { onclick: () => decide(p.id, false) }, "Odrzuć"))));
+      h("h3", {}, `„${p.name || p.model}” chce dołączyć`,
+        h("span", { class: "muted small" }, " ", [p.platform, p.ko_version && "KOReader " + p.ko_version].filter(Boolean).join(" · "))),
+      h("p", { class: "muted small" }, "Porównaj kod z tym na ekranie czytnika. Jeśli jest inny albo nikt teraz niczego nie łączy — odrzuć.")),
+    h("div", { class: "row pair-acts" },
+      h("button", { class: "primary", onclick: () => decide(p.id, true) }, "Kody się zgadzają — połącz"),
+      h("button", { onclick: () => decide(p.id, false) }, "Odrzuć")));
 }
 
 async function decide(id, approve) {
@@ -664,25 +737,85 @@ async function decide(id, approve) {
 
 function devicesTab() {
   const devs = S.state.devices;
+  if (S.devEdit && !devs.some(d => d.id === S.devEdit.id)) S.devEdit = null; // czytnik zniknął (np. zapomniany gdzie indziej)
   return h("section", {},
-    explain(
-      "Czytniki połączone z tym serwerem. Każdy po połączeniu z Wi-Fi sam wysyła swoje zmiany i odbiera zmiany z pozostałych.",
-      "„Zapomnij” odcina urządzenie od synchronizacji — jego ustawienia zostają takie, jakie są."),
-    devs.length ? h("div", { class: "devices", role: "list", "aria-label": "Urządzenia", style: "margin-bottom:16px" }, devs.map(deviceCard)) : null,
-    codeCard(),
-    S.mode === "desktop" && usbCard(),
-    addDeviceCard(devs.length === 0));
+    devs.length ? devicesTable(devs) : null,
+    addReaderCard(devs.length === 0));
 }
 
-function codeCard() {
+// TASK-29: „Dodaj czytnik” to jedna karta, a zakładki nazywają sytuację czytnika, nie technikę:
+// kabel (plugin wgrywa się sam), czytnik z pluginem (kod albo wykrycie w sieci), czytnik bez pluginu
+// (najpierw instalacja). Dawniej to były trzy równorzędne karty, choć instalacja pluginu jest
+// warunkiem dla kodu i dla wykrycia w sieci, a kabel robi ją za użytkownika.
+const ADD_TAB_KEY = "koligilo.addTab";
+function addTabList() {
+  const t = [["code", "Czytnik ma plugin"], ["plugin", "Czytnik bez pluginu"]];
+  return S.mode === "desktop" ? [["usb", "Kabel USB"], ...t] : t; // kabel tylko w aplikacji na komputerze
+}
+function addTabCur() {
+  const list = addTabList();
+  let t = S.addTab;
+  if (!t) { try { t = localStorage.getItem(ADD_TAB_KEY); } catch {} }
+  return list.some(([id]) => id === t) ? t : list[0][0]; // domyślnie kabel („najprostsza droga”), bez niego kod
+}
+function showAddTab(id) {
+  S.addTab = id;
+  try { localStorage.setItem(ADD_TAB_KEY, id); } catch {}
+  return refresh(); // zakładka kabla potrzebuje świeżej listy czytników USB
+}
+function addTablist(cur) {
+  const list = addTabList();
+  return h("div", { class: "tabs", role: "tablist", "aria-label": "Jak dodać czytnik" },
+    list.map(([id, label], i) => h("button", {
+      type: "button", role: "tab", id: "addtab-" + id, "aria-selected": String(cur === id),
+      "aria-controls": "addpanel-" + id, tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
+      onclick: () => showAddTab(id),
+      onkeydown: ev => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
+        if (d == null && !home && !end) return;
+        ev.preventDefault();
+        const nid = list[home ? 0 : end ? list.length - 1 : (i + d + list.length) % list.length][0];
+        Promise.resolve(showAddTab(nid)).then(() => document.getElementById("addtab-" + nid)?.focus());
+      },
+    }, label)));
+}
+
+function addReaderCard(empty) {
+  const cur = addTabCur();
+  const to = (id, label) => h("button", { type: "button", class: "linkbtn", onclick: () => showAddTab(id) }, label);
+  const bodies = {
+    usb: () => usbBody(),
+    code: () => [
+      h("ol", { class: "steps" },
+        h("li", {}, "Na czytniku: ", h("b", {}, "Menu → Narzędzia → koligilo → Połącz z komputerem…")),
+        h("li", {}, "W tej samej sieci domowej czytnik sam znajdzie ten komputer — pojawi się tu prośba z czterocyfrowym kodem do porównania."),
+        h("li", {}, "W każdej innej sieci (także uczelnianej, hotelowej, przez VPN) czytnik pokaże sześciocyfrowy kod — wpisz go tutaj:",
+          codeForm()),
+        h("li", {}, "Na czytniku potwierdź pierwszą synchronizację. Gotowe.")),
+      // informacja o punkcie kontaktowym zostaje widoczna przy wpisywaniu kodu
+      h("p", { class: "muted small" },
+        "Kod przechodzi przez punkt kontaktowy koligilo.sypian.ski — serwer autora koligilo. Na czas parowania (najwyżej 10 minut, tylko w pamięci) trafia tam model czytnika oraz adres tego komputera i klucz dla czytnika; po odebraniu przez czytnik są kasowane. Ustawień ani książek ten serwer nie widzi. W tej samej sieci Wi-Fi albo po kablu parowanie go nie używa."),
+    ],
+    plugin: () => [
+      h("ol", { class: "steps" },
+        h("li", {}, "Zainstaluj na czytniku plugin: otwórz w przeglądarce czytnika ",
+          h("code", {}, serverURL() + "/koligilo.koplugin.zip"),
+          ", rozpakuj do ", h("code", {}, "koreader/plugins/"), " (na Androidzie: ", h("code", {}, "/sdcard/koreader/plugins/"), ") i uruchom KOReader ponownie."),
+        h("li", {}, "Gdy plugin jest już na czytniku, ", to("code", "przejdź do łączenia czytnika"), ".")),
+      S.mode === "desktop" && h("p", { class: "muted small" }, "Z kablem USB plugin wgra się sam — zobacz zakładkę ", to("usb", "Kabel USB"), "."),
+    ],
+  };
   return h("section", { class: "card", style: "margin-bottom:16px" },
-    h("h3", { style: "margin-top:0" }, "Dodaj czytnik kodem"),
-    h("p", { class: "muted small", style: "margin-top:0" },
-      "Na czytniku: Menu → Narzędzia → koligilo → Połącz z komputerem. Czytnik pokaże sześciocyfrowy kod — wpisz go tutaj. Działa z każdej sieci (także uczelnianej, hotelowej, przez VPN)."),
-    h("p", { class: "muted small" },
-      "Kod przechodzi przez punkt kontaktowy koligilo.sypian.ski — serwer autora koligilo. Na czas parowania (najwyżej 10 minut, tylko w pamięci) trafia tam model czytnika oraz adres tego komputera i klucz dla czytnika; po odebraniu przez czytnik są kasowane. Ustawień ani książek ten serwer nie widzi. W tej samej sieci Wi-Fi albo po kablu parowanie go nie używa."),
+    h("h3", { style: "margin-top:0" }, empty ? "Połącz pierwszy czytnik" : "Dodaj czytnik"),
+    empty && h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik po połączeniu z Wi-Fi sam wysyła swoje zmiany i odbiera zmiany z pozostałych."),
+    addTablist(cur),
+    h("div", { id: "addpanel-" + cur, role: "tabpanel", "aria-labelledby": "addtab-" + cur, tabindex: "0", class: "tabpanel" }, bodies[cur]()));
+}
+
+function codeForm() {
+  return h("div", { class: "codeform" },
     h("form", { class: "row", onsubmit: ev => { ev.preventDefault(); rvLookup(); } },
-      h("input", { type: "text", id: "f-rvcode", inputmode: "numeric", autocomplete: "off",
+      h("input", { type: "text", id: "f-rvcode", inputmode: "numeric", autocomplete: "off", "aria-label": "Sześciocyfrowy kod z czytnika",
         placeholder: "123 456", style: "max-width:180px;font:600 22px/1 var(--mono);letter-spacing:.12em",
         value: S.rvCode, oninput: ev => { S.rvCode = ev.target.value; } }),
       h("button", { type: "submit", disabled: S.rvBusy }, "Sprawdź kod")),
@@ -714,10 +847,9 @@ async function rvClaim() {
   S.rvBusy = false; refresh();
 }
 
-function usbCard() {
+function usbBody() {
   const readers = S.usb?.readers || [];
-  return h("section", { class: "card usb", style: "margin-bottom:16px" },
-    h("h3", { style: "margin-top:0" }, "Podłączony kablem"),
+  return h("div", { class: "usb" },
     h("p", { class: "muted small", style: "margin-top:0" },
       "Najprostsza droga: podłącz czytnik do tego komputera kablem USB. koligilo wgra plugin i zapisze na czytniku adres serwera — na czytniku zostaje tylko potwierdzić pierwszą synchronizację. Działa w każdej sieci, także uczelnianej."),
     !S.usb ? h("p", { class: "muted" }, "Szukam podłączonych czytników…")
@@ -747,34 +879,93 @@ async function pairUSB(r) {
   refresh();
 }
 
-function deviceCard(d) {
+// Stan synchronizacji czytnika (TASK-29): „cicho” = ostatnia synchronizacja starsza niż QUIET_DAYS.
+// Czytnik leżący w szufladzie przez weekend nie ma świecić, stąd tydzień. Korzysta z danych,
+// które serwer już zwraca (last_sync), więc nie dochodzi żadne pole.
+const QUIET_DAYS = 7;
+function syncHealth(d) {
   const ls = d.last_sync;
-  const sub = [[d.platform, d.model].filter(Boolean).join(" · ") || "?", "KOReader " + (d.ko_version || "?"),
-    ls ? `wysłał ${ls.sent}, pobrał ${ls.received}` : `połączony ${ago(d.paired_at)}`].join(" · ");
-  // wiersz jak pozycja spisu treści: nazwa … kropki … kiedy ostatnio synchronizował
-  return h("div", { class: "drow", role: "listitem" },
-    h("div", { class: "toc" },
-      h("span", { class: "dname" }, d.name),
-      h("span", { class: "dots", "aria-hidden": "true" }),
-      h("span", { class: "when" + (ls ? "" : " never"), title: "Ostatnio widziany " + ago(d.last_seen) },
-        ls ? ago(ls.at) : "jeszcze nie")),
-    h("div", { class: "dsub" },
-      h("span", { class: "dmeta" }, sub),
-      h("span", { class: "dact" },
-        h("button", { onclick: () => rename(d), "aria-label": "Zmień nazwę " + d.name }, "Zmień nazwę"),
-        h("button", { class: "danger", onclick: () => forget(d), "aria-label": "Zapomnij " + d.name }, "Zapomnij"))));
+  if (!ls) return { k: "na", text: "jeszcze nie synchronizował", title: "Połączony " + ago(d.paired_at) };
+  const days = Math.floor((Date.now() - new Date(ls.at)) / 86400000);
+  if (days >= QUIET_DAYS) return { k: "warn", text: `cicho od ${days} dni`, title: "Ostatnia synchronizacja: " + ago(ls.at) };
+  return { k: "ok", text: ago(ls.at), title: "Ostatnio widziany " + ago(d.last_seen) };
+}
+// kropka (kształt niesie stan bez koloru) + słowo; kropka jest dla czytników ekranu zbędna, bo słowo mówi to samo
+function healthCell(d) {
+  const x = syncHealth(d);
+  return h("span", { class: "hcell", title: x.title }, h("span", { class: "hdot " + x.k, "aria-hidden": "true" }), h("span", { class: "hword " + x.k }, x.text));
 }
 
-function addDeviceCard(empty) {
-  return h("section", { class: "card", style: "margin-top:16px" },
-    h("h3", { style: "margin-top:0" }, empty ? "Połącz pierwszy czytnik" : "Dodaj kolejny czytnik"),
-    h("ol", { class: "steps" },
-      h("li", {}, "Zainstaluj na czytniku plugin: otwórz w przeglądarce czytnika ",
-        h("code", {}, serverURL() + "/koligilo.koplugin.zip"),
-        ", rozpakuj do ", h("code", {}, "koreader/plugins/"), " (na Androidzie: ", h("code", {}, "/sdcard/koreader/plugins/"), ") i uruchom KOReader ponownie."),
-      h("li", {}, "Na czytniku: ", h("b", {}, "Menu → Narzędzia → koligilo → Połącz z komputerem…")),
-      h("li", {}, "W tej samej sieci domowej czytnik sam znajdzie ten komputer — pojawi się tu prośba z czterocyfrowym kodem do porównania. W każdej innej sieci czytnik pokaże sześciocyfrowy kod — wpisz go w polu „Dodaj czytnik kodem” powyżej."),
-      h("li", {}, "Na czytniku potwierdź pierwszą synchronizację. Gotowe.")));
+// TASK-29: urządzenia jako tabela — łatwo porównać wersje KOReadera i kiedy kto się synchronizował.
+// W wąskim oknie (≤ 620 px) wiersz rozpada się na „kartę” z etykietami (labelCells, jak tabele wtyczek).
+// Zmiana nazwy i „Zapomnij” otwierają pasek pod wierszem (S.devEdit), a nie systemowe okno:
+// stan edycji żyje w S, więc odświeżanie co 3 s go nie zamyka ani nie kasuje wpisanej nazwy.
+function devicesTable(devs) {
+  const rows = [];
+  for (const d of devs) {
+    rows.push(deviceRow(d));
+    if (S.devEdit && S.devEdit.id === d.id) rows.push(deviceEditRow(d));
+  }
+  const th = t => h("th", { scope: "col" }, t);
+  return h("div", { class: "card matrix-wrap", style: "margin-bottom:16px;padding:0" },
+    labelCells(h("table", { class: "matrix devtable", "aria-label": "Urządzenia" },
+      h("thead", {}, h("tr", {}, th("Nazwa"), th("Platforma · model"), th("KOReader"), th("Ostatnia synchronizacja"), th("Wysłał / pobrał"),
+        h("th", { scope: "col" }, h("span", { class: "sr" }, "Akcje")))),
+      h("tbody", {}, rows))));
+}
+
+function deviceRow(d) {
+  const ls = d.last_sync, E = S.devEdit && S.devEdit.id === d.id ? S.devEdit : null;
+  const act = (mode, label, cls) => h("button", {
+    type: "button", class: cls, id: `f-dev-${d.id}-${mode}`, "aria-expanded": String(!!E && E.mode === mode),
+    "aria-label": `${label} ${d.name}`, onclick: () => devEditStart(d, mode),
+  }, label);
+  return h("tr", {},
+    h("td", {}, h("b", { class: "dn" }, d.name)),
+    h("td", { class: "muted" }, [d.platform, d.model].filter(Boolean).join(" · ") || "?"),
+    h("td", {}, d.ko_version || "?"),
+    h("td", {}, healthCell(d)),
+    h("td", {}, ls ? `${ls.sent} / ${ls.received}` : "—"),
+    h("td", {}, h("div", { class: "dact" }, act("rename", "Zmień nazwę", ""), act("forget", "Zapomnij", "danger"))));
+}
+
+function deviceEditRow(d) {
+  const E = S.devEdit;
+  const cancel = h("button", { type: "button", id: "f-devcancel", onclick: devEditCancel }, "Anuluj");
+  const onkey = ev => { if (ev.key === "Escape") { ev.preventDefault(); devEditCancel(); } };
+  if (E.mode === "rename") {
+    return h("tr", { class: "x" }, h("td", { colspan: "6", onkeydown: onkey },
+      h("form", { class: "row", onsubmit: ev => { ev.preventDefault(); devRenameSave(d); } },
+        h("label", { for: "f-devname", class: "dlabel" }, "Nowa nazwa (np. „Kobo w sypialni”)"),
+        h("input", { type: "text", id: "f-devname", value: E.name, autocomplete: "off", style: "max-width:300px",
+          oninput: ev => { E.name = ev.target.value; } }),
+        h("button", { type: "submit", class: "primary", id: "f-devsave", disabled: E.busy }, E.busy ? "Zapisuję…" : "Zapisz"),
+        cancel,
+        E.error && h("span", { class: "err", role: "alert" }, E.error))));
+  }
+  return h("tr", { class: "x" }, h("td", { colspan: "6", onkeydown: onkey },
+    h("div", { class: "row" },
+      h("div", { style: "flex:1;min-width:240px" }, h("b", {}, `Zapomnieć „${d.name}”?`), " ",
+        "Urządzenie przestanie się synchronizować. Jego ustawienia zostaną takie, jakie są. Żeby je znowu połączyć, trzeba będzie sparować je od nowa."),
+      h("button", { type: "button", class: "danger", id: "f-devforget", disabled: E.busy, onclick: () => devForget(d) }, E.busy ? "Zapominam…" : "Zapomnij"),
+      cancel,
+      E.error && h("span", { class: "err", role: "alert" }, E.error))));
+}
+
+// Fokus: przy zapomnieniu ląduje na „Anuluj” (nie na przycisku nieodwracalnym), przy zmianie nazwy w polu.
+function devEditStart(d, mode) {
+  S.devEdit = { id: d.id, mode, name: d.name, busy: false, error: null };
+  render();
+  const el = document.getElementById(mode === "rename" ? "f-devname" : "f-devcancel");
+  el?.focus();
+  if (mode === "rename") el?.select();
+}
+
+function devEditCancel() {
+  const E = S.devEdit;
+  S.devEdit = null;
+  render();
+  if (E) document.getElementById(`f-dev-${E.id}-${E.mode}`)?.focus(); // wróć na przycisk, który otworzył pasek
 }
 
 function serverURL() {
@@ -782,16 +973,21 @@ function serverURL() {
   return S.local?.mode === "local" ? (S.local.public_url || "") : (S.local?.server || "");
 }
 
-async function rename(d) {
-  const name = prompt("Nowa nazwa urządzenia (np. „Kobo w sypialni”):", d.name);
-  if (!name || name === d.name) return;
-  try { await api("POST", `/api/admin/devices/${d.id}/rename`, { name }); } catch (e) { S.error = e.message; }
+async function devRenameSave(d) {
+  const E = S.devEdit, name = E.name.trim();
+  if (!name) { E.error = "Nazwa nie może być pusta."; return render(); }
+  if (name === d.name) return devEditCancel();
+  E.busy = true; E.error = null; render();
+  try { await api("POST", `/api/admin/devices/${d.id}/rename`, { name }); S.devEdit = null; }
+  catch (e) { E.busy = false; E.error = e.message; }
   refresh();
 }
 
-async function forget(d) {
-  if (!confirm(`Zapomnieć „${d.name}”?\n\nUrządzenie przestanie się synchronizować. Jego ustawienia zostaną takie, jakie są. Żeby je znowu połączyć, trzeba będzie sparować je od nowa.`)) return;
-  try { await api("DELETE", `/api/admin/devices/${d.id}`); } catch (e) { S.error = e.message; }
+async function devForget(d) {
+  const E = S.devEdit;
+  E.busy = true; E.error = null; render();
+  try { await api("DELETE", `/api/admin/devices/${d.id}`); S.devEdit = null; }
+  catch (e) { E.busy = false; E.error = e.message; }
   refresh();
 }
 
@@ -1399,15 +1595,24 @@ function idFor(file, key) {
 const PREVIEW_MAX = 400; // serwer przycina podgląd do 400 znaków (clip w store.go)
 const clipped = v => Array.from(v.preview || "").length >= PREVIEW_MAX;
 
-// Pełne literały dla znanych kluczy, których podgląd jest przycięty (np. stopka).
-async function valLoadFull() {
-  if (typeof KO === "undefined") return;
-  const known = new Set(KO.opts.map(o => idFor(o.file, o.key)).filter(Boolean));
+// Pełne literały dla podanych (znanych) kluczy, których podgląd jest przycięty.
+async function valLoadFor(known) {
   for (const v of S.state.values) {
     if (v.deleted || !known.has(v.id) || !clipped(v) || S.valFull[v.id]?.t === v.t) continue;
     try { S.valFull[v.id] = { t: v.t, lit: (await api("GET", "/api/admin/values/" + encodeURIComponent(v.id))).value }; }
     catch { /* zostaje „wczytuję” — spróbujemy przy następnym odświeżeniu */ }
   }
+}
+
+// Widok „Ustawienia czytników”: klucze znane mapie KOReadera (np. stopka).
+async function valLoadFull() {
+  if (typeof KO === "undefined") return;
+  await valLoadFor(new Set(KO.opts.map(o => idFor(o.file, o.key)).filter(Boolean)));
+}
+
+// Wtyczki → „Ustawienia wtyczek”: padmap KOPada bywa dłuższy niż podgląd (400 znaków).
+async function padLoadFull() {
+  if (typeof Padmap !== "undefined") await valLoadFor(new Set([Padmap.ID]));
 }
 
 // Aktualna wartość jako obiekt JS: {state: "absent"|"loading"|"ok"|"bad", value}
@@ -1728,6 +1933,9 @@ function valuesTab() {
     }).filter(Boolean);
     return rows.length && h("section", { class: "card sgroup", "aria-label": sec.label }, h("h3", {}, sec.label), rows);
   }).filter(Boolean) : [];
+  // padmap KOPada ma własny edytor w Wtyczki → „Ustawienia wtyczek” (TASK-26); tu
+  // zostaje tylko jako surowa wartość w „Zaawansowane”, ale nie liczy się do znaczka
+  if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
   const unmapped = values.filter(v => !v.deleted && !mapped.has(v.id)).length;
   return h("section", {},
     explain(
@@ -1741,6 +1949,283 @@ function valuesTab() {
       advancedValues(catalog, values)),
     hasKO && h("p", { class: "muted small kover" },
       `Nazwy i opisy: KOReader ${KO.version}, tłumaczenie polskie (koreader-translations ${KO.l10n.slice(0, 7)}).`));
+}
+
+// ------------------------------------------------ gamepad: mapowanie przycisków KOPada (TASK-25)
+//
+// Wspólna wartość settings/kopad.lua|padmap (PC-011, PC-014): nadpisania względem
+// domyślnego mapowania układu (`layouts`: przycisk → rola) i względem domyślnych
+// akcji ról w czytaniu (`actions`: rola → akcja, TASK-27). Logika (czytanie,
+// mapowanie efektywne, różnice, składanie literału) jest w web/padmap.js i testowana
+// w node; tu tylko DOM.
+// Szkic edycji układu żyje w S.pad.drafts, szkic akcji w S.pad.actDraft — przeżywają
+// przerysowania z odświeżania stanu. Obie karty zapisują TĘ SAMĄ wartość, więc każdy
+// zapis składa literał ze świeżego stanu serwera: zapis układu zachowuje zapisane akcje,
+// zapis akcji — zapisane układy (i żaden nie rusza cudzych niezapisanych szkiców).
+
+// Stan zapisanej wartości: {state: "loading"|"absent"|"ok"|"bad", layouts, reason}
+function padSaved() {
+  const v = S.state.values.find(x => x.id === Padmap.ID);
+  const cv = currentValue(v);
+  if (cv.state === "loading") return { state: "loading", layouts: {}, actions: {} };
+  if (cv.state === "absent") return { state: "absent", layouts: {}, actions: {} };
+  if (cv.state === "bad") return { state: "bad", reason: "to nie jest poprawny literał Lua" };
+  return Padmap.fromValue(cv.value);
+}
+
+// Układy, na których budujemy zapis; null = wartość nieczytelna i nie zaczęto od zera.
+function padBase(saved) {
+  if (saved.state === "ok" || saved.state === "absent") return saved.layouts;
+  return S.pad.fresh ? {} : null;
+}
+
+// Zapisane nadpisania akcji (rola → akcja); przy „zacznij od zera” puste.
+function padSavedActions(saved) {
+  return saved.state === "ok" || saved.state === "absent" ? (saved.actions || {}) : {};
+}
+
+// Akcje efektywne do wyświetlenia: szkic (jeszcze niezapisany) albo zapisane + domyślne.
+// Etykiety ról w obu kartach liczą się z nich, więc nie kłamią po przestawieniu.
+function padActs(saved) {
+  return S.pad.actDraft || Padmap.effectiveActions(padSavedActions(saved));
+}
+
+function padSvg(layout, map, acts) {
+  const P = Padmap;
+  const lab = c => P.printed(layout, c);
+  const chg = new Set(P.changed(layout, map));
+  const g = (c, shape, text) => `<g class="pctl${chg.has(c) ? " chg" : ""}" data-ctl="${c}">${shape}${text}</g>`;
+  const rect = (x, y, w, hh) => `<rect x="${x}" y="${y}" width="${w}" height="${hh}" rx="6"/>`;
+  const circ = (x, y, r) => `<circle cx="${x}" cy="${y}" r="${r}"/>`;
+  const txt = (x, y, t, cls) => `<text x="${x}" y="${y}"${cls ? ` class="${cls}"` : ""}>${t}</text>`;
+  const svg = `<svg viewBox="0 0 360 232" class="padsvg" role="img" aria-label="${P.describe(layout, map, acts).replace(/"/g, "&quot;")}">
+<path class="pbody" d="M92 70H268C300 70 318 96 332 150C342 190 338 212 316 214C296 216 286 196 270 176C260 164 252 160 236 160H124C108 160 100 164 90 176C74 196 64 216 44 214C22 212 18 190 28 150C42 96 60 70 92 70Z"/>
+<g class="pdeco">${circ(92, 108, 17)}${circ(92, 108, 7)}${circ(222, 142, 14)}${circ(222, 142, 6)}<path d="M130 130v24M118 142h24"/></g>
+${g("ltrigger", rect(58, 20, 56, 20), txt(86, 31, lab("ltrigger")))}
+${g("rtrigger", rect(246, 20, 56, 20), txt(274, 31, lab("rtrigger")))}
+${g("lshoulder", rect(50, 45, 72, 17), txt(86, 54, lab("lshoulder")))}
+${g("rshoulder", rect(238, 45, 72, 17), txt(274, 54, lab("rshoulder")))}
+${g("back", circ(150, 98, 9), txt(150, 120, lab("back"), "sm"))}
+${g("start", circ(210, 98, 9), txt(210, 120, lab("start"), "sm"))}
+${g("north", circ(270, 86, 11), txt(270, 86, lab("north"), "face"))}
+${g("south", circ(270, 128, 11), txt(270, 128, lab("south"), "face"))}
+${g("west", circ(249, 107, 11), txt(249, 107, lab("west"), "face"))}
+${g("east", circ(291, 107, 11), txt(291, 107, lab("east"), "face"))}
+</svg>`;
+  const holder = h("div", { class: "padsvgbox" });
+  holder.innerHTML = svg; // wyłącznie stałe etykiety z padmap.js, żadnych danych z serwera
+  const el = holder.firstChild;
+  // klik w kontrolkę na sylwetce przenosi fokus na jej listę (klawiatura i czytnik ekranu mają select)
+  for (const node of el.querySelectorAll("[data-ctl]")) {
+    node.addEventListener("click", () => document.getElementById(`padsel-${layout}-${node.dataset.ctl}`)?.focus());
+  }
+  return el;
+}
+
+function padRow(layout, c, map, acts) {
+  const P = Padmap, id = `padsel-${layout}-${c}`;
+  const def = P.defaultMap(layout)[c], changed = map[c] !== def;
+  return h("div", { class: "padrow" + (changed ? " chg" : "") },
+    h("label", { for: id },
+      h("span", { class: "pk" }, P.printed(layout, c)),
+      h("span", { class: "muted small" }, P.POSITIONS[c])),
+    h("div", { class: "padsel" },
+      h("select", { id, onchange: ev => { S.pad.drafts[layout] = { ...map, [c]: ev.target.value }; render(); } },
+        P.ROLE_IDS.map(r => h("option", { value: r, selected: map[c] === r }, P.roleLabel(r, acts)))),
+      h("span", { class: "padnote muted small" }, changed ? "zmienione, domyślnie: " + P.roleLabel(def, acts) : "domyślnie")));
+}
+
+const PAD_LAYOUT_NOTES = {
+  xbox: "Przyciski mają tu te same nazwy co role KOPada.",
+  playstation: "Pozycje jak w Xboksie: ✕ to dolny przycisk (rola A). Różnią się tylko symbole.",
+  nintendo: "Drukowane A jest po prawej, więc domyślnie rola A leży pod prawym przyciskiem (A↔B i X↔Y zamienione względem Xboksa).",
+  valve: "Pozycje jak w Xboksie, różnią się tylko etykiety (Widok i Menu zamiast Wstecz i Start, L1/R1, L2/R2). Pady Valve mają też tylne przyciski L4/L5/R4/R5, których KOPad nie obsługuje, więc nie da się ich tu przemapować.",
+};
+
+function padTablist(base) {
+  const ids = Padmap.LAYOUT_IDS;
+  return h("div", { class: "tabs", role: "tablist", "aria-label": "Układ pada" },
+    ids.map((id, i) => {
+      const sel = S.pad.layout === id;
+      const map = S.pad.drafts[id], dirty = !!map && Padmap.differs(base, id, map);
+      const n = Padmap.changed(id, map || Padmap.effective(base, id)).length;
+      return h("button", {
+        type: "button", role: "tab", id: "padtab-" + id, "aria-selected": String(sel),
+        "aria-controls": "padpanel", tabindex: sel ? "0" : "-1", class: "tab" + (sel ? " selected" : ""),
+        onclick: () => { S.pad.layout = id; S.pad.msg = null; render(); },
+        onkeydown: ev => {
+          const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+          if (d == null && ev.key !== "Home" && ev.key !== "End") return;
+          ev.preventDefault();
+          const nid = ids[ev.key === "Home" ? 0 : ev.key === "End" ? ids.length - 1 : (i + d + ids.length) % ids.length];
+          S.pad.layout = nid; S.pad.msg = null; render();
+          document.getElementById("padtab-" + nid)?.focus();
+        },
+      }, Padmap.LAYOUT_SHORT[id],
+        n > 0 && h("span", { class: "cnt", title: `${n} z 10 kontrolek zmienionych względem domyślnych` }, String(n)),
+        dirty && h("span", { class: "dirty", title: "niezapisane zmiany" }, "●", h("span", { class: "sr" }, " niezapisane zmiany")));
+    }));
+}
+
+async function padSave(layout) {
+  const P = S.pad, saved = padSaved(), base = padBase(saved);
+  const map = P.drafts[layout];
+  if (!map || base === null) return;
+  // wartość składana z ŚWIEŻEGO stanu serwera: inne układy zostają nietknięte
+  const lit = Padmap.toLiteral(Padmap.withLayout(base, layout, map), padSavedActions(saved));
+  P.busy = true; P.msg = null; render();
+  try {
+    if (lit === null) {
+      if (saved.state !== "absent") await api("POST", "/api/admin/values", { delete: [Padmap.ID] });
+    } else {
+      await api("POST", "/api/admin/values", { set: { [Padmap.ID]: lit } });
+    }
+    delete P.drafts[layout];
+    P.fresh = false;
+    P.msg = { ok: true, text: lit === null
+      ? "Zapisane — ani żaden układ, ani żadna akcja nie ma już nadpisań, więc wspólna wartość została usunięta. Czytniki wrócą do domyślnych mapowań."
+      : "Zapisane — czytniki z włączoną grupą „KOPad” dostaną to przy najbliższej synchronizacji." };
+  } catch (e) {
+    P.msg = { ok: false, text: e.message };
+  }
+  P.busy = false;
+  await refresh();
+  document.getElementById("padtab-" + layout)?.focus();
+}
+
+function padmapCard() {
+  if (typeof Padmap === "undefined") return null;
+  const g = catalogGroup("kopad");
+  if (!g || g.secret) return null;
+  const P = S.pad, saved = padSaved(), base = padBase(saved), acts = padActs(saved);
+  const on = S.state.devices.filter(d => d.groups && d.groups.kopad).map(d => d.name);
+  const head = [
+    h("h3", {}, "Gamepad (KOPad): przyciski"),
+    h("p", { class: "muted small padintro" },
+      "Wybierz układ pada, który Cię interesuje, i ustaw, jaką rolę pełni każda kontrolka. Role mają nazwy z Xboksa, tak jak w dokumentacji KOPada (np. „A” to dolny przycisk). Zapisujemy tylko różnice względem domyślnego mapowania układu. To, co dana rola robi podczas czytania (np. czy RB przewraca stronę, czy otwiera menu), ustawiasz w osobnej karcie poniżej."),
+    h("p", { class: "muted small padintro" },
+      "Który układ ma pad na danym urządzeniu, wybierasz na nim samym (menu KOPada → „Gamepad layout (this device)”); włączenie KOPada też zostaje lokalne. Krzyżak, drążki, Guide, L3 i R3 nie są przemapowywane. ",
+      on.length ? `Grupa „KOPad” jest włączona na: ${on.join(", ")}.` : "Grupa „KOPad” nie jest włączona na żadnym urządzeniu — włącz ją w „Co synchronizować”, żeby mapowanie dotarło na czytnik."),
+  ];
+  if (saved.state === "loading") return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head, h("p", { class: "muted small" }, "Wczytuję…"));
+  if (base === null) {
+    return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head,
+      h("div", { class: "padwarn", role: "alert" },
+        h("p", {}, h("strong", {}, "Zapisana wartość mapowania jest w formacie, którego ten edytor nie rozumie")),
+        h("p", { class: "small" }, `Powód: ${saved.reason}. Nie zmieniam jej po cichu — możesz ją obejrzeć w Ustawienia czytników → „Zaawansowane” (klucz kopad.lua | padmap) albo zacząć od zera: pierwszy zapis zastąpi dotychczasową wartość.`),
+        h("button", { type: "button", onclick: () => { P.fresh = true; P.drafts = {}; P.actDraft = null; render(); } }, "Zacznij od zera")));
+  }
+  const L = P.layout, map = P.drafts[L] || Padmap.effective(base, L);
+  const dirty = !!P.drafts[L] && Padmap.differs(base, L, P.drafts[L]);
+  const modified = Padmap.changed(L, map).length > 0;
+  return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head,
+    P.fresh && saved.state === "bad" && h("div", { class: "padwarn" },
+      h("p", { class: "small" }, "Zaczynasz od zera: pierwszy zapis zastąpi zapisaną wartość, której edytor nie rozumiał."),
+      h("button", { type: "button", onclick: () => { P.fresh = false; P.drafts = {}; P.actDraft = null; render(); } }, "Wróć bez zmian")),
+    padTablist(base),
+    h("div", { id: "padpanel", role: "tabpanel", "aria-labelledby": "padtab-" + L, class: "padpanel" },
+      h("p", { class: "muted small" }, Padmap.LAYOUT_LABELS[L] + ". " + PAD_LAYOUT_NOTES[L]),
+      h("div", { class: "padgrid" },
+        padSvg(L, map, acts),
+        h("div", { class: "padlist" }, Padmap.CONTROL_IDS.map(c => padRow(L, c, map, acts)))),
+      h("div", { class: "row padactions" },
+        h("button", { type: "button", class: "primary", disabled: !dirty || P.busy, onclick: () => padSave(L) },
+          P.busy ? "Zapisuję…" : "Zapisz układ"),
+        h("button", { type: "button", disabled: !dirty || P.busy, onclick: () => { delete P.drafts[L]; P.msg = null; render(); } }, "Odrzuć zmiany"),
+        h("button", { type: "button", disabled: !modified || P.busy, onclick: () => { P.drafts[L] = Padmap.defaultMap(L); P.msg = null; render(); } },
+          "Przywróć domyślne"),
+        dirty && h("span", { class: "muted small" }, "Niezapisane zmiany.")),
+      P.msg && h("p", { class: (P.msg.ok ? "ok" : "err") + " small", role: "status" }, P.msg.text)));
+}
+
+// ------------------------------------------------ gamepad: akcje ról w czytaniu (TASK-27, PC-014)
+//
+// Druga warstwa po układzie: rola → akcja. Dotyczy ROLI, nie kontrolki, więc jest wspólna
+// dla wszystkich układów; KOPad stosuje ją tylko w „czystym czytaniu” (bez zaznaczenia,
+// słownika i menu), w pozostałych sytuacjach rola robi to, co zawsze.
+
+// Które drukowane przyciski pełnią daną rolę na układzie wybranym w karcie układów.
+function padRoleHint(layout, role) {
+  const P = Padmap, base = padBase(padSaved());
+  const map = S.pad.drafts[layout] || (base ? P.effective(base, layout) : P.defaultMap(layout));
+  const ctl = P.controlsFor(map, role);
+  return `${P.LAYOUT_SHORT[layout]}: ` + (ctl.length ? ctl.map(c => P.printed(layout, c)).join(", ") : "żaden przycisk");
+}
+
+function padActRow(role, map) {
+  const P = Padmap, id = `padact-${role}`;
+  const def = P.DEFAULT_ACTIONS[role], cur = map[role] ?? null, changed = cur !== def;
+  // B nie ma domyślnej akcji KOPada (działa Wstecz KOReadera) — ma osobną pozycję „domyślnie”
+  const opt = (a, text) => h("option", { value: a === null ? "" : a, selected: cur === a }, text);
+  return h("div", { class: "padrow" + (changed ? " chg" : "") },
+    h("label", { for: id },
+      h("span", { class: "pk" }, P.roleName(role)),
+      h("span", { class: "muted small" }, padRoleHint(S.pad.layout, role))),
+    h("div", { class: "padsel" },
+      h("select", { id, onchange: ev => { S.pad.actDraft = { ...map, [role]: ev.target.value === "" ? null : ev.target.value }; S.pad.actMsg = null; render(); } },
+        def === null ? opt(null, P.actionLabel(null) + " — domyślnie") : null,
+        P.ACTION_GROUPS.map(g => h("optgroup", { label: g.label },
+          g.ids.map(a => opt(a, P.ACTION_LABELS[a] + (a === def ? " — domyślnie" : "")))))),
+      h("span", { class: "padnote muted small" }, changed ? "zmienione, domyślnie: " + P.actionLabel(def) : def === null ? "domyślnie (działa Wstecz KOReadera)" : "domyślnie")));
+}
+
+async function padSaveActions() {
+  const P = S.pad, saved = padSaved(), base = padBase(saved);
+  if (!P.actDraft || base === null) return;
+  // wartość składana z ŚWIEŻEGO stanu serwera: zapisane układy zostają nietknięte
+  const lit = Padmap.toLiteral(base, Padmap.actionOverrides(P.actDraft));
+  P.busy = true; P.actMsg = null; render();
+  try {
+    if (lit === null) {
+      if (saved.state !== "absent") await api("POST", "/api/admin/values", { delete: [Padmap.ID] });
+    } else {
+      await api("POST", "/api/admin/values", { set: { [Padmap.ID]: lit } });
+    }
+    P.actDraft = null;
+    P.fresh = false;
+    P.actMsg = { ok: true, text: lit === null
+      ? "Zapisane — ani żadna akcja, ani żaden układ nie ma już nadpisań, więc wspólna wartość została usunięta. Czytniki wrócą do domyślnych."
+      : "Zapisane — czytniki z włączoną grupą „KOPad” dostaną to przy najbliższej synchronizacji." };
+  } catch (e) {
+    P.actMsg = { ok: false, text: e.message };
+  }
+  P.busy = false;
+  await refresh();
+  document.getElementById("padact-save")?.focus();
+}
+
+function padActionsCard() {
+  if (typeof Padmap === "undefined" || typeof Padmap.ACTION_IDS === "undefined") return null;
+  const g = catalogGroup("kopad");
+  if (!g || g.secret) return null;
+  const P = S.pad, saved = padSaved(), base = padBase(saved);
+  const label = "Gamepad (KOPad): akcje w czytaniu";
+  const head = [
+    h("h3", {}, label),
+    h("p", { class: "muted small padintro" },
+      "Tu ustawiasz, co dana rola robi, gdy po prostu czytasz książkę — np. RB może otwierać menu górne (a w nim ustawienia) zamiast przewracać stronę. Akcja należy do roli, nie do konkretnego przycisku, więc zostaje, gdy zmienisz pad albo układ. Pod nazwą roli widać, który przycisk pełni ją na układzie wybranym w karcie powyżej."),
+    h("p", { class: "muted small padintro" },
+      "Zmiana działa tylko w czytaniu, bez otwartego zaznaczenia, słownika i menu. Tam rola robi to samo co zawsze (RB rozszerza zaznaczenie i przełącza kategorie menu, LT/RT zmieniają stronę menu), a kombinacje z X (X + krzyżak, X + LB/RB) zostają bez zmian. W przeglądarce plików przyciski działają jak dotąd."),
+  ];
+  if (saved.state === "loading") return h("section", { class: "card padcard", "aria-label": label }, head, h("p", { class: "muted small" }, "Wczytuję…"));
+  if (base === null) {
+    return h("section", { class: "card padcard", "aria-label": label }, head,
+      h("p", { class: "muted small", role: "status" }, "Zapisana wartość mapowania jest w formacie, którego ten edytor nie rozumie — rozwiąż to w karcie „Gamepad (KOPad): przyciski” powyżej."));
+  }
+  const savedActs = padSavedActions(saved);
+  const map = P.actDraft || Padmap.effectiveActions(savedActs);
+  const dirty = !!P.actDraft && Padmap.actionsDiffer(savedActs, P.actDraft);
+  const modified = Padmap.changedActions(map).length > 0;
+  return h("section", { class: "card padcard actcard", "aria-label": label }, head,
+    h("div", { class: "padlist" }, Padmap.ROLE_IDS.map(r => padActRow(r, map))),
+    h("div", { class: "row padactions" },
+      h("button", { type: "button", id: "padact-save", class: "primary", disabled: !dirty || P.busy, onclick: () => padSaveActions() },
+        P.busy ? "Zapisuję…" : "Zapisz akcje"),
+      h("button", { type: "button", disabled: !dirty || P.busy, onclick: () => { P.actDraft = null; P.actMsg = null; render(); } }, "Odrzuć zmiany"),
+      h("button", { type: "button", disabled: !modified || P.busy, onclick: () => { P.actDraft = { ...Padmap.DEFAULT_ACTIONS }; P.actMsg = null; render(); } },
+        "Przywróć domyślne"),
+      dirty && h("span", { class: "muted small" }, "Niezapisane zmiany.")),
+    P.actMsg && h("p", { class: (P.actMsg.ok ? "ok" : "err") + " small", role: "status" }, P.actMsg.text));
 }
 
 // ------------------------------------------------ zakładka: jak to działa
@@ -1780,13 +2265,61 @@ function pluginByHash(sha) {
   return (S.plugins || []).find(v => v.sha256 === sha);
 }
 
+// Nazwy wtyczek „po ludzku”. `fullname` z _meta.lua to to, co KOReader pokazuje
+// w swoim menu („Simple UI”, „KOPad”); nazwa katalogu (SimpleUI.koplugin) jest
+// szczegółem technicznym — idzie drobnym drukiem pod spodem, a nie w nagłówek.
+// Kolejność źródeł: najnowsza wersja w magazynie → inwentarz czytnika (nowsze pluginy
+// zgłaszają fullname także wtyczek wbudowanych i ręcznych) → nazwa katalogu bez „.koplugin”.
+const pluginBase = dir => String(dir || "").replace(/\.koplugin$/i, "");
+const pluginVerName = v => (v && v.fullname) || pluginBase(v && v.dir);
+function pluginTitle(dir) {
+  const v = (S.plugins || []).filter(x => x.dir === dir && x.fullname)
+    .sort((a, b) => String(b.added).localeCompare(String(a.added)))[0];
+  if (v) return v.fullname;
+  for (const d of (S.state && S.state.devices) || []) {
+    const p = (d.plugin_inventory || []).find(x => x.dir === dir && x.fullname);
+    if (p) return p.fullname;
+  }
+  return pluginBase(dir);
+}
+const nameKey = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+// Nazwa + (tylko jeśli coś dodaje) nazwa katalogu: „KOPad” nie potrzebuje dopisku
+// „kopad.koplugin”, ale „Simple UI” — „SimpleUI.koplugin” — już tak.
+function pluginLabel(dir, title = pluginTitle(dir)) {
+  return [h("span", { class: "pname" }, title),
+    nameKey(title) !== nameKey(pluginBase(dir)) && h("small", { class: "pdir", title: "Nazwa katalogu wtyczki na czytniku" }, dir)];
+}
+// Repozytorium galerii: fullname, jeśli wtyczka jest już w magazynie; inaczej nazwa
+// repozytorium bez „koreader-”/„.koplugin” i bez myślników („koreader-kopad” → „Kopad”).
+function galleryTitle(full) {
+  const prefix = String(full).toLowerCase() + "@";
+  const v = (S.plugins || []).find(x => x.fullname && x.source === "galeria" && (x.source_ref || "").toLowerCase().startsWith(prefix));
+  if (v) return v.fullname;
+  const raw = String(full).split("/").pop();
+  const words = raw.replace(/\.koplugin$/i, "").replace(/^koreader[-_.]?/i, "").replace(/[-_.]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : raw;
+}
+
+// Tabele wtyczek w wąskim oknie (≤ 620 px, patrz style.css) rozpadają się na „karty”:
+// każda komórka dostaje etykietę z nagłówka swojej kolumny (data-label → ::before),
+// a sam nagłówek zostaje w DOM dla czytników ekranu.
+function labelCells(table) {
+  const heads = [...table.querySelectorAll("thead th")].map(t => t.textContent);
+  for (const tr of table.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => td.setAttribute("data-label", heads[i] || ""));
+  return table;
+}
+// „Pod opieką koligilo”: wtyczka ma znacznik .koligilo, więc koligilo może ją aktualizować
+// i usuwać (PC-004). Wtyczki ręczne i wbudowane są nietykalne.
+const managedTh = () => h("th", { title: "koligilo może aktualizować i usuwać tylko wtyczki, które samo zainstalowało. Ręczne i wbudowane są nietykalne." }, "Pod opieką koligilo");
+function managedText(inv, targetSha) {
+  return inv ? (inv.managed ? "tak" : "nie — ręczna lub wbudowana") : (targetSha ? "po instalacji" : "—");
+}
+
 // TASK-19: "Wtyczki" i dawna "Galeria wtyczek" żyją teraz pod jedną pozycją
-// nawigacji, jako trzy zakładki wewnętrzne (role=tablist/tab/tabpanel,
+// nawigacji, jako zakładki wewnętrzne (PLUGIN_TABS; role=tablist/tab/tabpanel,
 // sterowanie strzałkami/Home/End — pluginTablist()). Wybór zapamiętany w tej
 // przeglądarce (S.pluginTab, localStorage). Panel tylko przypisuje/odpina
 // stan docelowy — instalację i tak zawsze potwierdza czytnik (PC-004).
-
-const PLUGIN_TABS = [["urzadzenia", "Wg urządzeń"], ["wtyczki", "Wg wtyczek"], ["galeria", "Galeria"]];
 
 function showPluginTab(id) {
   const changed = S.pluginTab !== id;
@@ -1817,16 +2350,33 @@ function pluginTablist() {
 }
 
 function pluginsTab() {
-  const sub = S.pluginTab === "galeria" ? "galeria" : S.pluginTab === "urzadzenia" ? "urzadzenia" : "wtyczki";
+  const sub = PLUGIN_TABS.some(([id]) => id === S.pluginTab) ? S.pluginTab : "urzadzenia";
   return h("section", {},
-    explain(
+    // wstęp dotyczy instalowania wtyczek — nad ustawieniami wtyczek nie ma sensu;
+    // zwijany, bo powtarza się nad każdą zakładką i spychał treść pod linię zgięcia
+    sub !== PLUGSET && explainFold("wtyczki", "Panel tylko przypisuje wtyczki — instalację zawsze potwierdzasz na czytniku",
       "Wtyczka KOReadera to kod Lua z pełnymi uprawnieniami na czytniku — koligilo nigdy nie instaluje jej samo: tylko przypisuje wersję jako „stan docelowy”. Instalację, aktualizację i usunięcie zawsze potwierdza człowiek na czytniku (Menu → Narzędzia → koligilo).",
       "Zgodę na instalowanie wtyczek („Pozwól instalować wtyczki”) włącza się wyłącznie na czytniku — panel nie może jej tu ustawić."),
     pluginTablist(),
     h("div", { id: "ptabpanel-" + sub, role: "tabpanel", "aria-labelledby": "ptab-" + sub, tabindex: "0", class: "tabpanel" },
-      sub === "galeria" ? galleryTab()
+      sub === PLUGSET ? pluginSettingsPanel()
+        : sub === "galeria" ? galleryTab()
         : !S.plugins ? h("p", { class: "loading" }, "Wczytuję wtyczki…")
         : sub === "urzadzenia" ? byDevicePanel() : byPluginPanel()));
+}
+
+// Wtyczki → „Ustawienia wtyczek” (TASK-26): ustawienia samych wtyczek, osobno od
+// „Ustawień czytników” (urządzenie/KOReader). Każda wtyczka to sekcja z nagłówkiem —
+// na razie tylko KOPad (mapowanie przycisków gamepada, PC-011/PC-012). Stan edycji
+// (S.pad.drafts) żyje w S, więc przeżywa odświeżanie w tle (interwał na dole pliku
+// odświeża tę zakładkę, choć pozostałych zakładek „Wtyczek” nie).
+function pluginSettingsPanel() {
+  const pad = padmapCard(), acts = padActionsCard();
+  return h("div", { class: "plugset" },
+    h("section", { "aria-labelledby": "plugset-kopad" },
+      h("h2", { id: "plugset-kopad" }, "KOPad"),
+      pad || h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada."),
+      acts));
 }
 
 function byDevicePanel() {
@@ -1855,9 +2405,10 @@ async function toggleFavorite(key, on) {
 
 function favStar(key) {
   const on = isFav(key);
+  const what = key.startsWith("gh:") ? galleryTitle(key.slice(3)) : key.startsWith("dir:") ? pluginTitle(key.slice(4)) : key;
   return h("button", {
     type: "button", class: "star" + (on ? " on" : ""), "aria-pressed": String(on), disabled: S.favBusy === key,
-    "aria-label": (on ? "Usuń z ulubionych: " : "Dodaj do ulubionych: ") + key.replace(/^(gh:|dir:)/, ""),
+    "aria-label": (on ? "Usuń z ulubionych: " : "Dodaj do ulubionych: ") + what,
     title: on ? "Ulubione — kliknij, żeby usunąć" : "Dodaj do ulubionych",
     onclick: ev => { ev.stopPropagation(); toggleFavorite(key, !on); },
   }, on ? "★" : "☆");
@@ -1906,7 +2457,7 @@ function byPluginPanel() {
   let sorted = dirs.slice().sort((a, b) => {
     const va = versions.filter(v => v.dir === a), vb = versions.filter(v => v.dir === b);
     const fa = dirIsFavorite(a, va), fb = dirIsFavorite(b, vb);
-    return (fb - fa) || a.localeCompare(b);
+    return (fb - fa) || pluginTitle(a).localeCompare(pluginTitle(b), "pl");
   });
   if (S.favOnly) sorted = sorted.filter(dir => dirIsFavorite(dir, versions.filter(v => v.dir === dir)));
   const extraFav = favoriteReposNotInstalled(versions);
@@ -1923,7 +2474,8 @@ function byPluginPanel() {
       h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),
       extraFav.map(full => h("div", { class: "row", style: "justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line)" },
-        h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full), full),
+        h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full),
+          h("span", {}, h("span", { class: "pname" }, galleryTitle(full)), h("small", { class: "pdir" }, full))),
         h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Otwórz w Galerii")))),
     sorted.length === 0
       ? h("p", { class: "muted" }, S.favOnly ? "Brak ulubionych wtyczek w magazynie." : "Magazyn jest pusty — wgraj ZIP albo dodaj wtyczkę z zakładki „Galeria”.")
@@ -1938,17 +2490,17 @@ function pluginDirCard(dir, versions) {
   const without = S.state.devices.filter(d => !withDir.includes(d));
   const repo = dirGalleryRepos(versions)[0];
   return h("article", { class: "card", style: "margin-bottom:14px" },
-    h("h3", { style: "margin:0 0 4px;display:flex;align-items:center;gap:8px" }, favStar("dir:" + dir), dir),
+    h("h3", { style: "margin:0 0 4px;display:flex;align-items:center;gap:8px" }, favStar("dir:" + dir), h("span", {}, pluginLabel(dir))),
     repo && h("p", { class: "muted small", style: "margin:0 0 8px" },
       "Z galerii: ", h("a", { href: "https://github.com/" + repo, target: "_blank", rel: "noopener" }, repo, " ↗"),
       " ", favStar("gh:" + repo)),
     withDir.length === 0
       ? h("p", { class: "muted small" }, "Nie przypisana ani zainstalowana na żadnym urządzeniu.")
-      : h("div", { class: "matrix-wrap" }, h("table", { class: "matrix plugins" },
+      : h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
           h("thead", {}, h("tr", {},
             h("th", {}, "Urządzenie"), h("th", {}, "Zainstalowana"), h("th", {}, "Docelowa"),
-            h("th", {}, "Stan"), h("th", {}, "Zarządzana"), h("th", {}, "Akcje"))),
-          h("tbody", {}, withDir.map(d => pluginDeviceRow(d, dir, invMap(d).get(dir), resMap(d).get(dir)))))),
+            h("th", {}, "Stan"), managedTh(), h("th", {}, "Akcje"))),
+          h("tbody", {}, withDir.map(d => pluginDeviceRow(d, dir, invMap(d).get(dir), resMap(d).get(dir))))))),
     without.length > 0 && approved.length > 0 && assignToDeviceForm(dir, approved, without));
 }
 
@@ -1959,7 +2511,7 @@ function pluginDeviceRow(d, dir, inv, lastResult) {
   const targetSha = (d.plugins || {})[dir];
   const targetV = targetSha ? pluginByHash(targetSha) : null;
   const status = pluginStatus(d, targetSha, inv, lastResult);
-  const managed = inv ? (inv.managed ? "tak" : "nie") : (targetSha ? "(po instalacji)" : "—");
+  const managed = managedText(inv, targetSha);
   const canRemove = !!targetSha && (!inv || inv.managed);
   return h("tr", {},
     h("td", {}, d.name),
@@ -1980,9 +2532,9 @@ function assignToDeviceForm(dir, approved, devices) {
   if (!devices.some(d => d.id === draft.dev)) draft.dev = devices[0].id;
   const msg = S.devPluginMsg[draft.dev];
   return h("div", { class: "row", style: "margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)" },
-    h("select", { "aria-label": "Wybierz urządzenie do przypisania " + dir, onchange: ev => { draft.dev = ev.target.value; } },
+    h("select", { "aria-label": "Wybierz urządzenie do przypisania wtyczki " + pluginTitle(dir), onchange: ev => { draft.dev = ev.target.value; } },
       devices.map(d => h("option", { value: d.id, selected: draft.dev === d.id }, d.name))),
-    h("select", { "aria-label": "Wybierz wersję " + dir, onchange: ev => { draft.sha = ev.target.value; } },
+    h("select", { "aria-label": "Wybierz wersję wtyczki " + pluginTitle(dir), onchange: ev => { draft.sha = ev.target.value; } },
       approved.map(v => h("option", { value: v.sha256, selected: draft.sha === v.sha256 }, `${v.version || v.sha256.slice(0, 12)} (${v.source})`))),
     h("button", { class: "primary", disabled: S.devPluginBusy === draft.dev, onclick: () => assignPluginToDevice(dir, draft) },
       S.devPluginBusy === draft.dev ? "Przypisuję…" : "Przypisz do urządzenia"),
@@ -2004,17 +2556,17 @@ function storeCard() {
   if (versions.length === 0) return null;
   return h("section", { class: "card", style: "margin-bottom:16px" },
     h("h3", { style: "margin-top:0" }, "Wersje w magazynie"),
-    h("div", { class: "matrix-wrap" }, h("table", { class: "matrix plugins" },
+    h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
       h("thead", {}, h("tr", {},
         h("th", {}, "Wtyczka"), h("th", {}, "Wersja"), h("th", {}, "Źródło"),
         h("th", {}, "Pochodzenie"), h("th", {}, "Stan"), h("th", {}, "Akcje"))),
-      h("tbody", {}, versions.map(storeRow)))));
+      h("tbody", {}, versions.map(storeRow))))));
 }
 
 function storeRow(v) {
   const pending = v.source === "urządzenie" && !v.approved;
   return h("tr", {},
-    h("td", {}, v.dir),
+    h("td", {}, pluginLabel(v.dir, pluginVerName(v))),
     h("td", {}, v.version || v.sha256.slice(0, 12)),
     h("td", {}, v.source),
     h("td", { class: "muted small" }, v.source_ref || "—"),
@@ -2029,7 +2581,7 @@ function storeRow(v) {
 
 async function approvePlugin(v) {
   if (!confirm(
-    `Zaakceptować „${v.dir}” (${v.version || v.sha256.slice(0, 12)}) przysłaną z czytnika (${v.source_ref})?\n\n` +
+    `Zaakceptować „${pluginVerName(v)}” (katalog ${v.dir}, wersja ${v.version || v.sha256.slice(0, 12)}) przysłaną z czytnika (${v.source_ref})?\n\n` +
     "To kod z czytnika, nie z galerii ani z ręcznego uploadu — po akceptacji będzie można przypisać go INNYM urządzeniom. Sprawdź, czy to na pewno wtyczka, której się spodziewasz.")) return;
   S.approveBusy = v.sha256; render();
   try {
@@ -2069,7 +2621,7 @@ function updateRow(u) {
   const busy = S.galUpdateBusy === key;
   const msg = S.galUpdateMsg[key];
   return h("article", { class: "card", style: "margin-bottom:10px" },
-    h("h4", { style: "margin:0 0 4px" }, u.dir || u.repo,
+    h("h4", { style: "margin:0 0 4px" }, u.dir ? pluginLabel(u.dir) : galleryTitle(u.repo), " ",
       h("span", { class: "badge warn" }, "dostępna aktualizacja")),
     h("p", { class: "muted small", style: "margin:0 0 6px" },
       `${u.current_version || u.current_sha.slice(0, 12)} → ${u.latest_tag || u.latest_sha.slice(0, 12)}` +
@@ -2130,7 +2682,7 @@ async function uploadPlugin() {
     const fd = new FormData();
     fd.append("file", file);
     const out = await apiUpload("/api/admin/plugins", fd);
-    S.uploadMsg = { ok: true, text: `Wgrano „${out.plugin.dir}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Przypisz ją niżej do urządzenia.` };
+    S.uploadMsg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Przypisz ją niżej do urządzenia.` };
   } catch (e) {
     S.uploadMsg = { ok: false, text: e.message };
   }
@@ -2160,11 +2712,12 @@ function devicePluginCard(d) {
     d.plugin_report_at && h("p", { class: "muted small", style: "margin:0 0 10px" }, "Ostatni raport z czytnika: ", ago(d.plugin_report_at)),
     dirs.size === 0
       ? h("p", { class: "muted small" }, "Brak wtyczek — ani przypisanych, ani zgłoszonych przez czytnik.")
-      : h("div", { class: "matrix-wrap" }, h("table", { class: "matrix plugins" },
+      : h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
           h("thead", {}, h("tr", {},
             h("th", {}, "Wtyczka"), h("th", {}, "Zainstalowana"), h("th", {}, "Docelowa"),
-            h("th", {}, "Stan"), h("th", {}, "Zarządzana"), h("th", {}, "Akcje"))),
-          h("tbody", {}, [...dirs].sort().map(dir => pluginRow(d, dir, inv.get(dir), results.get(dir)))))),
+            h("th", {}, "Stan"), managedTh(), h("th", {}, "Akcje"))),
+          h("tbody", {}, [...dirs].sort((a, b) => pluginTitle(a).localeCompare(pluginTitle(b), "pl"))
+            .map(dir => pluginRow(d, dir, inv.get(dir), results.get(dir))))))),
     addPluginForm(d));
 }
 
@@ -2172,10 +2725,10 @@ function pluginRow(d, dir, inv, lastResult) {
   const targetSha = (d.plugins || {})[dir];
   const targetV = targetSha ? pluginByHash(targetSha) : null;
   const status = pluginStatus(d, targetSha, inv, lastResult);
-  const managed = inv ? (inv.managed ? "tak" : "nie") : (targetSha ? "(po instalacji)" : "—");
+  const managed = managedText(inv, targetSha);
   const canRemove = !!targetSha && (!inv || inv.managed);
   return h("tr", {},
-    h("td", {}, dir),
+    h("td", {}, pluginLabel(dir)),
     h("td", {}, inv ? (inv.version || "?") : "—"),
     h("td", {}, targetV ? (targetV.version || targetSha.slice(0, 12)) : "—"),
     h("td", { class: status.cls }, status.text),
@@ -2195,7 +2748,8 @@ function addPluginForm(d) {
   return h("div", { class: "row", style: "margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)" },
     h("select", { "aria-label": "Wybierz wtyczkę do dodania na " + d.name, onchange: ev => { draft.sha = ev.target.value; } },
       opts.map(v => h("option", { value: v.sha256, selected: draft.sha === v.sha256 },
-        `${v.dir} — ${v.version || v.sha256.slice(0, 12)} (${v.source})`))),
+        // dwie różne wtyczki o tej samej nazwie (np. fork) rozróżnia katalog
+        `${pluginVerName(v)}${opts.some(o => o.dir !== v.dir && pluginVerName(o) === pluginVerName(v)) ? ` [${v.dir}]` : ""} — ${v.version || v.sha256.slice(0, 12)} (${v.source})`))),
     h("button", { class: "primary", disabled: S.devPluginBusy === key, onclick: () => addDevicePlugin(d, draft.sha) },
       S.devPluginBusy === key ? "Dodaję…" : "Dodaj do urządzenia"),
     S.devPluginMsg[key] && h("span", { class: (S.devPluginMsg[key].ok ? "ok" : "err") + " small" }, S.devPluginMsg[key].text));
@@ -2208,7 +2762,7 @@ async function addDevicePlugin(d, sha) {
 }
 
 async function removeDevicePlugin(d, dir) {
-  if (!confirm(`Usunąć „${dir}” z celu tego urządzenia?\n\nPrzy najbliższej synchronizacji czytnik poprosi o potwierdzenie odinstalowania.`)) return;
+  if (!confirm(`Usunąć wtyczkę „${pluginTitle(dir)}” z celu urządzenia „${d.name}”?\n\nPrzy najbliższej synchronizacji czytnik poprosi o potwierdzenie odinstalowania.`)) return;
   const next = { ...(d.plugins || {}) };
   delete next[dir];
   await saveDevicePlugins(d, next);
@@ -2300,11 +2854,11 @@ function repoCard(repo) {
   return h("article", { class: "card gallery-repo", style: "margin-bottom:12px" },
     h("div", { class: "row", style: "justify-content:space-between;align-items:flex-start;flex-wrap:wrap" },
       h("div", { style: "flex:1;min-width:240px" },
-        h("h3", { style: "margin:0 0 2px;display:flex;align-items:center;gap:8px" }, favStar("gh:" + repo.full_name), repo.full_name,
+        h("h3", { style: "margin:0 0 2px;display:flex;align-items:center;gap:8px" }, favStar("gh:" + repo.full_name), galleryTitle(repo.full_name),
           installed && h("span", { class: "badge" }, "w magazynie"),
           update && h("span", { class: "badge warn" }, "dostępna aktualizacja")),
         h("p", { class: "muted small", style: "margin:2px 0 6px" },
-          `★ ${repo.stars} · aktualizacja ${ago(repo.pushed_at)}` + (repo.latest_release ? ` · release ${repo.latest_release}` : "")),
+          `${repo.full_name} · ★ ${repo.stars} · aktualizacja ${ago(repo.pushed_at)}` + (repo.latest_release ? ` · release ${repo.latest_release}` : "")),
         h("p", { style: "margin:0 0 8px" }, repo.description || h("span", { class: "muted" }, "(brak opisu)"))),
       h("a", { href: repo.html_url || `https://github.com/${repo.full_name}`, target: "_blank", rel: "noopener" }, "Repozytorium na GitHubie ↗")),
     inst ? galleryInstallPanel(repo, inst)
@@ -2368,7 +2922,7 @@ async function installFromGallery(repo, inst) {
   if (errs.length) {
     inst.msg = { ok: false, text: "Wtyczka trafiła do magazynu, ale nie udało się przypisać do: " + errs.join("; ") };
   } else {
-    inst.msg = { ok: true, text: `Zainstalowano „${plugin.dir}” (${plugin.version || plugin.sha256.slice(0, 12)}) na wybranych urządzeniach. Potwierdź na czytniku przy najbliższej synchronizacji.` };
+    inst.msg = { ok: true, text: `Zainstalowano „${pluginVerName(plugin)}” (${plugin.version || plugin.sha256.slice(0, 12)}) na wybranych urządzeniach. Potwierdź na czytniku przy najbliższej synchronizacji.` };
     delete S.galInstall[repo.full_name];
   }
   render();
@@ -2383,7 +2937,7 @@ function showTab(id) {
   const changed = S.tab !== id;
   S.tab = id;
   history.replaceState(null, "", "#" + id);
-  if (changed) app.scrollTop = 0;
+  if (changed) { app.scrollTop = 0; S.devEdit = null; }
   if (id === "konta" || id === "wtyczki") return refresh();
   render();
 }
@@ -2434,10 +2988,14 @@ document.addEventListener("keydown", ev => {
   setInterval(() => {
     const typing = document.activeElement && document.activeElement.tagName === "INPUT"
       && document.activeElement.type !== "checkbox";
-    // na zakładce kont/wtyczek/galerii nie odświeżamy w tle — formularze i wybory
-    // urządzeń/wersji zmieniają się tylko po zapisie
-    // w „Wspólnych ustawieniach” nie zabieramy fokusu kontrolce (klawiatura)
-    const focusedCtl = S.tab === "wspolne" && document.activeElement !== app && app.contains(document.activeElement);
-    if (!typing && !focusedCtl && !S.busy && !S.srvBusy && S.tab !== "konta" && S.tab !== "wtyczki") refresh();
+    // na zakładce kont i w zakładkach Wtyczek (poza „Ustawieniami wtyczek”) nie odświeżamy
+    // w tle — formularze i wybory urządzeń/wersji zmieniają się tylko po zapisie.
+    // „Ustawienia wtyczek” (jak „Ustawienia czytników”) odświeżają się: cały stan edycji
+    // jest w S (S.pad.drafts), a wartość może się zmienić z innego czytnika.
+    // W „Ustawieniach czytników” i „Ustawieniach wtyczek” nie zabieramy fokusu kontrolce (klawiatura)
+    const plugSet = S.tab === "wtyczki" && S.pluginTab === PLUGSET;
+    const focusedCtl = (S.tab === "wspolne" || plugSet) && document.activeElement !== app && app.contains(document.activeElement);
+    if (!typing && !focusedCtl && !S.busy && !S.srvBusy && !S.pad.busy
+      && (plugSet || (S.tab !== "konta" && S.tab !== "wtyczki"))) refresh();
   }, 3000);
 })();

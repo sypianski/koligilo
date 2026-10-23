@@ -46,6 +46,8 @@ Konta wpisujesz raz, w panelu: kosync, Wallabag, Dropbox (logowanie kodem), WebD
 
 Grupy ustawień wybierasz dla każdego urządzenia: wygląd tekstu, rozmiar czcionki i marginesy, poprawki stylu, czcionki, stopka i pasek postępu, słowniki, gesty, skróty klawiszowe, profile, menedżer plików, opcje statystyk, konta, KOPad, klawiatura ekranowa, asystent AI, Rosetta. Kindle może dzielić słowniki i gesty, a zostać przy własnym rozmiarze czcionki.
 
+Grupa KOPad synchronizuje jedną rzecz: mapowanie przycisków gamepada — którą rolę pełni każda kontrolka znanego układu pada (Xbox, PlayStation, Nintendo, Valve) oraz co dana rola robi podczas czytania (np. RB otwiera menu górne zamiast przewracać stronę) — które edytujesz w panelu: Wtyczki → „Ustawienia wtyczek”. To, czy KOPad jest włączony i jaki układ ma pad, zostaje na każdym urządzeniu.
+
 Ustawienia scalają się klucz po kluczu. Ustawienia należące do jednego urządzenia (DPI ekranu, podświetlenie, ścieżki, Wi-Fi, obrót, tryb nocny) nigdy nie są synchronizowane. Jeśli naraz zniknie ponad połowa synchronizowanych ustawień, np. przez uszkodzony plik, czytnik się zatrzymuje i nic nie wysyła.
 
 ## Parowanie czytnika

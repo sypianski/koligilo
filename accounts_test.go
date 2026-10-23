@@ -23,6 +23,11 @@ func TestLuaMatchesPlugin(t *testing.T) {
 		}, `{[1]={["address"]="k:s",["name"]="Moj Dropbox",["password"]="tok",["type"]="dropbox",["url"]="/"},[2]={["address"]="https://app.koofr.net/dav/Koofr",["name"]="Koofr",["password"]="p\"\\\n\001ż",["type"]="webdav",["url"]="/koreader",["username"]="a@b.pl"}}`},
 		{map[string]any{"a": 1.5, "b": -3.0, "c": 1e20, "d": true, "e": map[string]any{}},
 			`{["a"]=1.5,["b"]=-3,["c"]=1e+20,["d"]=true,["e"]={}}`},
+		// padmap kopad (TASK-25): wzorzec z Sync.serialize (tests/sync_test.lua)
+		{map[string]any{"version": 1.0, "layouts": map[string]any{
+			"nintendo": map[string]any{"south": "a", "east": "b"},
+			"xbox":     map[string]any{"ltrigger": "rt", "rtrigger": "lt"}}},
+			`{["layouts"]={["nintendo"]={["east"]="b",["south"]="a"},["xbox"]={["ltrigger"]="rt",["rtrigger"]="lt"}},["version"]=1}`},
 	}
 	for _, c := range cases {
 		got, err := encodeLua(c.v)

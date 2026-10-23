@@ -31,6 +31,22 @@ check("funkcja nieserializowalna", Sync.serialize({ f = print }) == nil)
 check("NaN odrzucony", Sync.serialize(0 / 0) == nil)
 check("inf jako klucz odrzucony", Sync.serialize({ [math.huge] = 1 }) == nil)
 
+-- padmap kopad (TASK-25, PC-011): literał zapisywany przez panel (web/lua.js, luavalue.go)
+-- == Sync.serialize bajt w bajt, klucze tekstowe, version jako liczba
+do
+    local pm = { version = 1, layouts = { nintendo = { south = "a", east = "b" },
+        xbox = { ltrigger = "rt", rtrigger = "lt" } } }
+    local want = '{["layouts"]={["nintendo"]={["east"]="b",["south"]="a"},["xbox"]={["ltrigger"]="rt",["rtrigger"]="lt"}},["version"]=1}'
+    check("padmap: serialize == literał z panelu", Sync.serialize(pm) == want, Sync.serialize(pm))
+    check("padmap: deserialize∘serialize", deep_eq(Sync.deserialize(want), pm))
+    -- katalog: grupa kopad = jedyny klucz padmap (Key); enabled i układ urządzenia nie wchodzą
+    local kopad = { { file = "settings/kopad.lua", key = "padmap" } }
+    check("padmap: allowed |padmap", Sync.allowed(kopad, "settings/kopad.lua|padmap"))
+    check("padmap: enabled poza katalogiem", not Sync.allowed(kopad, "settings/kopad.lua|enabled")
+        and not Sync.allowed(kopad, "settings/kopad.lua#enabled"))
+    check("padmap: układ urządzenia poza katalogiem", not Sync.allowed(kopad, "settings/kopad_device.lua|padmap_layout"))
+end
+
 -- parser nie wykonuje kodu
 for _, evil in ipairs({ 'os.exit(1)', '("x"):rep(9)', '{[1]=print}', '"a"..os.getenv("HOME")',
     '{[1]=1', '"\\300"', '1 2', 'function() end' }) do
@@ -262,6 +278,16 @@ check("meta: name (nie fullname)", Sync.metaField(meta, "name") == "foo")
 check("meta: version w apostrofach", Sync.metaField(meta, "version") == "1.2.3")
 check("meta: brak pola", Sync.metaField(meta, "author") == nil)
 check("meta: wyrażenie zamiast literału → nil", Sync.metaField('version = os.date()', "version") == nil)
+-- fullname w opakowaniu gettextu (panel pokazuje go zamiast nazwy katalogu)
+check("meta: fullname = _(\"…\")", Sync.metaField(meta, "fullname", 100) == "Foo — coś")
+check("meta: fullname = _('…')", Sync.metaField("fullname = _('Calibre')", "fullname") == "Calibre")
+check("meta: fullname = _ \"…\" bez nawiasów", Sync.metaField('fullname = _ "Z-library"', "fullname") == "Z-library")
+check("meta: fullname bez gettextu", Sync.metaField('fullname = "Gołe"', "fullname") == "Gołe")
+check("meta: _(wywołanie) zamiast literału → nil", Sync.metaField('fullname = _(os.date())', "fullname") == nil)
+check("meta: konkatenacja nie jest literałem → nil", Sync.metaField('fullname = prefix .. _("X")', "fullname") == nil)
+check("meta: description to nie fullname", Sync.metaField('description = _("Opis")', "fullname") == nil)
+check("meta: obcięcie nie rozcina znaku UTF-8",
+    Sync.metaField('fullname = _("ab—cd")', "fullname", 3) == "ab" and Sync.metaField('fullname = _("ab—cd")', "fullname", 5) == "ab—")
 
 -- znacznik .koligilo
 local mk = Sync.markerEncode({ sha256 = SHA_A, name = "foo", version = "1.0\nsha256=" .. SHA_B })

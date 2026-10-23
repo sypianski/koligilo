@@ -190,7 +190,7 @@ ok, err = K:applyPluginOp("install", lnk, Archiver)
 check("link w ZIP-ie: odmowa", not ok and tostring(err):find("typ"), err)
 
 -- 5) ręczne katalogi są nietykalne
-sh("mkdir -p " .. q(ROOT .. "/reczna.koplugin") .. " && echo 'return {version=\"9\"}' > " .. q(ROOT .. "/reczna.koplugin/_meta.lua"))
+sh("mkdir -p " .. q(ROOT .. "/reczna.koplugin") .. " && echo 'return {version=\"9\", fullname = _(\"Ręczna wtyczka\")}' > " .. q(ROOT .. "/reczna.koplugin/_meta.lua"))
 ok, err = K:applyPluginOp("remove", { dir = "reczna.koplugin" }, Archiver)
 check("remove bez znacznika: odmowa", not ok and sh("test -d " .. q(ROOT .. "/reczna.koplugin")), err)
 local rz = make_zip("reczna.koplugin", "1.0")
@@ -208,6 +208,7 @@ check("inwentarz: foo zarządzana z sha", inv["foo.koplugin"] and inv["foo.koplu
     and inv["foo.koplugin"].version == "2.0")
 check("inwentarz: ręczna niezarządzana, wersja z _meta", inv["reczna.koplugin"] and not inv["reczna.koplugin"].managed
     and inv["reczna.koplugin"].version == "9")
+check("inwentarz: fullname z _meta (gettext) idzie do panelu", inv["reczna.koplugin"] and inv["reczna.koplugin"].fullname == "Ręczna wtyczka")
 check("inwentarz: koligilo niezarządzany mimo znacznika", inv["koligilo.koplugin"] and not inv["koligilo.koplugin"].managed)
 
 -- 7) handlePlugins: bez potwierdzenia nic się nie zmienia; odmowa → rejected

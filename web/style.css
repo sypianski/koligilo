@@ -47,6 +47,9 @@
   --key: var(--ink); --key-soft: var(--tint);
   --shadow: none;
   --ctp-green: var(--ink); --ctp-crust: #c9c9c3; /* dawne nazwy użyte niżej */
+  /* stan synchronizacji czytnika (TASK-29): osobne tokeny, żeby --ok/--warn (tusz) nie zafarbowały
+     gwiazdek ulubionych ani ostrzeżeń wtyczek; ten sam stan niesie też kształt kropki, nie tylko kolor */
+  --st-ok: #1c6b3a; --st-warn: #8a5400;
 
   --sans: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
@@ -63,12 +66,14 @@
   :root:not([data-theme="light"]) {
     --paper: #1c1c1b; --page: #121211; --ink: #ececE6; --ink-2: #b5b5ad; --hair: #5f5f5a; --tint: #3a3a37;
     --field: #0f0f0e; --err: #ff9b8f; --warn-soft: #2a2a28; --ctp-crust: #000000;
+    --st-ok: #7bd39d; --st-warn: #f0b429;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --paper: #1c1c1b; --page: #121211; --ink: #ececE6; --ink-2: #b5b5ad; --hair: #5f5f5a; --tint: #3a3a37;
   --field: #0f0f0e; --err: #ff9b8f; --warn-soft: #2a2a28; --ctp-crust: #000000;
+  --st-ok: #7bd39d; --st-warn: #f0b429;
   color-scheme: dark;
 }
 
@@ -115,12 +120,10 @@ h1, h2, h3, h4 { font-weight: 650; line-height: 1.25; letter-spacing: -.005em; }
   border: 0; background: none; color: var(--subtext); font: inherit; font-weight: 550;
   padding: 7px 10px; border-radius: 7px; text-align: left; cursor: default;
 }
-.nav-item svg { width: 18px; height: 18px; flex: none; }
 .nav-item .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-item .count { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--subtext); background: var(--bg); border-radius: 99px; padding: 0 7px; line-height: 18px; }
 .nav-item:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); border-color: transparent; }
 .nav-item[aria-current="page"] { background: var(--accent-soft); color: var(--text); }
-.nav-item[aria-current="page"] svg { color: var(--accent-text); }
 /* charakterystyczny detal: „łącznik” — pionowa szyna akcentu przy aktywnym widoku */
 .nav-item[aria-current="page"]::before {
   content: ""; position: absolute; left: -10px; top: 7px; bottom: 7px; width: 3px;
@@ -242,13 +245,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 
 /* urządzenia */
 /* lista urządzeń: wiersze w jednym bloku tej samej szerokości co reszta */
-.devices { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
-.drow { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(0, 2fr) auto; gap: 4px 18px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--border); }
-.drow:first-child { border-top: 0; }
-.drow .dname { font-weight: 600; font-size: 15px; }
-.drow .dmeta { font-size: 13px; color: var(--subtext); line-height: 1.5; }
-.drow .dact { display: flex; gap: 6px; justify-content: flex-end; }
-@media (max-width: 760px) { .drow { grid-template-columns: 1fr; } .drow .dact { justify-content: flex-start; } }
 .device h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .device h3 button { font-size: 11.5px; padding: 1px 8px; font-weight: 500; }
 .device dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 10px 0 12px; font-size: 13px; }
@@ -466,7 +462,6 @@ table.matrix.plugins td.warn { color: var(--warn); }
   .nav { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .nav ul { flex-direction: row; }
   .nav-item { width: auto; padding: 8px; }
-  .nav-item .label, .nav-item .count { display: none; }
   .nav-item[aria-current="page"]::before { left: 8px; right: 8px; top: auto; bottom: -6px; width: auto; height: 3px; border-radius: 3px 3px 0 0; }
   .side-foot { border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 6px; }
   .side-mode { display: none; } /* za mało miejsca w poziomym pasku; zostaje sam wpis „Ustawienia” */
@@ -503,7 +498,6 @@ h1, h2, h3, h4 { font-weight: 700; letter-spacing: -.005em; }
   border: 2px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0;
   color: var(--text); font-weight: 500; white-space: nowrap;
 }
-.nav-item svg { display: none; }
 .nav-item .count { background: none; color: var(--subtext); padding: 0; font-size: 13px; }
 .nav-item .count::before { content: "("; } .nav-item .count::after { content: ")"; }
 .nav-item:hover { background: none; text-decoration: underline; text-underline-offset: 3px; }
@@ -517,13 +511,14 @@ h1, h2, h3, h4 { font-weight: 700; letter-spacing: -.005em; }
 .view-head { margin: 0 0 20px; padding: 22px 0 10px; background: var(--bg); backdrop-filter: none; border-bottom: 0; }
 .view-head h1 { font-size: 30px; }
 .view-head .sub { font-size: 14px; }
+.view-head { flex-wrap: wrap; }
 
 .status { background: var(--status); border-top: 2px solid var(--rule); color: var(--text); font-size: 12.5px; }
 .status kbd { background: var(--field); }
 .conn .dot { box-shadow: none; }
 
 /* karty i callouty: ten sam obrys, ta sama szerokość */
-.card, .explain, .devices { background: var(--surface); border: 2px solid var(--rule); border-radius: 10px; box-shadow: none; }
+.card, .explain { background: var(--surface); border: 2px solid var(--rule); border-radius: 10px; box-shadow: none; }
 .explain { padding: 14px 20px; margin: 0 0 18px; font-size: 15.5px; line-height: 1.65; }
 .explain p { max-width: 72ch; }
 .card { padding: 18px 20px; }
@@ -542,6 +537,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 .option.selected { border-color: var(--rule); box-shadow: inset 0 0 0 1px var(--rule); }
 .pair { border: 2px solid var(--rule); }
 .pair .code { background: var(--tint); color: var(--ink); }
+/* zwarty baner (TASK-29): kod mniejszy, przyciski po prawej, cała prośba ok. 90 px zamiast 166 */
+.pair { gap: 8px 16px; padding: 12px 18px; }
+.pair .code { font-size: 26px; padding: 6px 10px; letter-spacing: .12em; }
+.pair .what { min-width: 220px; }
+.pair h3 { margin: 0 0 2px; font-size: 16px; }
+.pair h3 .small { font-weight: 400; }
+.pair p { margin: 0; }
+.pair-acts { flex: none; }
 .steps li::before { background: var(--surface); box-shadow: inset 0 0 0 2px var(--rule); color: var(--ink); }
 .badge { background: var(--ink); color: var(--on-accent); }
 .badge.soon, .cloudrow .badge { box-shadow: inset 0 0 0 1px var(--rule); color: var(--text); }
@@ -561,33 +564,37 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 .pv { border-left: 2px solid var(--rule); }
 
 /* urządzenia jak spis treści: nazwa … kropki … ostatnia synchronizacja */
-.drow { display: block; padding: 16px 20px; border-top: 1px solid var(--rule); }
-.drow:first-child { border-top: 0; }
-.toc { display: flex; align-items: baseline; gap: 10px; }
-.toc .dname { font-weight: 700; font-size: 18px; }
-.toc .dots { flex: 1; min-width: 24px; border-bottom: 2px dotted var(--ink); transform: translateY(-5px); }
-.toc .when { font-size: 15.5px; white-space: nowrap; }
-.toc .when.never { font-style: italic; }
-.drow .dsub { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 18px; margin-top: 4px; }
-.drow .dmeta { font-size: 14px; color: var(--subtext); }
-.drow .dact { display: flex; gap: 8px; }
+/* stan synchronizacji (TASK-29): pełna kropka = synchronizuje się, pusta = cicho, kreskowana = jeszcze nie */
+.hdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; border: 2px solid var(--ink-2); flex: none; }
+.hdot.ok { background: var(--st-ok); border-color: var(--st-ok); }
+.hdot.warn { background: transparent; border-color: var(--st-warn); }
+.hdot.na { background: transparent; border-style: dashed; }
+.hword.warn { color: var(--st-warn); font-weight: 600; }
+.hword.na { font-style: italic; }
 
 /* podgląd strony przy pasku zakładek u góry */
 .shell.pv-open { grid-template-columns: minmax(0, 1fr) var(--pv-w); grid-template-areas: "side side" "content pv" "status status"; }
 @media (max-width: 1100px) {
   .shell.pv-open { grid-template-columns: minmax(0, 1fr); grid-template-areas: "side" "content" "status"; }
 }
-/* za mało miejsca na siedem napisów: nieaktywne zakładki zostają przy ikonie
-   (nazwa w title i aria), aktywna zachowuje napis */
-@media (max-width: 1180px) {
-  .nav-item:not([aria-current="page"]) svg { display: block; }
-  .nav-item:not([aria-current="page"]) .label, .nav-item:not([aria-current="page"]) .count { display: none; }
-  .nav-item:not([aria-current="page"]) { padding-inline: 11px; }
+/* węższe okno (domyślne okno aplikacji ma 1180 px): napisy zakładek zostają,
+   zakładki tylko się zagęszczają — z samych ikon nie dało się poznać, co jest gdzie.
+   Gdy i tak się nie mieszczą, pasek przewija się poziomo, a przyciemniona krawędź
+   (.more-l / .more-r, ustawiane w navFit()) pokazuje, że po tamtej stronie jest więcej. */
+@media (max-width: 1240px) {
+  .side { flex-wrap: nowrap; }
+  .brand { flex: none; }
+  .brand span { display: none; }
+  .nav-item { padding-inline: 11px; }
+  .nav-item:not([aria-current="page"]) .count { display: none; }
 }
+.nav { position: relative; }
+.nav.more-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+.nav.more-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent); }
+.nav.more-l.more-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
 @media (max-width: 760px) {
   .side { padding: 6px 8px 0; }
   .brand { padding: 0 6px 10px 0; }
-  .nav-item svg { display: block; }
   .nav-item { padding: 8px 10px 10px; }
   .content { padding: 0 16px 24px; }
   .view-head { padding: 16px 0 8px; }
@@ -607,3 +614,107 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 .star.on, .star[aria-pressed="true"] { color: var(--ink); }
 /* karta w karcie (np. Aplikacja → Serwer): cieńszy obrys */
 .card .card { border-width: 1px; border-color: var(--hair); }
+
+/* gamepad: mapowanie przycisków KOPada (TASK-25) */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Wtyczki → Ustawienia wtyczek (TASK-26): sekcja na wtyczkę, nagłówek z nazwą */
+.plugset > section + section { margin-top: 22px; }
+.plugset h2 { font-size: 18px; margin: 2px 0 10px; }
+.padcard { margin-bottom: 14px; }
+.padcard h3 { font-size: 15.5px; margin: 0 0 4px; }
+.padintro { max-width: 78ch; margin: 4px 0; }
+.padwarn { border: 2px solid var(--err); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.padwarn p { margin: 0 0 6px; }
+.padcard .tabs .dirty { margin-left: 6px; font-size: 11px; }
+.padgrid { display: grid; grid-template-columns: minmax(260px, 380px) minmax(280px, 1fr); gap: 20px; align-items: start; margin: 8px 0 14px; }
+.padsvgbox { min-width: 0; }
+.padsvg { width: 100%; height: auto; max-width: 400px; display: block; }
+.padsvg .pbody { fill: var(--field); stroke: var(--rule); stroke-width: 2; stroke-linejoin: round; }
+.padsvg .pdeco * { fill: none; stroke: var(--hair); stroke-width: 2; }
+.padsvg .pctl { cursor: pointer; }
+.padsvg .pctl rect, .padsvg .pctl circle { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
+.padsvg .pctl text { fill: var(--ink); font: 700 11px var(--sans); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.padsvg .pctl text.sm { font-size: 9.5px; font-weight: 600; }
+.padsvg .pctl text.face { font-size: 12px; }
+.padsvg .pctl:hover rect, .padsvg .pctl:hover circle { fill: var(--accent-soft); }
+.padsvg .pctl.chg rect, .padsvg .pctl.chg circle { fill: var(--ink); }
+.padsvg .pctl.chg text { fill: var(--on-accent); }
+.padsvg .pctl.chg text.sm { fill: var(--ink); }
+.padlist { display: flex; flex-direction: column; min-width: 0; }
+.padrow { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 4px 10px; align-items: center; padding: 6px 8px; margin: 0 -8px; border-top: 1px solid var(--border); border-radius: 6px; }
+.padrow:first-child { border-top: 0; }
+.padrow.chg { background: var(--accent-soft); }
+.padrow label { display: flex; flex-direction: column; font-weight: 600; font-size: 13.5px; }
+.padrow .pk { font-size: 15px; }
+.padrow label .muted { font-weight: 400; }
+.padsel { display: flex; flex-direction: column; gap: 2px; min-width: 0; align-items: flex-start; }
+.padsel select { width: 100%; max-width: 280px; min-width: 0; }
+.actcard .padsel select { max-width: 340px; }
+.padactions { margin-top: 4px; }
+@media (max-width: 760px) {
+  .padgrid { grid-template-columns: 1fr; }
+}
+
+/* nazwy wtyczek (pluginLabel/galleryTitle): nazwa „po ludzku”, nazwa katalogu — drobnym drukiem obok */
+.pname { font-weight: 600; }
+.pdir { display: block; color: var(--subtext); font-size: 12.5px; font-weight: 400; overflow-wrap: anywhere; }
+h3 .pdir, h4 .pdir { display: inline; margin-left: 8px; }
+
+/* zwijany wstęp (explainFold): zwinięty to jedna linia z sednem, rozwinięty — pełny tekst */
+details.explain > summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+details.explain > summary::-webkit-details-marker { display: none; }
+details.explain > summary::before { content: "▸"; flex: none; font-size: 13px; }
+details.explain[open] > summary::before { content: "▾"; }
+details.explain[open] > summary { margin-bottom: 8px; }
+details.explain:not([open]) { padding-block: 10px; }
+details.explain > p:last-child { margin-bottom: 0; }
+
+/* urządzenia jako tabela (TASK-29) */
+table.matrix.devtable th, table.matrix.devtable td { text-align: left; padding: 11px 14px; vertical-align: middle; }
+table.matrix.devtable thead th { position: static; }
+table.matrix.devtable .dn { font-size: 15.5px; }
+table.matrix.devtable .hcell { white-space: nowrap; }
+table.matrix.devtable .dact { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+table.matrix.devtable tr.x td { background: var(--warn-soft); }
+table.matrix.devtable tr.x .row { gap: 10px; }
+/* zawartość paska (komórka colspan) nie może poszerzać kolumn tabeli: width 0 + min-width 100% */
+table.matrix.devtable td[colspan] > .row, table.matrix.devtable td[colspan] > form { width: 0; min-width: 100%; }
+.dlabel { font-weight: 600; }
+
+/* tabele wtyczek w wąskim oknie: wiersz = „karta”, komórki z etykietą kolumny (labelCells w app.js).
+   Nagłówek zostaje dla czytników ekranu, tylko niewidoczny. Próg 620 px — tyle (zmierzone)
+   potrzebują sześć kolumn, zanim zaczną się ucinać. */
+@media (max-width: 620px) {
+  table.matrix.plugins thead,
+  table.matrix.devtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.matrix.plugins, table.matrix.plugins tbody, table.matrix.plugins tr,
+  table.matrix.devtable, table.matrix.devtable tbody, table.matrix.devtable tr { display: block; }
+  table.matrix.plugins tr,
+  table.matrix.devtable tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  table.matrix.plugins tr:last-child,
+  table.matrix.devtable tr:last-child { border-bottom: 0; }
+  table.matrix.plugins td,
+  table.matrix.devtable td { display: grid; grid-template-columns: minmax(7.5em, 38%) minmax(0, 1fr); gap: 8px; padding: 3px 0; border: 0; text-align: left; }
+  table.matrix.plugins td::before,
+  table.matrix.devtable td::before { content: attr(data-label); color: var(--subtext); font-size: 12.5px; }
+  table.matrix.plugins td:first-child,
+  table.matrix.devtable td:first-child { display: block; font-size: 15px; padding-bottom: 4px; }
+  table.matrix.plugins td:first-child::before,
+  table.matrix.devtable td:first-child::before { content: none; }
+  table.matrix.plugins td:empty,
+  table.matrix.devtable td:empty { display: none; }
+  table.matrix.plugins td button,
+  table.matrix.devtable td button { justify-self: start; }
+}
+
+@media (max-width: 620px) {
+  table.matrix.devtable td[colspan] { display: block; }
+  table.matrix.devtable td[colspan]::before { content: none; }
+  table.matrix.devtable .dact { justify-content: flex-start; }
+}
+
+/* „Dodaj czytnik” (TASK-29) */
+code { overflow-wrap: anywhere; } /* długi adres pluginu nie poszerza karty w wąskim oknie */
+button.linkbtn { border: 0; background: none; padding: 0; color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+button.linkbtn:hover { background: none; }
+.codeform { margin-top: 8px; }

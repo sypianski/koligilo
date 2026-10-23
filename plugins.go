@@ -61,11 +61,14 @@ type PluginVersion struct {
 
 // InstalledPlugin — wpis inwentarza zgłoszony przez czytnik.
 type InstalledPlugin struct {
-	Dir     string `json:"dir"`
-	Name    string `json:"name,omitempty"`
-	Version string `json:"version,omitempty"`
-	Managed bool   `json:"managed"` // ma znacznik .koligilo
-	SHA256  string `json:"sha256,omitempty"`
+	Dir  string `json:"dir"`
+	Name string `json:"name,omitempty"`
+	// Fullname: nazwa „po ludzku” z _meta.lua czytnika (np. „Calibre”) — dla wtyczek,
+	// których nie ma w magazynie, więc panel nie zna ich fullname. Starsze pluginy nie wysyłają.
+	Fullname string `json:"fullname,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Managed  bool   `json:"managed"` // ma znacznik .koligilo
+	SHA256   string `json:"sha256,omitempty"`
 }
 
 // PluginResult — wynik jednej operacji na czytniku.
@@ -698,7 +701,7 @@ func (st *Store) ReportPlugins(d *Device, rep *PluginReport) error {
 			break
 		}
 		inv = append(inv, InstalledPlugin{
-			Dir: clip(p.Dir, 80), Name: clip(p.Name, 100), Version: clip(p.Version, 60),
+			Dir: clip(p.Dir, 80), Name: clip(p.Name, 100), Fullname: clip(strings.TrimSpace(p.Fullname), 100), Version: clip(p.Version, 60),
 			Managed: p.Managed, SHA256: clip(p.SHA256, 64),
 		})
 	}

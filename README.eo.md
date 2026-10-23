@@ -48,6 +48,8 @@ Kontojn vi entajpas unufoje en la panelo: kosync, Wallabag, Dropbox (ensaluto pe
 
 Vi elektas grupojn de agordoj por ĉiu aparato: aspekto de teksto, tipara grando kaj marĝenoj, stilaj korektoj, tiparoj, piedlinio kaj progresbreto, vortaroj, gestoj, klavkombinoj, profiloj, dosiermastrumilo, opcioj de statistikoj, kontoj, KOPad, ekrana klavaro, AI-asistanto, Rosetta. Via Kindle povas kunhavi vortarojn kaj gestojn, sed konservi sian propran tiparan grandon.
 
+La grupo KOPad sinkronigas nur unu aferon: la mapadon de butonoj de ludregilo — kiun rolon plenumas ĉiu butono de ĉiu konata aranĝo (Xbox, PlayStation, Nintendo, Valve) kaj kion ĉiu rolo faras dum legado (ekz. RB malfermas la supran menuon anstataŭ ŝanĝi paĝon) — kiun vi redaktas en la panelo: Wtyczki → „Ustawienia wtyczek“. Ĉu KOPad estas ŝaltita kaj kiun aranĝon havas la ludregilo, restas en ĉiu aparato.
+
 Agordoj kunfandiĝas ŝlosilon post ŝlosilo. Agordoj, kiuj apartenas al unu aparato (ekrana DPI, fronta lumo, vojoj, Wi-Fi, turnado, nokta reĝimo), neniam estas sinkronigataj. Se pli ol duono de la sinkronigataj agordoj malaperas samtempe, ekzemple pro difektita dosiero, la legilo haltas kaj sendas nenion.
 
 ## Parigo de legilo

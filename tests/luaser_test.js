@@ -16,6 +16,8 @@ const cases = [
   { b: true, a: false, B: 1, "": 1, "😀": 2, "ą": 3, "klucz.z.kropką": 7 },
   M([[1, "a"], ["1", "b"], [2.5, true], [-1, 0], ["x", M([[1, [5, 5]]])]]),
   { time: true, battery: false, text_font_size: 14, item_prefix: "icons", nested: { deep: { er: [0.8, 1.9] } } },
+  // padmap kopad (TASK-25, PC-011): klucze tekstowe, version jako liczba
+  { version: 1, layouts: { nintendo: { south: "a", east: "b" }, valve: { back: "start", start: "select" }, xbox: { ltrigger: "rt", rtrigger: "lt" } } },
 ];
 // + wszystkie presety i domyślne z mapy KOReadera (to, co faktycznie klikają kontrolki)
 for (const o of KO.opts) for (const v of [...(o.values || []), o.default, o.on, o.off]) if (v !== undefined) cases.push(v);

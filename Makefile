@@ -11,6 +11,7 @@ build:
 
 # testy: Go (routery, katalog) + czysta logika pluginu (Lua) + składnia UI
 # + literały z kontrolek panelu == Sync.serialize (luaser_test.js)
+# + logika edytora gamepada (padmap_test.js: mapowanie, różnice, round-trip)
 test:
 	go vet ./...
 	go test ./...
@@ -20,7 +21,9 @@ test:
 	node --check web/lua.js
 	node --check web/koreader_opts.js
 	node --check web/preview.js
+	node --check web/padmap.js
 	node tests/preview_test.js
+	node tests/padmap_test.js
 	node tests/luaser_test.js
 
 # mapa ustawień KOReadera (web/koreader_opts.js) ze źródeł przypiętych do tagu

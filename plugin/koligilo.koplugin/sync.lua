@@ -530,13 +530,31 @@ function Sync.pluginPackEntryOK(rel, mode)
     return true
 end
 
+-- Obcina do n bajtów, nie rozcinając znaku UTF-8 (fullname bywa po polsku/chińsku).
+local function clip_utf8(s, n)
+    if #s <= n then return s end
+    local cut = n
+    while cut > 0 do
+        local b = s:byte(cut + 1)
+        if not b or b < 128 or b >= 192 then break end -- cut+1 zaczyna znak, nie jego ciąg dalszy
+        cut = cut - 1
+    end
+    return s:sub(1, cut)
+end
+
 --- Pole z _meta.lua wtyczki czytane WYŁĄCZNIE wyrażeniem regularnym
--- (to kod obcej wtyczki — nigdy dofile/load). Tylko prosty literał "…"/'…'.
-function Sync.metaField(src, key)
+-- (to kod obcej wtyczki — nigdy dofile/load). Tylko prosty literał "…"/'…',
+-- także w opakowaniu gettextu: fullname = _("X") / _ "X" (tak pisze _meta.lua
+-- KOReader i jego wtyczki). Co innego (konkatenacja, wywołanie) → nil.
+function Sync.metaField(src, key, max)
     if type(src) ~= "string" then return nil end
     for _, q in ipairs({ '"', "'" }) do
-        local v = src:match("%f[%w_]" .. key .. "%s*=%s*" .. q .. "([^" .. q .. "\n\\]*)" .. q)
-        if v then return v:sub(1, 60) end
+        local lit = "([^" .. q .. "\n\\]*)" .. q
+        local head = "%f[%w_]" .. key .. "%s*=%s*"
+        local v = src:match(head .. q .. lit)
+            or src:match(head .. "_%s*%(%s*" .. q .. lit)
+            or src:match(head .. "_%s*" .. q .. lit)
+        if v then return clip_utf8(v, max or 60) end
     end
     return nil
 end

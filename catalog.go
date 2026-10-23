@@ -32,6 +32,11 @@ type Group struct {
 
 const readerFile = "settings.reader.lua"
 
+// Plik ustawień KOPada. Wspólny jest tylko klucz padmap (format: PC-011 i PC-014,
+// walidacja: padmap.go); flaga enabled i wybór układu pada zostają lokalne
+// (PC-012) — włączenie KOPada na Decku nie może włączać go na czytniku bez pada.
+const kopadFile = "settings/kopad.lua"
+
 func pfx(s string) *string { return &s }
 
 // Klucze układu strony zależne od fizycznego ekranu — osobna grupa, domyślnie off.
@@ -147,8 +152,8 @@ var Catalog = []Group{
 	},
 	{
 		ID: "kopad", Name: "KOPad",
-		Description: "Ustawienia wtyczki KOPad (plik settings/kopad.lua). Na dziś plik jest pusty (`return {}`) — grupa łapie cokolwiek się tam pojawi w przyszłości.",
-		Entries:     []Entry{{File: "settings/kopad.lua", Prefix: pfx("")}},
+		Description: "Mapowanie przycisków gamepada dla wtyczki KOPad: która kontrolka pada pełni jaką rolę (osobno dla każdego znanego układu: Xbox, PlayStation, Nintendo, Valve) oraz co dana rola robi podczas czytania (np. RB otwiera menu zamiast przewracać stronę). Układ pada wybiera się na samym urządzeniu (menu → kopad → „Gamepad layout”), a włączenie KOPada też zostaje lokalne. Edytor jest w Wtyczki → „Ustawienia wtyczek”.",
+		Entries:     keys(kopadFile, "padmap"),
 	},
 	{
 		ID: "klawiatura", Name: "Klawiatura ekranowa",
@@ -193,6 +198,7 @@ var NeverSynced = []struct {
 	{"Ścieżki (folder domowy, ostatni plik, folder pobierania)", "każdy system ma inny układ katalogów — przeniesiona ścieżka wskazywałaby w próżnię"},
 	{"Wi-Fi i akcje sieciowe", "dotyczą sprzętu i sieci konkretnego urządzenia"},
 	{"Identyfikator urządzenia", "musi być unikalny — dzięki niemu serwer postępu odróżnia Twoje czytniki"},
+	{"Włączenie KOPada i układ pada na urządzeniu", "każde urządzenie ma inny pad, a włączony KOPad przejmuje klawisze czytnika — to ma zostać decyzją danego urządzenia (wspólne jest tylko mapowanie przycisków)"},
 	{"Postęp czytania, zakreślenia, statystyki", "mają własne, wbudowane mechanizmy (kosync, statystyki) — koligilo tylko je konfiguruje"},
 }
 

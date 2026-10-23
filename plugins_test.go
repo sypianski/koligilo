@@ -325,7 +325,7 @@ func TestPluginAssignSyncReport(t *testing.T) {
 		t.Fatalf("raport: %d %v", c, out)
 	}
 	// Kolejny sync bez wyników nie kasuje ostatniego wyniku instalacji.
-	rep["plugins"] = map[string]any{"installed": []map[string]any{{"dir": "foo.koplugin", "version": "1.2", "managed": true}}}
+	rep["plugins"] = map[string]any{"installed": []map[string]any{{"dir": "foo.koplugin", "fullname": "  Foo — coś  ", "version": "1.2", "managed": true}}}
 	e.jsonDo(tok1, "POST", "/api/v1/sync", rep)
 	// Sync bez pola plugins (stary plugin) nie rusza inwentarza.
 	e.jsonDo(tok1, "POST", "/api/v1/sync", map[string]any{"set": map[string]string{}})
@@ -341,6 +341,9 @@ func TestPluginAssignSyncReport(t *testing.T) {
 	res, _ := dev["plugin_results"].([]any)
 	if len(inv) != 1 || inv[0].(map[string]any)["managed"] != true {
 		t.Errorf("inwentarz = %v", dev["plugin_inventory"])
+	}
+	if len(inv) == 1 && inv[0].(map[string]any)["fullname"] != "Foo — coś" {
+		t.Errorf("fullname z czytnika = %v, chcę przyciętą nazwę", inv[0])
 	}
 	if len(res) != 3 || res[1].(map[string]any)["status"] != "rejected" || res[2].(map[string]any)["status"] != "error" {
 		t.Errorf("wyniki = %v", dev["plugin_results"])

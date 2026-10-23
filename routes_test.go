@@ -57,7 +57,12 @@ func TestCatalogMatches(t *testing.T) {
 		"settings/wallabag.lua|wallabag.password":  "konto_wallabag",
 		"settings/wallabag.lua|wallabag.directory": "",
 		"settings.reader.lua|device_id":            "",
-		"settings/kopad.lua#anything":              "kopad",
+		"settings/kopad.lua|padmap":                "kopad",
+		"settings/kopad.lua|enabled":               "", // flaga włączenia KOPada jest lokalna (PC-012)
+		"settings/kopad.lua#enabled":               "",
+		"settings/kopad.lua#padmap":                "", // padmap to wpis Key (|), nie Prefix (#)
+		"settings/kopad.lua#anything":              "",
+		"settings/kopad_device.lua|padmap_layout":  "", // układ pada na tym urządzeniu — lokalny
 		"settings/kokeyboard.lua#label_order":      "klawiatura",
 		"settings/assistant.lua|provider":          "asystent",
 		"settings/rosetta.lua|font_size":           "rosetta_ustawienia",

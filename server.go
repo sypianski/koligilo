@@ -299,6 +299,10 @@ func (s *Server) adminSetValues(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": fmt.Sprintf("niepoprawny literał Lua dla %s: %v", id, err)})
 			return
 		}
+		if err := validateValue(id, lit); err != nil {
+			writeJSON(w, 400, map[string]string{"error": fmt.Sprintf("niepoprawna wartość %s: %v", id, err)})
+			return
+		}
 		v := lit
 		set[id] = &v
 	}

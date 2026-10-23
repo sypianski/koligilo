@@ -225,6 +225,43 @@ check("serwer zgłasza usunięcie drugiemu czytnikowi", c9 == 200 and found9)
 sync(bigme)
 check("Bigme usunął wartość, nie wskrzesił jej", bigme.files[R].data.toc_items_per_page == nil, bigme.files[R].data.toc_items_per_page)
 
+print("[9b. padmap z panelu trafia na czytnik; enabled i układ zostają lokalne (TASK-25)]")
+local KP = "settings/kopad.lua"
+local PADMAP = KP .. "|padmap"
+kobo.files[KP] = { exists = true, data = { enabled = true } }  -- Kobo ma KOPada włączonego lokalnie
+bigme.files[KP] = { exists = true, data = { enabled = false } }
+for _, dev in ipairs({ kobo, bigme }) do
+    check(dev.name .. ": włączenie grupy kopad w panelu", (http("POST", "/api/admin/devices/" .. dev.id .. "/groups", ADMIN,
+        { group = "kopad", on = true })) == 200)
+end
+-- z układem valve (TASK-26): serwer go przyjmuje, czytnik dostaje bajt w bajt
+local PADLIT = '{["layouts"]={["nintendo"]={["east"]="b",["south"]="a"},["valve"]={["back"]="start",["start"]="select"},["xbox"]={["ltrigger"]="rt",["rtrigger"]="lt"}},["version"]=1}'
+check("panel: zły padmap (nieznana rola) → 400", (http("POST", "/api/admin/values", ADMIN,
+    { set = { [PADMAP] = '{["layouts"]={["xbox"]={["south"]="none"}},["version"]=1}' } })) == 400)
+check("panel: nieznany układ (steamdeck) → 400", (http("POST", "/api/admin/values", ADMIN,
+    { set = { [PADMAP] = '{["layouts"]={["steamdeck"]={}},["version"]=1}' } })) == 400)
+check("panel: zapis padmap", (http("POST", "/api/admin/values", ADMIN, { set = { [PADMAP] = PADLIT } })) == 200)
+local pk = sync(kobo)
+local K = kobo.files[KP].data
+check("Kobo: padmap z panelu (version liczbą, klucze tekstowe)", K.padmap and K.padmap.version == 1
+    and K.padmap.layouts.nintendo.south == "a" and K.padmap.layouts.nintendo.east == "b"
+    and K.padmap.layouts.xbox.ltrigger == "rt" and K.padmap.layouts.xbox.rtrigger == "lt"
+    and K.padmap.layouts.valve.back == "start" and K.padmap.layouts.valve.start == "select", J.encode(K))
+check("Kobo: własne enabled nietknięte", K.enabled == true)
+check("Kobo NIE wysłał enabled", pk.upload[KP .. "|enabled"] == nil and pk.upload[KP .. "#enabled"] == nil)
+local pb9 = sync(bigme)
+local B = bigme.files[KP].data
+check("Bigme: padmap z panelu", B.padmap and B.padmap.version == 1 and B.padmap.layouts.xbox.ltrigger == "rt"
+    and B.padmap.layouts.valve.back == "start")
+check("Bigme: własne enabled=false NIE przestawione przez Kobo", B.enabled == false)
+check("Bigme NIE wysłał enabled", pb9.upload[KP .. "|enabled"] == nil)
+local p9k = sync(kobo)
+check("Kobo po drugiej synchronizacji nic nie wysyła (literał bajt w bajt)", p9k.upload[PADMAP] == nil and #p9k.delete == 0)
+check("panel: usunięcie padmap (brak nadpisań)", (http("POST", "/api/admin/values", ADMIN, { delete = { PADMAP } })) == 200)
+sync(kobo); sync(bigme)
+check("Kobo usunął padmap, enabled zostaje", kobo.files[KP].data.padmap == nil and kobo.files[KP].data.enabled == true)
+check("Bigme usunął padmap, enabled zostaje", bigme.files[KP].data.padmap == nil and bigme.files[KP].data.enabled == false)
+
 -- wtyczki (TASK-8): zgoda z czytnika, plan, pobranie i własne sha256 --------------
 local function run(cmd) local p = io.popen(cmd); local s = p:read("a"); p:close(); return s end
 local ptmp = run("mktemp -d"):gsub("%s+$", "")

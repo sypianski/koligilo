@@ -522,6 +522,7 @@ function Koligilo:pluginInventory()
                 local item = {
                     dir = entry, managed = false,
                     name = Sync.metaField(meta, "name") or plugin_base(entry),
+                    fullname = Sync.metaField(meta, "fullname", 100), -- nazwa „po ludzku” dla panelu
                     version = Sync.metaField(meta, "version"),
                 }
                 if own and entry ~= Sync.SELF_PLUGIN and is_file(p .. "/" .. Sync.PLUGIN_MARKER) then
@@ -547,7 +548,7 @@ end
 local function inventory_list(inv)
     local out = {}
     for _k, v in pairs(inv) do
-        out[#out + 1] = { dir = v.dir, name = v.name, version = v.version, managed = v.managed, sha256 = v.sha256 }
+        out[#out + 1] = { dir = v.dir, name = v.name, fullname = v.fullname, version = v.version, managed = v.managed, sha256 = v.sha256 }
     end
     table.sort(out, function(a, b) return a.dir < b.dir end)
     return out
