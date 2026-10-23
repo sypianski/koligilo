@@ -26,7 +26,7 @@ The panel and the reader plugin are in Polish for now.
 
 ## Download
 
-**[Download koligilo.dmg](https://github.com/sypianski/koligilo/releases/latest/download/koligilo.dmg)** for macOS, version 0.5.4, released 4 October 2026. Windows, Linux and the e-reader plugin are in the table below.
+**[Download koligilo.dmg](https://github.com/sypianski/koligilo/releases/latest/download/koligilo.dmg)** for macOS, version 0.5.10, released 23 October 2026. Windows, Linux and the e-reader plugin are in the table below.
 
 The computer side runs on **macOS, Windows and Linux**. It is the same app with the same panel everywhere. The e-reader needs KOReader.
 
