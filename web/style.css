@@ -899,3 +899,27 @@ button.help-q { width: 22px; height: 22px; padding: 0; border-radius: 50%; font-
 .hit { padding: 4px 0; border-top: 1px solid var(--border); }
 .hit:first-of-type { border-top: 0; }
 .hitsec { display: block; margin: 2px 0 0; }
+
+/* spis sekcji w „Ustawieniach czytników” (TASK-32): szerokość mierzy kontener, nie okno */
+.valwrap { container-type: inline-size; }
+.valsplit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.secnav-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.secnav-list button { display: inline-flex; gap: 7px; align-items: baseline; border: 2px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--text); padding: 4px 11px; font-weight: 600; }
+.secnav-list button small { font-variant-numeric: tabular-nums; font-weight: 400; color: var(--subtext); }
+.secnav-list button[aria-current="true"] { background: var(--ink); color: var(--on-accent); }
+.secnav-list button[aria-current="true"] small { color: inherit; }
+.secnav-sel { display: none; align-items: center; gap: 8px; }
+.secnav-sel select { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--field); border: 2px solid var(--rule); border-radius: 8px; padding: 6px 8px; }
+.valmain { margin-bottom: 0; }
+@container (min-width: 760px) {
+  .valsplit { grid-template-columns: 210px minmax(0, 1fr); gap: 18px; }
+  .secnav { position: sticky; top: 8px; }
+  .secnav-list { flex-direction: column; flex-wrap: nowrap; gap: 4px; }
+  .secnav-list button { justify-content: space-between; border-width: 0; border-radius: 8px; padding: 7px 10px; background: none; text-align: left; }
+  .secnav-list button:hover { background: var(--accent-soft); }
+  .secnav-list button[aria-current="true"] { background: var(--ink); }
+}
+@container (max-width: 460px) {
+  .secnav-list { display: none; }
+  .secnav-sel { display: flex; }
+}

@@ -45,6 +45,7 @@ const S = {
   valMsg: {},          // komunikaty per wartość: {ok, text}
   valBusy: null,       // id wartości w trakcie zapisu/wczytywania
   valNew: {},          // szkice nowych wartości (klucz spoza katalogu): groupId -> {key, type, text, bool, error}
+  valSec: null,        // wybrana sekcja w spisie widoku „Ustawienia czytników” (id sekcji KO, null = pierwsza, TASK-32)
   valQ: "",           // pole „Szukaj ustawienia” w widoku „Ustawienia czytników” (TASK-32)
   valSel: null,        // zaznaczone ustawienie (id) — otwiera panel podglądu strony (TASK-23, web/preview.js)
   valFull: {},         // pełne literały przyciętych podglądów: id -> {t, lit}
@@ -2362,6 +2363,35 @@ function searchResults(hits, byId) {
     skipped > 0 && h("p", { class: "muted small" }, `… i ${skipped} ${plPl(skipped, "poprawka więcej", "poprawki więcej", "poprawek więcej")} — zawęź szukanie.`));
 }
 
+// Licznik sekcji w spisie: [ustawione, wszystkie]. Poprawki i flagi liczą włączone pozycje, nie wiersz.
+function sectionCount(opts, byId) {
+  let n = 0, total = 0;
+  for (const o of opts) {
+    const id = idFor(o.file, o.key);
+    const cv = id ? currentValue(byId.get(id)) : { state: "absent" };
+    if (o.kind === "tweaks") { total += KO.tweaks.length; if (cv.state === "ok" && cv.value instanceof Map) n += KO.tweaks.filter(t => cv.value.get(t.id) === true).length; }
+    else if (o.kind === "flags") { total += o.flags.length; if (cv.state === "ok" && cv.value instanceof Map) n += o.flags.filter(f => cv.value.get(f.k) === true).length; }
+    else { total += 1; if (cv.state !== "absent") n += 1; }
+  }
+  return [n, total];
+}
+
+// Spis sekcji: lista z lewej (szeroki widok), rząd przycisków nad listą (średni), lista rozwijana (wąski).
+// Szerokość mierzy kontener `.valwrap` (container query), bo podgląd strony zabiera część okna.
+function sectionNav(secs, cur) {
+  const pick = id => { S.valSec = id; S.valEx = null; render(); };
+  const lbl = ([n, t]) => `${n}/${t}`;
+  return h("div", { class: "secnav" },
+    h("nav", { class: "secnav-list", "aria-label": "Sekcje ustawień" }, secs.map(x =>
+      h("button", { type: "button", "aria-current": x.sec.id === cur.sec.id ? "true" : null, "data-fk": "sec~" + x.sec.id,
+        onclick: () => { pick(x.sec.id); app.querySelector(`[data-fk="${CSS.escape("sec~" + x.sec.id)}"]`)?.focus(); },
+        title: `${x.count[0]} z ${x.count[1]} ustawionych wspólnie` },
+        h("span", {}, x.sec.label), h("small", {}, lbl(x.count))))),
+    h("label", { class: "secnav-sel" }, h("span", { class: "muted small" }, "Sekcja"),
+      h("select", { id: "f-valsec", "aria-label": "Sekcja ustawień", onchange: ev => { pick(ev.target.value); document.getElementById("f-valsec")?.focus(); } },
+        secs.map(x => h("option", { value: x.sec.id, selected: x.sec.id === cur.sec.id }, `${x.sec.label} (${lbl(x.count)})`)))));
+}
+
 function valuesTab() {
   // Grupy Secret (konta/poświadczenia) żyją wyłącznie w zakładce „Konta” (TASK-21 AC1).
   const catalog = S.state.catalog.filter(g => !g.secret);
@@ -2370,15 +2400,21 @@ function valuesTab() {
   const byId = new Map(values.map(v => [v.id, v]));
   const hasKO = typeof KO !== "undefined";
   const mapped = new Set();
-  const sections = hasKO ? KO.sections.map(sec => {
-    const rows = KO.opts.filter(o => o.section === sec.id).map(o => {
+  // Sekcje: wiersze budujemy dla wszystkich (znaczek i licznik „Zaawansowane” liczą z `mapped`), ale pokazujemy jedną (spis, TASK-32).
+  const secs = hasKO ? KO.sections.map(sec => {
+    const opts = KO.opts.filter(o => o.section === sec.id);
+    const rows = opts.map(o => {
       const id = idFor(o.file, o.key);
       if (!id) return null;
       mapped.add(id);
       return settingRow(o, id, byId.get(id), sec.label);
     }).filter(Boolean);
-    return rows.length && h("section", { class: "card sgroup", "aria-label": sec.label }, h("h3", {}, sec.label), rows);
+    return rows.length ? { sec, rows, count: sectionCount(opts, byId) } : null;
   }).filter(Boolean) : [];
+  const curSec = secs.find(x => x.sec.id === S.valSec) || secs[0];
+  const sections = curSec && h("div", { class: "valwrap" },
+    h("div", { class: "valsplit" }, sectionNav(secs, curSec),
+      h("section", { class: "card sgroup valmain", "aria-label": curSec.sec.label }, h("h3", {}, curSec.sec.label), curSec.rows)));
   // padmap KOPada ma własny edytor w Wtyczki → „Ustawienia wtyczek” (TASK-26); tu
   // zostaje tylko jako surowa wartość w „Zaawansowane”, ale nie liczy się do znaczka
   if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
