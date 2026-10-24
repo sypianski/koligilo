@@ -879,3 +879,14 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .how-facts { border-bottom: 1px solid var(--border); margin: 0 0 16px; padding-bottom: 12px; }
 .how-facts p { margin: 0; max-width: none; }
 .how-facts p + p { margin-top: 3px; }
+/* spis tematów z lewej (TASK-34); na wąskim oknie zawija się nad tekst */
+.how-wrap { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 20px; align-items: start; }
+.how-toc { position: sticky; top: 74px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+.how-toc button { border: 0; border-radius: 0; background: none; text-align: left; padding: 8px 12px; font-weight: 500; }
+.how-toc button + button { border-top: 1px solid var(--border); }
+.how-toc button[aria-current="true"] { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+@media (max-width: 760px) {
+  .how-wrap { grid-template-columns: 1fr; gap: 12px; }
+  .how-toc { position: static; flex-direction: row; flex-wrap: wrap; }
+  .how-toc button + button { border-top: 0; border-left: 1px solid var(--border); }
+}

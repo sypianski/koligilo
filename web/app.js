@@ -2661,11 +2661,24 @@ function howFacts() {
       last ? ` · ostatnia synchronizacja ${ago(last.last_sync.at)}` : ""),
     h("p", { class: "muted small" }, rule));
 }
+// Przejście do tematu: ze spisu, a z „?” przy nagłówkach innych widoków (showHow) także z innej zakładki.
+function howGo(id) { S.howTopic = id; S.howScroll = id; render(); }
+function showHow(id) { S.howTopic = id; S.howScroll = id; showTab("jak"); }
 function howTab() {
-  return h("section", { class: "card prose how" },
-    howFacts(),
-    HOW_TOPICS.map(([id, title, , body], i) => h("div", { class: "how-topic", id: "how-" + id },
-      h("h3", i === 0 ? { style: "margin-top:0" } : {}, title), body())));
+  const cur = S.howTopic || HOW_TOPICS[0][0];
+  if (S.howScroll) {
+    const id = S.howScroll; S.howScroll = null;
+    requestAnimationFrame(() => document.getElementById("how-" + id)?.scrollIntoView({ block: "start" }));
+  }
+  return h("div", { class: "how-wrap" },
+    h("nav", { class: "how-toc", "aria-label": "Tematy" },
+      HOW_TOPICS.map(([id, , nav]) => h("button", {
+        type: "button", "aria-current": id === cur ? "true" : null, onclick: () => howGo(id),
+      }, nav))),
+    h("section", { class: "card prose how" },
+      howFacts(),
+      HOW_TOPICS.map(([id, title, , body], i) => h("div", { class: "how-topic", id: "how-" + id },
+        h("h3", i === 0 ? { style: "margin-top:0" } : {}, title), body()))));
 }
 
 // ------------------------------------------------ zakładka: wtyczki (TASK-11)
