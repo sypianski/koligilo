@@ -35,6 +35,7 @@ const S = {
   rvBusy: false,
   acc: null,           // /api/admin/accounts
   dr: {},              // szkice formularzy kont (przeżywają przerysowanie)
+  accOpen: null,       // rozwinięty wiersz widoku „Konta”: "kosync" | "wallabag" | "cloud" | "targets" | "rosetta" (TASK-31)
   accMsg: {},          // komunikaty per formularz: {ok, text}
   accBusy: null,       // który formularz się zapisuje
   valDrafts: {},       // edytory wartości: id -> {type, text, bool, error, isNew}
@@ -132,6 +133,7 @@ function plPl(n, one, few, many) {
 const VIEW_SUB = {
   urzadzenia: st => st.devices.length === 0 ? "Nie połączono jeszcze żadnego czytnika"
     : `${st.devices.length} ${plPl(st.devices.length, "czytnik połączony", "czytniki połączone", "czytników połączonych")}`,
+  konta: st => accountsSub(st),
 };
 
 const THEME_KEY = "koligilo.theme";
@@ -1035,9 +1037,102 @@ async function setGroup(dev, group, on) {
   refresh();
 }
 
-// ------------------------------------------------ zakładka: konta
+// ------------------------------------------------ zakładka: konta (TASK-31)
+//
+// Jedna lista wierszy zamiast pięciu otwartych formularzy: ● nazwa, plakietka „kto
+// dostaje”, streszczenie i „Edytuj ▾”. Otwarty jest jeden wiersz naraz (S.accOpen);
+// szkice formularzy żyją w S.dr, więc zwinięcie wiersza ani odświeżenie ich nie kasuje.
+// Zakładka nie odświeża się w tle (patrz setInterval na końcu pliku).
 
-const KEPT = "••••••  zapisane — zostaw puste, żeby nie zmieniać";
+// Etykiety stanu i grupy katalogu, z których wiersze liczą „kto dostaje” (devices[].groups).
+const ACCOUNTS = [
+  { id: "kosync", name: "Postęp czytania (kosync)", short: "kosync", group: "konto_kosync",
+    desc: "Dzięki temu każdy czytnik otworzy książkę na stronie, na której skończyłeś na innym. Konto zakładasz raz — np. w KOReaderze: Narzędzia → Synchronizacja postępu → Zarejestruj." },
+  { id: "wallabag", name: "Wallabag", short: "Wallabag", group: "konto_wallabag",
+    desc: "Client ID i secret założysz w Wallabagu: Zarządzanie klientami API → Utwórz nowego klienta. Folder pobierania artykułów zostaje osobny na każdym czytniku." },
+  { id: "cloud", name: "Konta w chmurze", short: "konta w chmurze", plural: true, group: "konta_chmura",
+    desc: "To samo co Menu → Chmura w KOReaderze: miejsca, z których czytnik pobiera książki i w których statystyki oraz słowniczek trzymają wspólną bazę. Na czytnikach pojawią się pod tymi samymi nazwami." },
+  { id: "targets", name: "Statystyki i słowniczek", short: "statystyki i słowniczek", plural: true, group: "konto_statystyki",
+    desc: "KOReader sam scala te bazy przez konto w chmurze — koligilo tylko ustawia, którego konta i folderu używają. Wszystkie czytniki muszą wskazywać ten sam folder." },
+  { id: "rosetta", name: "Rosetta — klucze API", short: "Rosetta", group: "rosetta_klucze",
+    desc: "Dostęp do backendu AI używanego przez wtyczkę Rosetta (tłumaczenie na żywo). Klucz to sekret — włączaj tę grupę tylko między urządzeniami, którym ufasz." },
+];
+
+function hostOf(url) {
+  try { const u = new URL(url); return u.host + (u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : ""); } catch { return url || ""; }
+}
+
+// Stan usługi z S.acc: {conf, sum, warn}. „warn” to stan wymagający uwagi (krótkotrwały token Dropboxa).
+function accInfo(id) {
+  const a = S.acc || {};
+  const cloud = a.cloud || [];
+  if (id === "kosync") {
+    const k = a.kosync;
+    return k ? { conf: true, sum: [k.username, k.server ? hostOf(k.server) : "serwer KOReadera"].filter(Boolean).join(" · ") }
+      : { conf: false, sum: "nie skonfigurowane" };
+  }
+  if (id === "wallabag") {
+    const w = a.wallabag;
+    return w ? { conf: true, sum: [w.username, hostOf(w.server_url)].filter(Boolean).join(" · ") }
+      : { conf: false, sum: "nie skonfigurowane" };
+  }
+  if (id === "cloud") {
+    if (!cloud.length) return { conf: false, sum: a.cloud_error || "nie skonfigurowane" };
+    const broken = cloud.some(c => c.broken);
+    return { conf: true, warn: broken,
+      sum: cloud.map(c => { const t = CLOUD_TYPES[c.type] || c.type; return t === c.name ? c.name : `${c.name} (${t})`; }).join(" · ")
+        + (broken ? " · ⚠ wymaga ponownego połączenia" : "") };
+  }
+  if (id === "targets") {
+    const t = a.targets || {};
+    const parts = TARGETS.map(([which, label]) => t[which]
+      ? `${label.toLowerCase().split(" ")[0]} → ${t[which].name}, ${t[which].folder || "/"}` : null);
+    const on = parts.filter(Boolean);
+    if (!on.length) return { conf: false, sum: cloud.length ? "wyłączone" : "najpierw dodaj konto w chmurze" };
+    const off = TARGETS.filter(([which]) => !t[which]).map(([which, label]) => label.toLowerCase().split(" ")[0] + (which === "statystyki" ? " wyłączone" : " wyłączony"));
+    const broken = TARGETS.some(([which]) => t[which]?.broken);
+    return { conf: true, warn: broken,
+      sum: [...on, ...off].join(" · ") + (broken ? " · ⚠ wymaga ponownego połączenia" : "") };
+  }
+  const r = a.rosetta;
+  return r ? { conf: true, sum: [r.ai_base_url && hostOf(r.ai_base_url), r.ai_model].filter(Boolean).join(" · ") || "klucz zapisany" }
+    : { conf: false, sum: "nie skonfigurowane" };
+}
+
+// Ile czytników dostaje grupę: {n, total, on:[nazwy], off:[nazwy]} albo null bez czytników.
+function accReach(group) {
+  const devs = S.state.devices || [];
+  if (!devs.length) return null;
+  const on = devs.filter(d => d.groups && d.groups[group]).map(d => d.name || d.model);
+  const off = devs.filter(d => !(d.groups && d.groups[group])).map(d => d.name || d.model);
+  return { n: on.length, total: devs.length, on, off };
+}
+
+function reachBadge(a, conf) {
+  if (!conf) return h("span", { class: "badge soon" }, "nie skonfigurowane");
+  const r = accReach(a.group);
+  if (!r) return h("span", { class: "badge soon", title: "Nie sparowano jeszcze żadnego czytnika" }, "brak czytników");
+  const title = `Dostają: ${r.on.join(", ") || "nikt"}.` + (r.off.length ? ` Grupa wyłączona na: ${r.off.join(", ")} (zakładka „Co synchronizować”).` : "");
+  if (r.n === 0) return h("span", { class: "badge warn", title }, "nikt nie dostaje");
+  if (r.n === r.total) return h("span", { class: "badge soon", title }, `u wszystkich (${r.n})`);
+  return h("span", { class: "badge warn", title }, `u ${r.n} z ${r.total}`);
+}
+
+// Podpis pod nagłówkiem widoku: ile usług jest skonfigurowanych i które nie dochodzą do wszystkich czytników.
+function accountsSub(st) {
+  if (!S.acc) return "";
+  const conf = ACCOUNTS.filter(a => accInfo(a.id).conf);
+  if (!conf.length) return "Nic jeszcze nie skonfigurowano";
+  const head = `${conf.length} z ${ACCOUNTS.length} usług skonfigurowanych`;
+  const devs = st.devices || [];
+  if (!devs.length) return head + " · brak sparowanych czytników";
+  const partial = conf.map(a => ({ a, r: accReach(a.group) })).filter(x => x.r.n < x.r.total);
+  if (!partial.length) return head + " · wszystkie trafiają na wszystkie czytniki";
+  const say = ({ a, r }) => r.n === 0
+    ? `${a.short} ${a.plural ? "nie trafiają" : "nie trafia"} na żaden czytnik`
+    : `${a.short} ${a.plural ? "trafiają" : "trafia"} na ${r.n} z ${r.total} czytników`;
+  return head + " · " + partial.slice(0, 2).map(say).join(" · ") + (partial.length > 2 ? ` · i ${partial.length - 2} więcej` : "");
+}
 
 // Szkic formularza: przy pierwszym renderze wypełniony z serwera, potem żyje
 // w S.dr aż do zapisu albo anulowania.
@@ -1055,6 +1150,30 @@ function field(d, key, label, o = {}) {
       autocomplete: o.type === "password" ? "new-password" : "off", spellcheck: "false",
       oninput: ev => { d[key] = ev.target.value; },
     }),
+    o.hint && h("small", {}, o.hint));
+}
+
+// Pole sekretu. Zapisany sekret to „•••••••• zapisane [Zmień]” (serwer oddaje tylko has_*, nigdy wartość);
+// pole do wpisania pojawia się dopiero po „Zmień”. Puste pole przy zapisie nadal znaczy „bez zmian”.
+function secretField(d, key, label, o = {}) {
+  d._chg = d._chg || {};
+  if (!o.saved || d._chg[key]) {
+    const id = `f-${o.form || "acc"}-${key}`;
+    return h("div", {},
+      field(d, key, label, { form: o.form, type: "password", hint: o.hint,
+        placeholder: o.saved ? "wpisz nowe — puste zostawia zapisane" : "" }),
+      o.saved && h("button", { type: "button", class: "linkbtn small", onclick: () => {
+        d._chg[key] = false; d[key] = ""; render(); } }, "Anuluj zmianę"));
+  }
+  return h("div", { class: "field" },
+    h("span", {}, label),
+    h("div", { class: "secret-saved" },
+      h("span", { class: "dots", role: "img", "aria-label": "zapisane, ukryte" }, "••••••••"),
+      h("span", { class: "muted small" }, "zapisane"),
+      h("button", { type: "button", id: `f-${o.form || "acc"}-${key}-chg`, onclick: () => {
+        d._chg[key] = true; render();
+        document.getElementById(`f-${o.form || "acc"}-${key}`)?.focus();
+      } }, "Zmień")),
     o.hint && h("small", {}, o.hint));
 }
 
@@ -1077,26 +1196,38 @@ async function accSave(name, method, path, body, after) {
   refresh();
 }
 
+// Zapis na górze, „Usuń konto z czytników” jako link po prawej pod kreską. Usunięcia nie da się cofnąć
+// (wartości lecą jako nagrobki, a sekretów przeglądarka nie ma), więc potwierdzenie zostaje.
+function accActions(name, o) {
+  return h("div", { class: "row endrow" },
+    h("button", { class: "primary", type: "submit", disabled: S.accBusy === name }, "Zapisz"),
+    h("span", { class: "grow" }),
+    o.cur && h("button", { type: "button", class: "linkbtn danger", onclick: () => {
+      if (confirm(o.confirm)) accSave(name, "DELETE", o.path);
+    } }, "Usuń konto z czytników"));
+}
+
 function accountsTab() {
   if (!S.acc) return h("p", { class: "loading" }, "Wczytuję konta…");
   return h("section", {},
-    explain(
-      "Konta wpisujesz tu raz, a czytniki odbierają je przy najbliższej synchronizacji — tak samo, jakby wpisano je na innym czytniku. Dostają je tylko urządzenia z włączoną odpowiednią grupą w zakładce „Co synchronizować”.",
-      "Hasła i tokeny nigdy nie wracają do przeglądarki. Przy edycji puste pole hasła znaczy: bez zmian."),
-    kosyncCard(), wallabagCard(), cloudCard(), targetsCard(), rosettaCard());
+    h("div", { class: "card acclist" }, ACCOUNTS.map(accRow)),
+    h("p", { class: "muted small acc-foot" }, "Hasła i tokeny nigdy nie wracają do przeglądarki."));
 }
 
-// Stan karty konta: z którego urządzenia (albo panelu) przyszła ostatnia
-// zmiana dowolnej wartości grupy, i kiedy — z tych samych danych, które
-// zakładka „Wspólne ustawienia” pokazuje per-wartość (S.state.values).
-// Treść pozostaje ukryta (Preview zamaskowany po stronie serwera), widać
-// tylko metadane, więc to nie łamie niezmiennika „sekrety nie do przeglądarki”.
-function acctStatus(groupId) {
-  const vs = (S.state.values || []).filter(v => v.group === groupId && !v.deleted);
-  if (!vs.length) return null;
-  const latest = vs.reduce((a, b) => (new Date(b.t) > new Date(a.t) ? b : a));
-  return h("p", { class: "muted small" },
-    `Skonfigurowane · z: ${latest.from || "urządzenia, które już usunięto"} · ${ago(latest.t)}`);
+function accRow(a) {
+  const info = accInfo(a.id), open = S.accOpen === a.id;
+  const label = open ? "Zwiń ▴" : info.conf ? "Edytuj ▾" : a.id === "targets" && (S.acc.cloud || []).length ? "Ustaw ▾" : "Dodaj ▾";
+  return h("div", { class: "accrow" + (open ? " open" : ""), "data-acc": a.id },
+    h("div", { class: "acch" },
+      h("span", { class: "hdot " + (info.conf ? "ok" : "na"), "aria-hidden": "true" }),
+      h("div", { class: "grow" },
+        h("b", {}, a.name), reachBadge(a, info.conf),
+        h("div", { class: "muted small" + (info.warn ? " warnline" : "") }, info.sum)),
+      h("button", { type: "button", id: "acc-btn-" + a.id, "aria-expanded": String(open), "aria-controls": "acc-body-" + a.id,
+        onclick: () => { S.accOpen = open ? null : a.id; render(); } }, label)),
+    open && h("div", { class: "accb", id: "acc-body-" + a.id },
+      h("p", { class: "muted small" }, a.desc),
+      { kosync: kosyncForm, wallabag: wallabagForm, cloud: cloudBody, targets: targetsBody, rosetta: rosettaForm }[a.id]()));
 }
 
 function checkboxField(d, key, label) {
@@ -1130,7 +1261,7 @@ function changedOnly(d, keys) {
 const SYNC_STRATEGY_OPTS = [[1, "Pytaj"], [2, "Po cichu"], [3, "Nigdy"]];
 const CHECKSUM_METHOD_OPTS = [[0, "Zawartość pliku (binarnie)"], [1, "Nazwa pliku"]];
 
-function kosyncCard() {
+function kosyncForm() {
   const cur = S.acc.kosync;
   const extraKeys = ["auto_sync", "sync_forward", "sync_backward", "checksum_method"];
   // Braki (null z GET — nieskonfigurowane albo nieoczekiwany typ w stanie)
@@ -1140,15 +1271,12 @@ function kosyncCard() {
     sync_backward: cur?.sync_backward ?? 3, checksum_method: cur?.checksum_method ?? 0 };
   const d = draft("kosync", () => ({ server: cur?.server || "", username: cur?.username || "", password: "",
     ...extra, _orig: extra }));
-  return h("form", { class: "card acc", onsubmit: ev => { ev.preventDefault();
+  return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault();
       accSave("kosync", "PUT", "/api/admin/accounts/kosync",
         { server: d.server, username: d.username, password: d.password, ...changedOnly(d, extraKeys) }); } },
-    h("h3", {}, "Synchronizacja postępu czytania (kosync)"),
-    h("p", { class: "muted small" }, "Dzięki temu każdy czytnik otworzy książkę na stronie, na której skończyłeś na innym. Konto zakładasz raz — np. w KOReaderze: Narzędzia → Synchronizacja postępu → Zarejestruj."),
-    cur && acctStatus("konto_kosync"),
     field(d, "server", "Serwer", { form: "ks", placeholder: "puste = serwer KOReadera (sync.koreader.rocks)" }),
     field(d, "username", "Login", { form: "ks" }),
-    field(d, "password", "Hasło", { form: "ks", type: "password", placeholder: cur?.has_password ? KEPT : "",
+    secretField(d, "password", "Hasło", { form: "ks", saved: cur?.has_password,
       hint: "Serwer zapisze tylko skrót hasła (md5) — tak jak KOReader." }),
     h("details", { class: "help" },
       h("summary", {}, "Więcej opcji"),
@@ -1156,15 +1284,11 @@ function kosyncCard() {
       selectField(d, "sync_forward", "Przeskok do nowszej pozycji (na innym czytniku przeczytano dalej)", SYNC_STRATEGY_OPTS),
       selectField(d, "sync_backward", "Przeskok do starszej pozycji (na innym czytniku jest wcześniej)", SYNC_STRATEGY_OPTS),
       selectField(d, "checksum_method", "Metoda sumy kontrolnej", CHECKSUM_METHOD_OPTS)),
-    h("div", { class: "row" },
-      h("button", { class: "primary", type: "submit", disabled: S.accBusy === "kosync" }, "Zapisz"),
-      cur && h("button", { type: "button", class: "danger", onclick: () => {
-        if (confirm("Usunąć konto kosync ze wszystkich czytników?")) accSave("kosync", "DELETE", "/api/admin/accounts/kosync");
-      } }, "Usuń z czytników")),
+    accActions("kosync", { cur, path: "/api/admin/accounts/kosync", confirm: "Usunąć konto kosync ze wszystkich czytników?" }),
     accMsg("kosync"));
 }
 
-function wallabagCard() {
+function wallabagForm() {
   const cur = S.acc.wallabag;
   const extraKeys = ["filter_tag", "ignore_tags", "auto_tags", "articles_per_sync",
     "is_delete_finished", "is_delete_read", "is_auto_delete", "send_review_as_tags"];
@@ -1174,20 +1298,17 @@ function wallabagCard() {
     is_auto_delete: cur?.is_auto_delete ?? false, send_review_as_tags: cur?.send_review_as_tags ?? false };
   const d = draft("wallabag", () => ({ server_url: cur?.server_url || "", client_id: cur?.client_id || "",
     client_secret: "", username: cur?.username || "", password: "", ...extra, _orig: extra }));
-  return h("form", { class: "card acc", onsubmit: ev => { ev.preventDefault();
+  return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault();
       accSave("wallabag", "PUT", "/api/admin/accounts/wallabag",
         { server_url: d.server_url, client_id: d.client_id, client_secret: d.client_secret,
           username: d.username, password: d.password, ...changedOnly(d, extraKeys) }); } },
-    h("h3", {}, "Wallabag"),
-    h("p", { class: "muted small" }, "Client ID i secret założysz w Wallabagu: Zarządzanie klientami API → Utwórz nowego klienta. Folder pobierania artykułów zostaje osobny na każdym czytniku."),
-    cur && acctStatus("konto_wallabag"),
     field(d, "server_url", "Serwer", { form: "wb", placeholder: "https://app.wallabag.it" }),
     h("div", { class: "grid2" },
       field(d, "client_id", "Client ID", { form: "wb" }),
-      field(d, "client_secret", "Client secret", { form: "wb", type: "password", placeholder: cur?.has_client_secret ? KEPT : "" })),
+      secretField(d, "client_secret", "Client secret", { form: "wb", saved: cur?.has_client_secret })),
     h("div", { class: "grid2" },
       field(d, "username", "Login", { form: "wb" }),
-      field(d, "password", "Hasło", { form: "wb", type: "password", placeholder: cur?.has_password ? KEPT : "" })),
+      secretField(d, "password", "Hasło", { form: "wb", saved: cur?.has_password })),
     h("details", { class: "help" },
       h("summary", {}, "Więcej opcji"),
       field(d, "filter_tag", "Tag filtrujący", { form: "wb" }),
@@ -1198,23 +1319,16 @@ function wallabagCard() {
       checkboxField(d, "is_delete_read", "Usuwaj przeczytane"),
       checkboxField(d, "is_auto_delete", "Automatyczne usuwanie"),
       checkboxField(d, "send_review_as_tags", "Wysyłaj ocenę jako tagi")),
-    h("div", { class: "row" },
-      h("button", { class: "primary", type: "submit", disabled: S.accBusy === "wallabag" }, "Zapisz"),
-      cur && h("button", { type: "button", class: "danger", onclick: () => {
-        if (confirm("Usunąć konto Wallabag ze wszystkich czytników?")) accSave("wallabag", "DELETE", "/api/admin/accounts/wallabag");
-      } }, "Usuń z czytników")),
+    accActions("wallabag", { cur, path: "/api/admin/accounts/wallabag", confirm: "Usunąć konto Wallabag ze wszystkich czytników?" }),
     accMsg("wallabag"));
 }
 
 const CLOUD_TYPES = { dropbox: "Dropbox", webdav: "WebDAV", ftp: "FTP" };
 
-function cloudCard() {
+function cloudBody() {
   const list = S.acc.cloud || [];
   const d = S.dr.cloud;
-  return h("section", { class: "card acc" },
-    h("h3", {}, "Konta w chmurze"),
-    list.length > 0 && acctStatus("konta_chmura"),
-    h("p", { class: "muted small" }, "To samo co Menu → Chmura w KOReaderze: miejsca, z których czytnik pobiera książki i w których statystyki oraz słowniczek trzymają wspólną bazę. Na czytnikach pojawią się pod tymi samymi nazwami."),
+  return h("div", {},
     S.acc.cloud_error && h("p", { class: "err" }, S.acc.cloud_error),
     list.length === 0 && !d && h("p", { class: "muted" }, "Brak kont. Dodaj pierwsze — albo zsynchronizuj czytnik, który już je ma."),
     list.map((c, i) => h("div", { class: "cloudrow" },
@@ -1246,112 +1360,179 @@ function dropboxAuthURL(key) {
     client_id: key.trim(), response_type: "code", token_access_type: "offline" });
 }
 
+// Stan kroków dodawania konta, liczony ze szkicu: [{done}], a „bieżący” to pierwszy niezrobiony.
+function cloudStepState(d, cur) {
+  if (d.type !== "dropbox") return [{ done: true }, { done: !!d.address.trim() }];
+  const needToken = !cur || !cur.has_password || cur.broken;
+  const haveKey = !!d.app_key.trim();
+  const haveKeys = haveKey && (!!d.app_secret || !!cur?.has_app_secret);
+  const connected = !needToken || !!d.code.trim() || !!d.refresh_token.trim();
+  return [{ done: true }, { done: haveKey }, { done: haveKeys }, { done: connected && haveKeys }];
+}
+
+// Ustawia ✓/numer i klasę kroków w już zbudowanym formularzu — wołane przy każdym wpisanym znaku,
+// bo przerysowanie widoku zabrałoby fokus i połknęło kliknięcie w przycisk obok.
+function applyCloudSteps(root, d, cur) {
+  const st = cloudStepState(d, cur), now = st.findIndex(x => !x.done);
+  root.querySelectorAll("ol.acsteps > li").forEach((li, i) => {
+    const x = st[i]; if (!x) return;
+    li.className = x.done ? "done" : i === now ? "cur" : "";
+    li.querySelector(":scope > b").textContent = x.done ? "✓" : String(i + 1);
+    const sr = li.querySelector(".sr"); if (sr) sr.textContent = x.done ? " (zrobione)" : "";
+  });
+}
+
+// Krok formularza: instrukcja stoi przy kroku, a znacznik (✓ albo numer) ustawia applyCloudSteps.
+function cloudStep(n, title, ...kids) {
+  return h("li", {}, h("b", { "aria-hidden": "true" }, String(n)),
+    h("div", {}, h("b", { class: "st" }, title, h("span", { class: "sr" })), ...kids));
+}
+
 function cloudForm(d, cur) {
   const isNew = d.index < 0;
-  return h("form", { class: "subform", onsubmit: ev => { ev.preventDefault();
-      accSave("cloud", "POST", "/api/admin/accounts/cloud", d); } },
-    h("h4", {}, isNew ? "Nowe konto" : `Edycja: ${cur?.name}`),
-    isNew && h("div", { class: "row", role: "radiogroup", style: "margin-bottom:10px" },
-      Object.entries(CLOUD_TYPES).map(([t, label]) => h("button", {
-        type: "button", role: "radio", "aria-checked": String(d.type === t),
-        class: d.type === t ? "primary" : "", onclick: () => { d.type = t; render(); },
-      }, label))),
-    field(d, "name", "Nazwa", { form: "cl", placeholder: d.type === "dropbox" ? "Dropbox" : "np. Koofr",
-      hint: "Tak konto będzie się nazywać w menu Chmura na czytnikach." }),
-    d.type === "dropbox" ? dropboxFields(d, cur) : [
+  const dropbox = d.type === "dropbox";
+  const steps = [];
+  steps.push(cloudStep(1, "Typ konta",
+    isNew
+      ? h("div", { class: "row", role: "radiogroup", "aria-label": "Typ konta", style: "margin-top:4px" },
+          Object.entries(CLOUD_TYPES).map(([t, label]) => h("button", {
+            type: "button", role: "radio", "aria-checked": String(d.type === t),
+            class: d.type === t ? "primary" : "", onclick: () => { d.type = t; render(); },
+          }, label)))
+      : h("p", { class: "muted small" }, CLOUD_TYPES[d.type] || d.type)));
+  if (dropbox) {
+    const needToken = !cur || !cur.has_password || cur.broken;
+    steps.push(cloudStep(2, "Utwórz aplikację w Dropboxie",
+      h("small", { class: "stsub" },
+        "Otwórz ", h("a", { href: "https://www.dropbox.com/developers/apps", target: "_blank", rel: "noopener" }, "dropbox.com/developers/apps"),
+        " → Create app → Scoped access → App folder → dowolna nazwa (np. „koreader-twoje-imie”). W zakładce Permissions zaznacz files.metadata.read, files.content.read i files.content.write, potem Submit. Masz już aplikację dla KOReadera? Użyj tej samej — czytniki zobaczą te same pliki.")));
+    steps.push(cloudStep(3, "Wpisz App key i App secret",
+      h("small", { class: "stsub" }, "Z zakładki Settings aplikacji."),
+      h("div", { class: "grid2" },
+        field(d, "app_key", "App key", { form: "cl" }),
+        secretField(d, "app_secret", "App secret", { form: "cl", saved: cur?.has_app_secret }))));
+    steps.push(cloudStep(4, needToken ? "Połącz z Dropboxem" : "Połączenie z Dropboxem",
+      !needToken && h("small", { class: "stsub" }, "Konto jest połączone. Połącz ponownie tylko, jeśli czytniki zgłaszają błąd logowania."),
+      h("div", { class: "row" },
+        h("button", { type: "button", disabled: !d.app_key.trim(), id: "f-cl-open", onclick: () => window.open(dropboxAuthURL(d.app_key), "_blank", "noopener") },
+          "1. Otwórz Dropbox i kliknij „Zezwól”"),
+        h("input", { id: "f-cl-code", type: "text", value: d.code, placeholder: "2. wklej kod z Dropboxa", autocomplete: "off",
+          "aria-label": "Kod z Dropboxa", style: "flex:1;min-width:200px", oninput: ev => { d.code = ev.target.value; } })),
+      h("small", { class: "stsub" }, "Kod działa raz i tylko kilka minut — zapisz konto zaraz po wklejeniu. ",
+        h("a", { href: "#", onclick: ev => { ev.preventDefault(); d.manual = !d.manual; render(); } },
+          d.manual ? "Ukryj pole refresh tokenu" : "Mam już refresh token")),
+      d.manual && field(d, "refresh_token", "Refresh token", { form: "cl", type: "password" })));
+  } else {
+    steps.push(cloudStep(2, "Adres i dane logowania",
       field(d, "address", "Adres", { form: "cl", placeholder: d.type === "webdav" ? "https://app.koofr.net/dav/Koofr" : "ftp://example.com" }),
       h("div", { class: "grid2" },
         field(d, "username", "Login", { form: "cl" }),
-        field(d, "password", "Hasło", { form: "cl", type: "password", placeholder: cur?.has_password ? KEPT : "" })),
-    ],
+        secretField(d, "password", "Hasło", { form: "cl", saved: cur?.has_password }))));
+  }
+  const form = h("form", { class: "subform", onsubmit: ev => { ev.preventDefault();
+      accSave("cloud", "POST", "/api/admin/accounts/cloud", d); },
+      // przycisk „Otwórz Dropbox” odblokowuje się, gdy jest App key — bez przerysowania
+      oninput: ev => {
+        applyCloudSteps(ev.currentTarget, d, cur);
+        const open = ev.currentTarget.querySelector("#f-cl-open"); if (open) open.disabled = !d.app_key.trim();
+      } },
+    h("h4", {}, isNew ? "Nowe konto" : `Edycja: ${cur?.name}`),
+    h("ol", { class: "acsteps" }, steps),
+    field(d, "name", "Nazwa", { form: "cl", placeholder: dropbox ? "Dropbox" : "np. Koofr",
+      hint: "Tak konto będzie się nazywać w menu Chmura na czytnikach." }),
     field(d, "folder", "Folder startowy", { form: "cl", placeholder: "/", hint: "Gdzie czytnik otworzy to konto w menu Chmura." }),
     h("div", { class: "row" },
       h("button", { class: "primary", type: "submit", disabled: S.accBusy === "cloud" },
         S.accBusy === "cloud" ? "Zapisuję…" : "Zapisz konto"),
       h("button", { type: "button", onclick: () => { delete S.dr.cloud; S.accMsg.cloud = null; render(); } }, "Anuluj")));
-}
-
-function dropboxFields(d, cur) {
-  const needToken = !cur || !cur.has_password || cur.broken;
-  return [
-    h("details", { class: "help", open: !cur || undefined },
-      h("summary", {}, "Skąd wziąć App key i App secret?"),
-      h("ol", {},
-        h("li", {}, "Otwórz ", h("a", { href: "https://www.dropbox.com/developers/apps", target: "_blank", rel: "noopener" }, "dropbox.com/developers/apps"),
-          " → Create app → Scoped access → App folder → dowolna nazwa (np. „koreader-twoje-imie”)."),
-        h("li", {}, "W zakładce Permissions zaznacz files.metadata.read, files.content.read i files.content.write, potem Submit."),
-        h("li", {}, "W zakładce Settings skopiuj App key i App secret tutaj."),
-        h("li", {}, "Masz już aplikację dla KOReadera? Użyj tej samej — czytniki zobaczą te same pliki."))),
-    h("div", { class: "grid2" },
-      field(d, "app_key", "App key", { form: "cl" }),
-      field(d, "app_secret", "App secret", { form: "cl", type: "password", placeholder: cur?.has_app_secret ? KEPT : "" })),
-    h("div", { class: "field" },
-      h("span", {}, needToken ? "Połącz z Dropboxem" : "Połączenie z Dropboxem"),
-      !needToken && h("small", { style: "display:block;margin-bottom:6px" }, "Konto jest połączone. Połącz ponownie tylko, jeśli czytniki zgłaszają błąd logowania."),
-      h("div", { class: "row" },
-        h("button", { type: "button", disabled: !d.app_key.trim(), onclick: () => window.open(dropboxAuthURL(d.app_key), "_blank", "noopener") },
-          "1. Otwórz Dropbox i kliknij „Zezwól”"),
-        h("input", { id: "f-cl-code", type: "text", value: d.code, placeholder: "2. wklej kod z Dropboxa", autocomplete: "off",
-          style: "flex:1;min-width:200px", oninput: ev => { d.code = ev.target.value; } })),
-      h("small", {}, "Kod działa raz i tylko kilka minut — zapisz konto zaraz po wklejeniu. ",
-        h("a", { href: "#", onclick: ev => { ev.preventDefault(); d.manual = !d.manual; render(); } },
-          d.manual ? "Ukryj pole refresh tokenu" : "Mam już refresh token"))),
-    d.manual && field(d, "refresh_token", "Refresh token", { form: "cl", type: "password" }),
-  ];
+  applyCloudSteps(form, d, cur);
+  return form;
 }
 
 const TARGETS = [
   ["statystyki", "Statystyki czytania", "Wspólna baza statystyk (czas czytania, strony, kalendarz)."],
-  ["slowniczek", "Słowniczek (vocabulary builder)", "Wspólna lista słówek do powtórek."],
+  ["slowniczek", "Słowniczek", "Wspólna lista słówek do powtórek (vocabulary builder)."],
 ];
 
-function targetsCard() {
-  const list = S.acc.cloud || [];
-  return h("section", { class: "card acc" },
-    h("h3", {}, "Synchronizacja statystyk i słowniczka"),
-    h("p", { class: "muted small" }, "KOReader sam scala te bazy przez konto w chmurze — koligilo tylko ustawia, którego konta i folderu używają. Wszystkie czytniki muszą wskazywać ten sam folder."),
-    list.length === 0 && h("p", { class: "muted" }, "Najpierw dodaj konto w chmurze (powyżej)."),
-    TARGETS.map(([which, label, desc]) => {
-      const cur = S.acc.targets?.[which];
-      const d = draft("t-" + which, () => ({ account: cur && cur.account >= 0 ? cur.account : 0, folder: cur?.folder || "" }));
-      return h("form", { class: "target", onsubmit: ev => { ev.preventDefault();
-          accSave("t-" + which, "PUT", `/api/admin/accounts/target/${which}`, { account: Number(d.account), folder: d.folder }); } },
-        h("div", { class: "what" }, h("b", {}, label), h("div", { class: "muted small" }, desc,
-          cur ? ` Teraz: ${cur.name} (${CLOUD_TYPES[cur.type] || cur.type}), folder ${cur.folder || "/"}${cur.account < 0 ? " — konto spoza listy" : ""}.` : " Teraz: wyłączone."),
-          cur?.broken && h("div", { class: "err small" }, "⚠ Zapisany jest krótkotrwały token — wybierz konto ponownie i zapisz.")),
-        list.length > 0 && h("div", { class: "row" },
-          h("select", { "aria-label": "Konto dla: " + label, onchange: ev => { d.account = ev.target.value; } },
-            list.map((c, i) => h("option", { value: i, selected: Number(d.account) === i || undefined }, `${c.name} (${CLOUD_TYPES[c.type] || c.type})`))),
-          h("input", { id: `f-t-${which}`, type: "text", value: d.folder, placeholder: "folder, np. /koreader", style: "max-width:200px",
-            oninput: ev => { d.folder = ev.target.value; } }),
-          h("button", { class: "primary", type: "submit", disabled: S.accBusy === "t-" + which }, "Zapisz"),
-          cur && h("button", { type: "button", onclick: () => accSave("t-" + which, "DELETE", `/api/admin/accounts/target/${which}`) }, "Wyłącz")),
-        accMsg("t-" + which));
-    }));
+function targetDraft(which) {
+  const cur = S.acc.targets?.[which];
+  const on = !!cur, account = cur && cur.account >= 0 ? cur.account : 0, folder = cur?.folder || "";
+  return draft("t-" + which, () => ({ on, account, folder, _orig: { on, account, folder } }));
 }
 
-function rosettaCard() {
+function targetDirty(d) {
+  return d.on !== d._orig.on || (d.on && (Number(d.account) !== Number(d._orig.account) || d.folder !== d._orig.folder));
+}
+
+// Statystyki i słowniczek zapisują się osobno (dwie trasy, PUT albo DELETE przy wyłączeniu), ale jednym
+// przyciskiem: wysyłamy tylko to, co się zmieniło. Błąd jednego nie blokuje drugiego.
+async function targetsSave() {
+  S.accBusy = "targets"; S.accMsg.targets = null; render();
+  const errs = [];
+  for (const [which, label] of TARGETS) {
+    const d = S.dr["t-" + which];
+    if (!d || !targetDirty(d)) continue;
+    try {
+      if (d.on) await api("PUT", `/api/admin/accounts/target/${which}`, { account: Number(d.account), folder: d.folder });
+      else await api("DELETE", `/api/admin/accounts/target/${which}`);
+      delete S.dr["t-" + which];
+    } catch (e) { errs.push(`${label}: ${e.message}`); }
+  }
+  S.accMsg.targets = errs.length ? { ok: false, text: errs.join(" · ") }
+    : { ok: true, text: "Zapisane. Czytniki z włączoną grupą dostaną to przy najbliższej synchronizacji." };
+  S.accBusy = null;
+  refresh();
+}
+
+// Pisanie w polu folderu nie przerysowuje widoku (zgubiłoby kursor) — tylko włącza „Zapisz zmiany”.
+function targetsDirtyUI(form, ds) {
+  const b = form?.querySelector("button.primary");
+  if (b) b.disabled = !ds.some(targetDirty);
+}
+
+function targetsBody() {
+  const list = S.acc.cloud || [];
+  if (list.length === 0) {
+    return h("p", { class: "muted" }, "Najpierw dodaj konto w chmurze. ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = "cloud"; render(); } }, "Przejdź do kont w chmurze"));
+  }
+  const ds = TARGETS.map(([which]) => targetDraft(which));
+  const dirty = ds.some(targetDirty);
+  return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault(); targetsSave(); } },
+    TARGETS.map(([which, label, desc], i) => {
+      const d = ds[i], cur = S.acc.targets?.[which];
+      return h("div", { class: "tgl" + (d.on ? "" : " off") },
+        switchCtl(label, d.on, on => { d.on = on; render(); }, "t-" + which),
+        h("div", { class: "what" }, h("b", {}, label), h("div", { class: "muted small" }, desc),
+          cur?.account < 0 && h("div", { class: "err small" }, "Zapisane konto nie ma już odpowiednika na liście — wybierz konto i zapisz."),
+          cur?.broken && h("div", { class: "err small" }, "⚠ Zapisany jest krótkotrwały token — wybierz konto ponownie i zapisz.")),
+        h("select", { "aria-label": "Konto dla: " + label, disabled: !d.on, onchange: ev => { d.account = ev.target.value; targetsDirtyUI(ev.target.form, ds); } },
+          list.map((c, j) => h("option", { value: j, selected: Number(d.account) === j || undefined }, `${c.name} (${CLOUD_TYPES[c.type] || c.type})`))),
+        h("input", { id: `f-t-${which}`, type: "text", value: d.folder, placeholder: "folder, np. /koreader", disabled: !d.on,
+          "aria-label": "Folder dla: " + label, oninput: ev => { d.folder = ev.target.value; targetsDirtyUI(ev.target.form, ds); } }));
+    }),
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("button", { class: "primary", type: "submit", disabled: !dirty || S.accBusy === "targets" },
+        S.accBusy === "targets" ? "Zapisuję…" : "Zapisz zmiany"),
+      h("span", { class: "muted small" }, "Statystyki i słowniczek zapisują się osobno; wyłączony przełącznik usuwa ustawienie z czytników.")),
+    accMsg("targets"));
+}
+
+function rosettaForm() {
   const cur = S.acc.rosetta;
   const extraKeys = ["ai_base_url", "ai_model", "ai_max_tokens", "ai_temperature"];
   const extra = { ai_base_url: cur?.ai_base_url ?? "", ai_model: cur?.ai_model ?? "",
     ai_max_tokens: cur?.ai_max_tokens ?? "", ai_temperature: cur?.ai_temperature ?? "" };
   const d = draft("rosetta", () => ({ ...extra, _orig: extra, api_key: "" }));
-  return h("form", { class: "card acc", onsubmit: ev => { ev.preventDefault();
+  return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault();
       accSave("rosetta", "PUT", "/api/admin/accounts/rosetta", { ...changedOnly(d, extraKeys), api_key: d.api_key }); } },
-    h("h3", {}, "Rosetta — klucze API"),
-    h("p", { class: "muted small" }, "Dostęp do backendu AI używanego przez wtyczkę Rosetta (tłumaczenie na żywo). Klucz to sekret — włączaj tę grupę tylko między urządzeniami, którym ufasz."),
-    cur && acctStatus("rosetta_klucze"),
     field(d, "ai_base_url", "Adres API", { form: "ro", placeholder: "https://api.example.com/v1" }),
     field(d, "ai_model", "Model", { form: "ro" }),
     h("div", { class: "grid2" },
       field(d, "ai_max_tokens", "Limit tokenów", { form: "ro" }),
       field(d, "ai_temperature", "Temperatura", { form: "ro" })),
-    field(d, "api_key", "Klucz API", { form: "ro", type: "password", placeholder: cur?.has_api_key ? KEPT : "" }),
-    h("div", { class: "row" },
-      h("button", { class: "primary", type: "submit", disabled: S.accBusy === "rosetta" }, "Zapisz"),
-      cur && h("button", { type: "button", class: "danger", onclick: () => {
-        if (confirm("Usunąć klucze API Rosetty ze wszystkich czytników?")) accSave("rosetta", "DELETE", "/api/admin/accounts/rosetta");
-      } }, "Usuń z czytników")),
+    secretField(d, "api_key", "Klucz API", { form: "ro", saved: cur?.has_api_key }),
+    accActions("rosetta", { cur, path: "/api/admin/accounts/rosetta", confirm: "Usunąć klucze API Rosetty ze wszystkich czytników?" }),
     accMsg("rosetta"));
 }
 

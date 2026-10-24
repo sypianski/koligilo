@@ -788,3 +788,45 @@ code { overflow-wrap: anywhere; } /* długi adres pluginu nie poszerza karty w w
 button.linkbtn { border: 0; background: none; padding: 0; color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 button.linkbtn:hover { background: none; }
 .codeform { margin-top: 8px; }
+
+/* konta jako lista wierszy (TASK-31): ● nazwa + plakietka „kto dostaje” + streszczenie + „Edytuj ▾”.
+   Pełna kropka = skonfigurowane, kreskowana = nie (kształt, nie kolor). Otwarty jest jeden wiersz naraz. */
+.acclist { padding: 0; overflow: hidden; }
+.accrow + .accrow { border-top: 1px solid var(--hair); }
+.accrow.open { background: color-mix(in srgb, var(--tint) 35%, transparent); }
+.acch { display: flex; gap: 12px; align-items: center; padding: 12px 18px; }
+.acch .grow, .endrow .grow { flex: 1; min-width: 0; }
+.acch .hdot { margin-right: 0; }
+.accrow .hdot.ok { background: var(--ink); border-color: var(--ink); }
+.acch .badge { margin-left: 8px; }
+.acch .warnline { color: var(--st-warn); font-weight: 600; }
+.accb { padding: 2px 18px 18px 48px; }
+.accb > p.muted { margin: 0 0 8px; max-width: 72ch; }
+.acc-foot { margin: 10px 2px 0; }
+.accform .endrow { border-top: 1px solid var(--hair); padding-top: 12px; margin-top: 10px; }
+button.linkbtn.danger { color: var(--err); }
+button.linkbtn.small { font-size: 12.5px; margin-top: -6px; }
+/* zapisany sekret: kropki + „zapisane” + „Zmień” (wartość nigdy nie wraca do przeglądarki) */
+.secret-saved { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.secret-saved .dots { min-width: 130px; padding: 6px 12px; border: 2px solid var(--rule); border-radius: 8px; background: var(--field); letter-spacing: .12em; line-height: 1.5; }
+/* kroki dodawania konta w chmurze */
+ol.acsteps { list-style: none; margin: 8px 0 12px; padding: 0; }
+ol.acsteps > li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--hair); }
+ol.acsteps > li:first-child { border-top: 0; }
+ol.acsteps > li > b { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--rule); display: grid; place-items: center; font-size: 13px; }
+ol.acsteps > li.done > b { background: var(--ink); border-color: var(--ink); color: var(--on-accent); }
+ol.acsteps > li.cur > b { background: var(--paper); box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--rule); }
+ol.acsteps > li > div { flex: 1; min-width: 0; }
+ol.acsteps .stsub { display: block; color: var(--subtext); margin: 2px 0 8px; line-height: 1.45; }
+ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
+/* statystyki i słowniczek: przełącznik, nazwa, konto, folder */
+.tgl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--hair); }
+.tgl:first-of-type { border-top: 0; }
+.tgl .what { flex: 1 1 220px; min-width: 0; }
+.tgl select, .tgl input[type="text"] { flex: 0 1 190px; min-width: 120px; }
+.tgl.off .what b { color: var(--subtext); }
+@media (max-width: 620px) {
+  .accb { padding-left: 18px; }
+  .acch { padding-inline: 14px; }
+}
+.tgl.off input[type="text"] { opacity: .55; }
