@@ -1190,6 +1190,13 @@ function Koligilo:sync(silent, after_move)
     local query = {}
     if plugins_allowed then query[#query + 1] = "plugins_allowed=1" end
     if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
+    -- ekran: żeby panel mógł pokazać podgląd strony także dla modelu, którego nie zna
+    local ok_screen, screen = pcall(function()
+        local scr = Device.screen
+        return Sync.screenParam(scr:getWidth(), scr:getHeight(), scr:getDPI(),
+            scr.isColorScreen and scr:isColorScreen())
+    end)
+    if ok_screen and screen then query[#query + 1] = "screen=" .. screen end
     local code, remote, neterr = request("GET", server .. "/api/v1/sync"
         .. (#query > 0 and ("?" .. table.concat(query, "&")) or ""), token)
     -- TASK-15: dane przeniesiono na inny serwer — ten sam token, nowy adres.

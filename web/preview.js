@@ -11,6 +11,8 @@ const Preview = (() => {
   // Rozdzielczość = okno KOReadera w pionie (piksele ekranu). ppi tylko do opisu.
   const PROFILES = [
     { id: "bigme-hibreak", label: "BigMe HiBreak 6,13″", w: 824, h: 1648, ppi: 300, gray: true, re: /hibreak|bigme/i },
+    { id: "onyx-noteair3c", label: "Onyx Note Air3 C 10,3″", w: 1404, h: 1872, ppi: 227, gray: false, re: /note ?air|onyx|boox/i },
+    { id: "steamdeck", label: "Steam Deck 7″ (poziomo)", w: 1280, h: 800, ppi: 216, gray: false, re: /steam ?deck/i },
     { id: "kindle-pw", label: "Kindle Paperwhite 6,8″", w: 1236, h: 1648, ppi: 300, gray: true, re: /kindle|paperwhite/i },
     { id: "kobo-libra", label: "Kobo Libra 2 7″", w: 1264, h: 1680, ppi: 300, gray: true, re: /libra/i },
     { id: "kobo-clara", label: "Kobo Clara 6″", w: 1072, h: 1448, ppi: 300, gray: true, re: /clara/i },
@@ -21,6 +23,38 @@ const Preview = (() => {
   // ceil(v · krótszy_bok / 600). Tak KOReader przelicza rozmiar czcionki („pt” w menu
   // to w praktyce px ekranu 600 px szerokości) i marginesy.
   const scaleBySize = (v, p) => Math.ceil(v * Math.min(p.w, p.h) / 600);
+
+  // Czytnik pasuje do profilu po modelu ORAZ nazwie: Steam Deck zgłasza model „Flatpak”,
+  // a rozpoznać go można dopiero po nazwie nadanej przy parowaniu.
+  const devText = d => `${d.model || ""} ${d.name || ""}`;
+
+  // Profil z ekranu zgłoszonego przez plugin (device.screen) — działa dla każdego
+  // modelu. Okno KOReadera na czytniku rysujemy w pionie nawet wtedy, gdy czytnik
+  // leżał obrócony przy ostatniej synchronizacji; komputer (Steam Deck, Linux, Mac)
+  // zostaje w orientacji, w jakiej zgłosił ekran.
+  const inches = p => Math.hypot(p.w, p.h) / p.ppi;
+  const fmtIn = p => inches(p).toFixed(1).replace(".", ",") + "″";
+  function deviceProfile(d) {
+    const sc = d && d.screen;
+    if (!sc || !(sc.w >= 200 && sc.h >= 200 && sc.dpi >= 50)) return null;
+    const portrait = d.platform !== "Desktop";
+    const w = portrait ? Math.min(sc.w, sc.h) : sc.w, h = portrait ? Math.max(sc.w, sc.h) : sc.h;
+    const p = { id: "dev-" + d.id, w, h, ppi: sc.dpi, gray: !sc.color, dev: d.name || d.model || "czytnik" };
+    p.label = `${p.dev} ${fmtIn(p)}`;
+    return p;
+  }
+
+  const CUSTOM_DEFAULT = { w: 1072, h: 1448, ppi: 300, color: false };
+
+  // Własny ekran wpisany w panelu (zapamiętany w przeglądarce). Zwraca profil albo null.
+  function customProfile(c) {
+    if (!c) return null;
+    const w = Math.round(Number(c.w)), h = Math.round(Number(c.h)), ppi = Math.round(Number(c.ppi));
+    if (!(w >= 200 && w <= 10000 && h >= 200 && h <= 10000 && ppi >= 50 && ppi <= 1000)) return null;
+    const p = { id: "custom", w, h, ppi, gray: !c.color };
+    p.label = `Inny ekran ${fmtIn(p)}`;
+    return p;
+  }
 
   const get = (t, k) => t instanceof Map ? t.get(k) : (t && typeof t === "object" ? t[k] : undefined);
   const OPT = new Map((KOD ? KOD.opts : []).map(o => [o.key, o]));
@@ -297,13 +331,25 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
   // ---------------------------------------------------------------- panel (DOM)
 
   const st = { open: false, id: null, key: null, label: "", base: null, cur: null, cand: undefined, hasCand: false,
-    mode: "po", page: 0, pages: 1, prof: null, devices: [], docs: {}, lh: {} };
+    mode: "po", page: 0, pages: 1, prof: null, devices: [], docs: {}, lh: {}, custom: null };
   const PROF_KEY = "koligilo.preview.profile";
   const MODE_KEY = "koligilo.preview.mode";
-  try { st.prof = localStorage.getItem(PROF_KEY); st.mode = localStorage.getItem(MODE_KEY) || "po"; } catch { /* bez pamięci */ }
+  const CUSTOM_KEY = "koligilo.preview.custom";
+  try {
+    st.prof = localStorage.getItem(PROF_KEY); st.mode = localStorage.getItem(MODE_KEY) || "po";
+    st.custom = JSON.parse(localStorage.getItem(CUSTOM_KEY) || "null");
+  } catch { /* bez pamięci */ }
 
   const $ = id => document.getElementById(id);
-  const profile = () => PROFILES.find(p => p.id === st.prof) || PROFILES[0];
+  // Lista do wyboru: ekrany zgłoszone przez czytniki, potem wbudowane (bez tych, które
+  // dubluje któryś zgłoszony czytnik), na końcu własny. Wbudowane po modelu to zapas
+  // dla czytników ze starym pluginem, który ekranu jeszcze nie zgłasza.
+  function allProfiles() {
+    const fromDev = st.devices.map(deviceProfile).filter(Boolean);
+    const covered = x => st.devices.some(d => deviceProfile(d) && x.re.test(devText(d)));
+    return [...fromDev, ...PROFILES.filter(x => !covered(x)), customProfile(st.custom) || customProfile(CUSTOM_DEFAULT)];
+  }
+  const profile = () => { const all = allProfiles(); return all.find(p => p.id === st.prof) || all[0]; };
 
   // stosunek line-height:normal do rozmiaru dla danego stosu czcionek (w oknie panelu)
   function normalLH(stack) {
@@ -349,6 +395,11 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
           [["przed", "Przed"], ["po", "Po"], ["obok", "Obok siebie"]].map(([v, l]) => h("button", {
             type: "button", role: "radio", "data-v": v,
             onclick: () => { st.mode = v; try { localStorage.setItem(MODE_KEY, v); } catch {} draw(); } }, l)))),
+      h("div", { id: "pv-custom", class: "pv-custom", hidden: true },
+        [["w", "Szerokość (px)"], ["h", "Wysokość (px)"], ["ppi", "ppi"]].map(([k, l]) => h("label", {}, h("span", {}, l),
+          h("input", { type: "number", inputmode: "numeric", "data-k": k, min: 50, step: 1, oninput: customInput }))),
+        h("label", { class: "pv-custom-color" }, h("input", { type: "checkbox", "data-k": "color", onchange: customInput }), h("span", {}, "kolorowy")),
+        h("p", { id: "pv-custom-err", class: "pv-custom-err", role: "alert" })),
       h("div", { id: "pv-stage", class: "pv-stage" }),
       h("div", { class: "pv-nav" },
         h("button", { type: "button", id: "pv-prev", "aria-label": "Poprzednia strona", onclick: () => flip(-1) }, "‹"),
@@ -360,6 +411,32 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
         h("button", { type: "button", class: "linkish", disabled: true, title: "Wierny podgląd prawdziwym crengine — w przygotowaniu (TASK-24)" }, "Wierny podgląd (crengine)")));
     shell.append(aside);
     new ResizeObserver(() => st.open && fit()).observe(aside);
+  }
+
+  // Formularz „Inny ekran”: poprawne liczby zapisują się w przeglądarce i rysują podgląd
+  // (z krótkim opóźnieniem, żeby pisanie nie przebudowywało ramki przy każdej cyfrze).
+  let customTimer = 0;
+  function customInput() {
+    const v = {};
+    for (const i of document.querySelectorAll("#pv-custom input")) v[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value;
+    const good = customProfile(v);
+    $("pv-custom-err").textContent = good ? "" : "Podaj szerokość i wysokość 200–10000 px oraz ppi 50–1000.";
+    for (const i of document.querySelectorAll("#pv-custom input[type=number]")) i.setAttribute("aria-invalid", String(!good));
+    if (!good) return;
+    st.custom = { w: good.w, h: good.h, ppi: good.ppi, color: !good.gray };
+    try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(st.custom)); } catch { /* bez pamięci */ }
+    clearTimeout(customTimer);
+    customTimer = setTimeout(() => { st.page = 0; draw(); }, 250);
+  }
+
+  function drawCustom(p) {
+    const box = $("pv-custom");
+    box.hidden = p.id !== "custom";
+    if (box.hidden) return;
+    for (const i of box.querySelectorAll("input")) {
+      if (i === document.activeElement) continue;
+      if (i.type === "checkbox") i.checked = !p.gray; else i.value = p[i.dataset.k];
+    }
   }
 
   function frameBox(which) {
@@ -384,10 +461,11 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
     if (!st.open) return;
     const p = profile();
     const sel = $("pv-prof");
-    sel.replaceChildren(...PROFILES.map(x => {
-      const dev = st.devices.filter(d => x.re.test(d.model || d.name || "")).map(d => d.name).join(", ");
+    sel.replaceChildren(...allProfiles().map(x => {
+      const dev = x.dev || x.id === "custom" ? "" : st.devices.filter(d => x.re.test(devText(d))).map(d => d.name).join(", ");
       return h("option", { value: x.id, selected: x.id === p.id || null }, x.label + ` · ${x.w}×${x.h}` + (dev ? ` · jak ${dev}` : ""));
     }));
+    drawCustom(p);
     for (const b of $("pv-mode").children) b.setAttribute("aria-checked", String(b.dataset.v === st.mode));
     $("pv-sub").textContent = st.label;
     const want = st.mode === "obok" ? ["przed", "po"] : [st.mode];
@@ -416,7 +494,7 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
       ` (KOReader: rozmiar × krótszy bok / 600). Marginesy: L ${m.left}, P ${m.right}, G ${m.top}, D ${m.bottom} px` +
       (m.footerOn && !m.footer.reclaim_height ? ` (w tym pasek stanu ${m.footerH} px)` : "") + `. Interlinia ${m.lineSpacing} %.` +
       (hasFont(font) ? "" : ` Kroju „${font}” nie ma w tej przeglądarce — podgląd użył zastępczego.`) +
-      (num(s, "copt_visible_pages") === 2 ? " Dwie kolumny KOReader pokazuje tylko w poziomie — podgląd jest pionowy." : "");
+      (num(s, "copt_visible_pages") === 2 ? (p.w > p.h ? " Dwie kolumny KOReader pokazuje w poziomie, ale podgląd rysuje jedną." : " Dwie kolumny KOReader pokazuje tylko w poziomie — podgląd jest pionowy.") : "");
     fit();
   }
 
@@ -478,11 +556,11 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
     const changed = st.id !== o.id;
     Object.assign(st, { id: o.id, key: o.key, label: o.label, cur: o.settings });
     if (changed || !st.open) { st.base = o.settings; st.cand = undefined; st.hasCand = false; st.page = 0; }
+    st.devices = o.devices || [];
     if (!st.prof && o.devices) {
-      const hit = PROFILES.find(p => o.devices.some(d => p.re.test(d.model || d.name || "")));
+      const hit = allProfiles().find(p => p.dev || (p.re && o.devices.some(d => p.re.test(devText(d)))));
       if (hit) st.prof = hit.id;
     }
-    st.devices = o.devices || [];
     st.open = true;
     $("pv").hidden = false;
     $("shell").classList.add("pv-open");
@@ -517,7 +595,7 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
     draw();
   }
 
-  return { PROFILES, scaleBySize, metrics, translateCss, buildDoc, footerHTML, SAMPLE,
+  return { PROFILES, deviceProfile, customProfile, scaleBySize, metrics, translateCss, buildDoc, footerHTML, SAMPLE,
     open, close, update, candidate, isOpen: () => st.open, current: () => st.id };
 })();
 

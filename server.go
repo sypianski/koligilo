@@ -150,6 +150,10 @@ func (s *Server) pairPoll(w http.ResponseWriter, r *http.Request) {
 // --- synchronizacja ---
 
 func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
+	if err := s.st.SetScreen(d, ParseScreen(r.URL.Query().Get("screen"))); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
 	entries := []Entry{}
 	groups := []string{}
 	for _, g := range Catalog {

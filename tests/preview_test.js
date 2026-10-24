@@ -17,6 +17,30 @@ eq("scale BigMe 22", P.scaleBySize(22, prof("bigme-hibreak")), 31);
 eq("scale Kindle 22", P.scaleBySize(22, prof("kindle-pw")), 46);
 eq("scale 600 px = 1:1", P.scaleBySize(22, { w: 600, h: 800 }), 22);
 
+// profile ekranu rozpoznają prawdziwe czytniki (model albo nazwa z parowania)
+const forDev = d => P.PROFILES.find(p => p.re.test(`${d.model || ""} ${d.name || ""}`))?.id;
+eq("profil: Bigyo", forDev({ name: "Bigyo", model: "hibreak_eea" }), "bigme-hibreak");
+eq("profil: Steam Deck po nazwie", forDev({ name: "SteamDeck", model: "Flatpak" }), "steamdeck");
+eq("profil: Onyx Note Air3 C", forDev({ name: "Onyx NoteAir3C", model: "Onyx NoteAir3C" }), "onyx-noteair3c");
+eq("skala Steam Deck (poziomo) liczy od krótszego boku", P.scaleBySize(22, prof("steamdeck")), 30);
+
+// profil z ekranu zgłoszonego przez czytnik (nowy model bez wpisu w PROFILES)
+const dp = P.deviceProfile({ id: "x1", name: "Nowy", model: "Nieznany", platform: "Android", screen: { w: 1872, h: 1404, dpi: 227, color: true } });
+eq("ekran czytnika: pion mimo obróconego zgłoszenia", [dp.w, dp.h], [1404, 1872]);
+eq("ekran czytnika: kolor => bez szarości", dp.gray, false);
+eq("ekran czytnika: etykieta z przekątną", dp.label, "Nowy 10,3″");
+const deck = P.deviceProfile({ id: "d1", name: "SteamDeck", platform: "Desktop", screen: { w: 1280, h: 800, dpi: 216 } });
+eq("komputer zostaje w poziomie", [deck.w, deck.h, deck.gray], [1280, 800, true]);
+eq("brak ekranu => brak profilu", P.deviceProfile({ id: "z", name: "Stary" }), null);
+eq("śmieciowy ekran => brak profilu", P.deviceProfile({ id: "z", screen: { w: 10, h: 10, dpi: 1 } }), null);
+eq("scale z profilu czytnika", P.scaleBySize(22, dp), 52);
+const cu = P.customProfile({ w: "1080", h: "2400", ppi: "416", color: true });
+eq("własny ekran: liczby z pól tekstowych", [cu.id, cu.w, cu.h, cu.ppi, cu.gray], ["custom", 1080, 2400, 416, false]);
+eq("własny ekran: poza zakresem", P.customProfile({ w: 100, h: 2400, ppi: 416 }), null);
+eq("własny ekran: nie-liczby", P.customProfile({ w: "abc", h: 1, ppi: 1 }), null);
+eq("własny ekran: brak", P.customProfile(null), null);
+ok("własny ekran buduje dokument", /width: 1080px/.test(P.buildDoc({}, cu).html));
+
 // domyślne KOReadera (brak wspólnych wartości) na BigMe
 const m0 = P.metrics({}, prof("bigme-hibreak"));
 eq("domyślny rozmiar", m0.fs, 31);

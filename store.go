@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,7 +28,8 @@ type Device struct {
 	PairedAt  time.Time       `json:"paired_at"`
 	LastSeen  time.Time       `json:"last_seen"`
 	LastSync  *SyncReport     `json:"last_sync,omitempty"`
-	Groups    map[string]bool `json:"groups"` // brak klucza = Group.Default
+	Groups    map[string]bool `json:"groups"`           // brak klucza = Group.Default
+	Screen    *Screen         `json:"screen,omitempty"` // zgłasza plugin przy synchronizacji (podgląd strony w panelu)
 
 	// Wtyczki (plugins.go, PC-004). PluginsAllowed ustawia wyłącznie czytnik.
 	PluginsAllowed  bool              `json:"plugins_allowed"`
@@ -40,6 +42,50 @@ type Device struct {
 	FontsAllowed  bool            `json:"fonts_allowed"`
 	FontInventory []InstalledFont `json:"font_inventory,omitempty"`
 	FontReportAt  *time.Time      `json:"font_report_at,omitempty"`
+}
+
+// Screen to ekran czytnika widziany przez KOReadera (piksele i ppi). Panel buduje
+// z niego profil podglądu strony, więc nowy model nie wymaga zmian w kodzie.
+type Screen struct {
+	W     int  `json:"w"`
+	H     int  `json:"h"`
+	DPI   int  `json:"dpi"`
+	Color bool `json:"color,omitempty"`
+}
+
+// ParseScreen czyta parametr `screen` synchronizacji: "1404x1872@227" z
+// opcjonalnym ",c" (ekran kolorowy). Wartości spoza rozsądnych zakresów odpadają —
+// panel liczy z nich rozmiar czcionki, a dane pochodzą z urządzenia.
+func ParseScreen(v string) *Screen {
+	var s Screen
+	rest, color := strings.CutSuffix(v, ",c")
+	if n, err := fmt.Sscanf(rest, "%dx%d@%d", &s.W, &s.H, &s.DPI); err != nil || n != 3 {
+		return nil
+	}
+	if fmt.Sprintf("%dx%d@%d", s.W, s.H, s.DPI) != rest { // bez śmieci za liczbami
+		return nil
+	}
+	if s.W < 200 || s.W > 10000 || s.H < 200 || s.H > 10000 || s.DPI < 50 || s.DPI > 1000 {
+		return nil
+	}
+	s.Color = color
+	return &s
+}
+
+// SetScreen zapisuje ekran zgłoszony przez czytnik; plik state.json rusza tylko
+// przy zmianie (synchronizacja woła to za każdym razem).
+func (st *Store) SetScreen(d *Device, s *Screen) error {
+	if s == nil {
+		return nil
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if d.Screen != nil && *d.Screen == *s {
+		return nil
+	}
+	c := *s
+	d.Screen = &c
+	return st.saveLocked()
 }
 
 type SyncReport struct {

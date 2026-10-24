@@ -733,4 +733,16 @@ function Sync.movedURL(old, new)
     return new
 end
 
+-- Parametr `screen` synchronizacji: rozdzielczość, ppi i czy ekran jest kolorowy,
+-- np. "1404x1872@227,c". Po tym panel buduje podgląd strony dla nowego czytnika
+-- bez znajomości jego modelu. Zakresy jak w parseScreen w Go (nieprawdopodobne
+-- liczby pomijamy zamiast wysyłać: serwer i tak by je odrzucił).
+function Sync.screenParam(w, h, dpi, color)
+    w, h, dpi = tonumber(w), tonumber(h), tonumber(dpi)
+    if not (w and h and dpi) then return nil end
+    w, h, dpi = math.floor(w + 0.5), math.floor(h + 0.5), math.floor(dpi + 0.5)
+    if w < 200 or w > 10000 or h < 200 or h > 10000 or dpi < 50 or dpi > 1000 then return nil end
+    return string.format("%dx%d@%d%s", w, h, dpi, color and ",c" or "")
+end
+
 return Sync

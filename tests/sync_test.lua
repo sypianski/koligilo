@@ -350,5 +350,13 @@ check("moved: ten sam adres to nie przenosiny", M("https://a.example", "https://
 check("moved: zły port", M("https://a", "https://b:99999") == nil)
 check("moved: spacje", M("https://a", "https://b.example/ x") == nil)
 
+-- parametr screen --------------------------------------------------------------
+check("screen: e-ink", Sync.screenParam(1404, 1872, 227, false) == "1404x1872@227")
+check("screen: kolorowy", Sync.screenParam(1404, 1872, 227, true) == "1404x1872@227,c")
+check("screen: liczby ułamkowe się zaokrąglają", Sync.screenParam(823.6, 1648, 299.9, nil) == "824x1648@300")
+check("screen: brak danych", Sync.screenParam(nil, 1872, 227) == nil and Sync.screenParam("x", 1, 1) == nil)
+check("screen: poza zakresem", Sync.screenParam(100, 1872, 227) == nil and Sync.screenParam(1404, 1872, 5) == nil
+    and Sync.screenParam(1404, 99999, 227) == nil)
+
 print(string.format("%d ok, %d fail", passed, failed))
 os.exit(failed == 0 and 0 or 1)
