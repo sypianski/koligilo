@@ -2452,6 +2452,7 @@ function installedPanel() {
         : nUpd ? `${nUpd} ${plPl(nUpd, "wtyczka ma nowszą wersję", "wtyczki mają nowszą wersję", "wtyczek ma nowszą wersję")}.`
         : "Wszystkie wtyczki z galerii są aktualne." + (g.updated_at && !g.updated_at.startsWith("0001") ? " Sprawdzono: " + ago(g.updated_at) + "." : ""))),
     msg && h("p", { class: (msg.ok ? "ok" : "err") + " small", role: "status" }, msg.text),
+    freshDevices().map(newDeviceCard),
     devs.length === 0
       ? h("p", { class: "muted" }, "Brak połączonych urządzeń — dodaj czytnik w zakładce „Urządzenia”.")
       : rows.length === 0
@@ -2478,6 +2479,62 @@ function installedPanel() {
         h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full),
           h("span", {}, h("span", { class: "pname" }, galleryTitle(full)), h("small", { class: "pdir" }, full))),
         h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Znajdź w galerii")))));
+}
+
+// ------------------------------------------------ nowy czytnik: karta „3 kroki” (TASK-33)
+//
+// Czytnik, który jeszcze nie ma żadnej wtyczki od koligilo (ani przypisanej, ani zainstalowanej),
+// dostaje nad macierzą listę kontrolną: zgoda na czytniku → wybór wtyczek → zatwierdzenie na
+// czytniku. Krok 2 to skróty tego samego POST /api/admin/devices/{id}/plugins co ＋ w macierzy
+// („Jak <inny czytnik>”, „Wszystkie z magazynu”) albo arkusz „Dodaj wtyczkę” dla jednego czytnika.
+// Zgodę (krok 1) i zatwierdzenie (krok 3) robi się wyłącznie na czytniku — panel je tylko pokazuje (PC-004).
+
+const NOPLUG_KEY = "koligilo.noPlugins.";
+function noPlugGet(id) { try { return localStorage.getItem(NOPLUG_KEY + id) === "1"; } catch { return false; } }
+function noPlugSet(id) { try { localStorage.setItem(NOPLUG_KEY + id, "1"); } catch {} render(); }
+
+function freshDevices() {
+  return S.state.devices.filter(d => !noPlugGet(d.id) && !(d.plugin_inventory || []).some(p => p.managed));
+}
+
+// zestaw do przypisania „jak na innym czytniku”: tylko wersje, które panel ma zaakceptowane
+function plugSetFrom(other) {
+  const out = {};
+  for (const [dir, sha] of Object.entries(other.plugins || {})) if (pluginByHash(sha) && pluginByHash(sha).approved) out[dir] = sha;
+  return out;
+}
+function plugSetAll() {
+  const out = {};
+  for (const dir of new Set((S.plugins || []).filter(v => v.approved).map(v => v.dir))) out[dir] = latestApproved(dir).sha256;
+  return out;
+}
+
+function newDeviceCard(d) {
+  const targets = Object.keys(d.plugins || {});
+  const picked = targets.length > 0;
+  const done3 = picked && targets.every(dir => plugCell(d, dir).k === "ok");
+  const mark = ok => h("span", { class: "ckm" + (ok ? " done" : ""), "aria-hidden": "true" }, ok ? "☑" : "☐");
+  const others = S.state.devices.filter(o => o.id !== d.id)
+    .map(o => ({ o, set: plugSetFrom(o) })).filter(x => Object.keys(x.set).length > 0).slice(0, 2);
+  const all = plugSetAll(), nAll = Object.keys(all).length;
+  const busy = S.devPluginBusy === d.id;
+  return h("section", { class: "card newdev", "aria-label": `Nowy czytnik ${d.name}` },
+    h("h3", { style: "margin-top:0" }, `Czytnik „${d.name}” — trzy kroki do wtyczek`),
+    h("ol", { class: "checklist" },
+      h("li", {}, mark(d.plugins_allowed),
+        h("div", {}, h("b", {}, d.plugins_allowed ? "Czytnik pozwolił na wtyczki" : "Na czytniku pozwól na wtyczki"),
+          !d.plugins_allowed && h("div", { class: "muted small" }, `${MENU_PATH} → Pozwól instalować wtyczki.`))),
+      h("li", {}, mark(picked),
+        h("div", {}, h("b", {}, picked ? `Wybrane wtyczki: ${targets.map(pluginTitle).join(", ")}` : "W panelu wybierz wtyczki"),
+          !picked && h("div", { class: "row", style: "margin-top:6px" },
+            others.map(x => h("button", { type: "button", disabled: busy, onclick: () => saveDevicePlugins(d, x.set) },
+              `Jak ${x.o.name} (${Object.keys(x.set).length})`)),
+            nAll > 0 && h("button", { type: "button", disabled: busy, onclick: () => saveDevicePlugins(d, all) }, `Wszystkie z magazynu (${nAll})`),
+            h("button", { type: "button", disabled: busy, onclick: () => openAddSheet(nAll > 0 ? "magazyn" : "galeria", null, [d.id]) }, "Wybiorę sam…")))),
+      h("li", {}, mark(done3),
+        h("div", {}, h("b", {}, done3 ? "Zatwierdzone na czytniku" : "Na czytniku zatwierdź"),
+          !done3 && h("div", { class: "muted small" }, picked ? SYNC_HINT : "Po wyborze wtyczek: Synchronizuj teraz i zatwierdź listę.")))),
+    h("button", { type: "button", class: "linkbtn small", onclick: () => noPlugSet(d.id) }, "Ten czytnik nie potrzebuje wtyczek"));
 }
 
 function pluginMatrixRow(dir, devs) {
@@ -2771,8 +2828,9 @@ function newSheet(src) {
   return { src, repo: null, promoted: false, sha: null, devices: null, busy: false, msg: null, candidates: null, path: "" };
 }
 
-function openAddSheet(src, q) {
+function openAddSheet(src, q, devIds) {
   S.addSheet = newSheet(src || "galeria");
+  if (devIds) S.addSheet.devices = new Set(devIds);
   if (q != null) { S.galQ = q; S.galPage = 1; }
   return refresh().then(() => document.getElementById(S.addSheet && S.addSheet.src === "galeria" ? "f-galq" : "sh-close")?.focus());
 }
