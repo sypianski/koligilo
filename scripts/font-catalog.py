@@ -25,12 +25,12 @@ FAM=[
  dict(id="amiri",commit="d3d0c5cb6fe7196cb4a58608fc5c8ecd2e6e80fa",name="Amiri",repo="aliftype/amiri",branch="main",desc="Naskh w stylu klasycznych druków bulackich. Do tekstów arabskich (z łaciną).",scripts="arabski, łacina",files=f("fonts/Amiri-{}.ttf")),
  dict(id="atkinson-hyperlegible",commit="1cb311624b2ddf88e9e37873999d165a8cd28b46",name="Atkinson Hyperlegible",repo="googlefonts/atkinson-hyperlegible",branch="main",desc="Krój Braille Institute o maksymalnej rozróżnialności liter. Dla osób słabowidzących.",scripts="łacina",files=f("fonts/ttf/AtkinsonHyperlegible-{}.ttf")),
  dict(id="opendyslexic",commit="1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7",name="OpenDyslexic",repo="antijingoist/opendyslexic",branch="main",desc="Krój z obciążonymi dołami liter, ułatwiający czytanie osobom z dysleksją.",scripts="łacina",files=["compiled/OpenDyslexic-Regular.otf","compiled/OpenDyslexic-Italic.otf","compiled/OpenDyslexic-Bold.otf","compiled/OpenDyslexic-BoldItalic.otf"]),
- dict(id="crimson-pro",name="Crimson Pro",repo="Fonthausen/CrimsonPro",branch="master",desc="Garamondowa antykwa z rodziny Crimson, lekka i zwarta, dobra do tekstów naukowych.",scripts="łacina",files=f("fonts/otf/CrimsonPro-{}.otf")),
- dict(id="vollkorn",name="Vollkorn",repo="FAlthausen/Vollkorn-Typeface",branch="master",desc="Ciemna, ciepła antykwa o mocnym kolorze strony. Dobrze wygląda na e-papierze.",scripts="łacina, cyrylica, greka",files=f("fonts/ttf/Vollkorn-{}.ttf")),
- dict(id="pt-serif",name="PT Serif",lic="OFL-1.1",repo="google/fonts",branch="main",desc="Pragmatyczna antykwa ParaType o dużej rozróżnialności, dobra przy polsko-rosyjskich tekstach.",scripts="łacina, cyrylica",files=f("ofl/ptserif/PT_Serif-Web-{}.ttf")),
+ dict(id="crimson-pro",commit="475ca6a0469ba2bd9c2a3bbf038957099392c04d",name="Crimson Pro",repo="Fonthausen/CrimsonPro",branch="master",desc="Garamondowa antykwa z rodziny Crimson, lekka i zwarta, dobra do tekstów naukowych.",scripts="łacina",files=f("fonts/otf/CrimsonPro-{}.otf")),
+ dict(id="vollkorn",commit="38ab7a896bd6b163ac7f834ec696d6c68e5dedd6",name="Vollkorn",repo="FAlthausen/Vollkorn-Typeface",branch="master",desc="Ciemna, ciepła antykwa o mocnym kolorze strony. Dobrze wygląda na e-papierze.",scripts="łacina, cyrylica, greka",files=f("fonts/ttf/Vollkorn-{}.ttf")),
+ dict(id="pt-serif",commit="e7db6ca603fd4862010383ff17ffd6cc4ffac1c0",name="PT Serif",lic="OFL-1.1",repo="google/fonts",branch="main",desc="Pragmatyczna antykwa ParaType o dużej rozróżnialności, dobra przy polsko-rosyjskich tekstach.",scripts="łacina, cyrylica",files=f("ofl/ptserif/PT_Serif-Web-{}.ttf")),
 ]
 def gh(path, jq): return subprocess.check_output(["gh","api",path,"--jq",jq],text=True).strip()
-STARTER={"literata","source-serif","atkinson-hyperlegible"}
+STARTER={"literata","vollkorn","atkinson-hyperlegible","opendyslexic"}
 out=[]
 for fam in FAM:
     try: br=gh(f"repos/{fam['repo']}","(.default_branch)")

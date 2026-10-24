@@ -38,3 +38,4 @@ Zrobione: katalog 11 rodzin × 4 style (Literata, Source Serif 4, EB Garamond, M
 <!-- SECTION:NOTES:END -->
 
 Rozszerzenie (po wyborze w artefakcie): +Crimson Pro, Vollkorn, PT Serif = 14 rodzin, ok. 28 MB, wszystkie SIL OFL 1.1 (licencja sprawdzona w OFL.txt google/fonts i w tabeli name pobranych plików; PT Serif ma zastrzeżone nazwy, pliki serwujemy bez zmian z google/fonts, więc OK). Alegreya nadal poza katalogiem: są tylko pliki zmiennych (wght), bez statycznych 4 stylów.
+Zestaw startowy zmieniony po wyborze użytkownika w artefakcie: Literata, Vollkorn, Atkinson Hyperlegible, OpenDyslexic (ok. 3,8 MB); Source Serif 4 zostaje w katalogu, ale poza startowym.

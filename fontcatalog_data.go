@@ -16,7 +16,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "source-serif", Name: "Source Serif 4", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/adobe-fonts/source-serif/tree/80d3f8894c09c937bebfa9011247d2e1c79fd6f4", Starter: true,
+		Source: "https://github.com/adobe-fonts/source-serif/tree/80d3f8894c09c937bebfa9011247d2e1c79fd6f4", Starter: false,
 		Description: "Neutralna, czytelna antykwa Adobe. Dobra do tekstów naukowych.",
 		Fonts: []CatalogFont{
 			{"SourceSerif4-Regular.otf", "https://raw.githubusercontent.com/adobe-fonts/source-serif/80d3f8894c09c937bebfa9011247d2e1c79fd6f4/OTF/SourceSerif4-Regular.otf", "edf160d0d584deee8a3bb2c3371b2a7624ca63580fbe02c57c1f4c91e84d8787", 241392},
@@ -115,7 +115,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "opendyslexic", Name: "OpenDyslexic", Scripts: "łacina", License: "OFL-1.1",
-		Source: "https://github.com/antijingoist/opendyslexic/tree/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7", Starter: false,
+		Source: "https://github.com/antijingoist/opendyslexic/tree/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7", Starter: true,
 		Description: "Krój z obciążonymi dołami liter, ułatwiający czytanie osobom z dysleksją.",
 		Fonts: []CatalogFont{
 			{"OpenDyslexic-Regular.otf", "https://raw.githubusercontent.com/antijingoist/opendyslexic/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7/compiled/OpenDyslexic-Regular.otf", "32f5840fb2bf844bdabafe372591ddfb9286e98117f5b21950aaf54ea856919a", 175872},
@@ -137,7 +137,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "vollkorn", Name: "Vollkorn", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/FAlthausen/Vollkorn-Typeface/tree/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6", Starter: false,
+		Source: "https://github.com/FAlthausen/Vollkorn-Typeface/tree/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6", Starter: true,
 		Description: "Ciemna, ciepła antykwa o mocnym kolorze strony. Dobrze wygląda na e-papierze.",
 		Fonts: []CatalogFont{
 			{"Vollkorn-Regular.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Regular.ttf", "e31e2437f6c4ebd67d6bbbfa730ba077dbeb10deda42784fbac02559bcbfee45", 419116},
