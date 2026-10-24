@@ -124,4 +124,37 @@ var fontCatalog = []FontFamily{
 			{"OpenDyslexic-BoldItalic.otf", "https://raw.githubusercontent.com/antijingoist/opendyslexic/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7/compiled/OpenDyslexic-BoldItalic.otf", "95894a308f534d152ce96fb764caddded0d56a82d67d4686eb1fb900368228ee", 235788},
 		},
 	},
+	{
+		ID: "crimson-pro", Name: "Crimson Pro", Scripts: "łacina", License: "OFL-1.1",
+		Source: "https://github.com/Fonthausen/CrimsonPro/tree/475ca6a0469ba2bd9c2a3bbf038957099392c04d", Starter: false,
+		Description: "Garamondowa antykwa z rodziny Crimson, lekka i zwarta, dobra do tekstów naukowych.",
+		Fonts: []CatalogFont{
+			{"CrimsonPro-Regular.otf", "https://raw.githubusercontent.com/Fonthausen/CrimsonPro/475ca6a0469ba2bd9c2a3bbf038957099392c04d/fonts/otf/CrimsonPro-Regular.otf", "732aa86d42ca617754e34ff74b80d5f20df9c3a1758991c0281f95450e7587a8", 101124},
+			{"CrimsonPro-Italic.otf", "https://raw.githubusercontent.com/Fonthausen/CrimsonPro/475ca6a0469ba2bd9c2a3bbf038957099392c04d/fonts/otf/CrimsonPro-Italic.otf", "262e5cdfc16bb05a59e53505e7b04ff155b4334d51fdbbb95e48d39d0a7550a1", 102468},
+			{"CrimsonPro-Bold.otf", "https://raw.githubusercontent.com/Fonthausen/CrimsonPro/475ca6a0469ba2bd9c2a3bbf038957099392c04d/fonts/otf/CrimsonPro-Bold.otf", "268fa9f3502f7535cb56686b43077099979db3e3f878c187cc902c0e83487b25", 104916},
+			{"CrimsonPro-BoldItalic.otf", "https://raw.githubusercontent.com/Fonthausen/CrimsonPro/475ca6a0469ba2bd9c2a3bbf038957099392c04d/fonts/otf/CrimsonPro-BoldItalic.otf", "e6ce0597bce250b15b9b9c66184a66d6b9614322307748b5f9e8e44ce339e4ec", 107024},
+		},
+	},
+	{
+		ID: "vollkorn", Name: "Vollkorn", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
+		Source: "https://github.com/FAlthausen/Vollkorn-Typeface/tree/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6", Starter: false,
+		Description: "Ciemna, ciepła antykwa o mocnym kolorze strony. Dobrze wygląda na e-papierze.",
+		Fonts: []CatalogFont{
+			{"Vollkorn-Regular.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Regular.ttf", "e31e2437f6c4ebd67d6bbbfa730ba077dbeb10deda42784fbac02559bcbfee45", 419116},
+			{"Vollkorn-Italic.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Italic.ttf", "6b6befba6011682be28b200331c37babb944f0aa510e8181cf26eab3d4828004", 319300},
+			{"Vollkorn-Bold.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Bold.ttf", "0c81f214910a95a995958da221efc50bfaa4d07aa2be6429de1b7accc6764536", 429264},
+			{"Vollkorn-BoldItalic.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-BoldItalic.ttf", "a808799b2add65edca00c568ca319db70e73e20e4294887c2a51ac91ed256bee", 331756},
+		},
+	},
+	{
+		ID: "pt-serif", Name: "PT Serif", Scripts: "łacina, cyrylica", License: "OFL-1.1",
+		Source: "https://github.com/google/fonts/tree/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0", Starter: false,
+		Description: "Pragmatyczna antykwa ParaType o dużej rozróżnialności, dobra przy polsko-rosyjskich tekstach.",
+		Fonts: []CatalogFont{
+			{"PT_Serif-Web-Regular.ttf", "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ptserif/PT_Serif-Web-Regular.ttf", "a4951fade06ff8f09b7673aa81ffb65a8cd409e24d3289a6dc670bc4dda2557a", 359048},
+			{"PT_Serif-Web-Italic.ttf", "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ptserif/PT_Serif-Web-Italic.ttf", "f57e95ff9dc85691a3b2e193f2028db36f6663939a46c0fc4f286d618b80b7ce", 375356},
+			{"PT_Serif-Web-Bold.ttf", "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ptserif/PT_Serif-Web-Bold.ttf", "038ba7336bd7ea14f12ad155bed51a4345cac5153275d521dec3ba04021c526e", 339996},
+			{"PT_Serif-Web-BoldItalic.ttf", "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ptserif/PT_Serif-Web-BoldItalic.ttf", "f003788ba08981eb0988b3557a6f224a53dab49c20e283e8b74d5af3c466f8be", 337580},
+		},
+	},
 }
