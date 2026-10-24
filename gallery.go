@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,8 +29,8 @@ import (
 //
 // Cache wyników wyszukiwania leży w <dane>/gallery.json (TTL 24h) i jest
 // jedynym źródłem dla GET /api/admin/gallery — samo wyszukiwanie po GitHubie
-// robi tylko POST /api/admin/gallery/refresh (albo GET raz, gdy cache jest
-// zupełnie pusty). Token GitHuba (KOLIGILO_GITHUB_TOKEN) jest opcjonalny:
+// robi POST /api/admin/gallery/refresh, GET raz (gdy cache jest zupełnie
+// pusty) oraz RefreshIfStale w tle (ticker i GET po przekroczeniu TTL). Token GitHuba (KOLIGILO_GITHUB_TOKEN) jest opcjonalny:
 // bez niego limit to 60 zapytań/h, więc dociąganie "najnowszego release" per
 // repozytorium ucina się samo, gdy limit się kończy.
 
@@ -37,6 +38,9 @@ const (
 	ghDefaultBase = "https://api.github.com"
 	galleryMaxZip = 50 << 20 // limit zipballa z GitHuba
 	galleryTTL    = 24 * time.Hour
+	// Po nieudanym odświeżeniu w tle (limit GitHuba, brak sieci) nie próbujemy
+	// ponownie przy każdym GET, tylko po tym czasie.
+	galleryRetry  = time.Hour
 	galleryPageSz = 30
 
 	// Autor koligilo: jego wtyczki galeria pokazuje osobno, na samej górze
@@ -77,8 +81,10 @@ type Gallery struct {
 	hc       *http.Client
 	path     string
 
-	mu    sync.Mutex
-	cache galleryCache
+	mu         sync.Mutex
+	cache      galleryCache
+	refreshing bool      // trwa RefreshIfStale
+	lastTry    time.Time // ostatnia próba RefreshIfStale
 
 	// TASK-12: cache aktualizacji, osobny plik i osobny zamek (odświeżanie
 	// aktualizacji robi dużo więcej zapytań do GitHuba niż odczyt z cache
@@ -515,6 +521,27 @@ func (g *Gallery) checkOneRepo(full string, cur PluginVersion) (GalleryUpdate, i
 	return u, rem, nil
 }
 
+// RefreshIfStale odświeża katalog galerii, gdy cache jest starszy niż
+// galleryTTL. Jedna próba naraz, a po porażce kolejna dopiero po galleryRetry.
+// Brak cache (UpdatedAt zerowe) też liczy się jako przeterminowany.
+func (g *Gallery) RefreshIfStale() {
+	g.mu.Lock()
+	if time.Since(g.cache.UpdatedAt) <= galleryTTL || g.refreshing || time.Since(g.lastTry) < galleryRetry {
+		g.mu.Unlock()
+		return
+	}
+	g.refreshing, g.lastTry = true, time.Now()
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		g.refreshing = false
+		g.mu.Unlock()
+	}()
+	if n, err := g.Refresh(); err != nil {
+		log.Printf("koligilo: odświeżenie katalogu galerii nie powiodło się (zapisano %d): %v", n, err)
+	}
+}
+
 // Refresh odpytuje GitHub Search API (temat koreader-plugin + nazwy
 // *koplugin*), scala i odduplikowuje wyniki po full_name, po czym dociąga
 // najnowszy release dla każdego repo, dopóki starcza limitu zapytań. Wynik
@@ -837,7 +864,8 @@ func (s *Server) adminGalleryList(w http.ResponseWriter, r *http.Request) {
 	case c.UpdatedAt.IsZero():
 		out["note"] = "galeria jeszcze nie odświeżona — wywołaj POST /api/admin/gallery/refresh"
 	case time.Since(c.UpdatedAt) > galleryTTL:
-		out["stale"] = true
+		out["stale"] = true // odpowiedź idzie ze starego cache; świeży będzie przy następnym GET
+		go g.RefreshIfStale()
 	}
 	writeJSON(w, 200, out)
 }

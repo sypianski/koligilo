@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // galleryEnv: serwer koligilo + podstawiony fake GitHub (httptest.Server) w
@@ -486,5 +487,48 @@ func TestGalleryPromotedOwner(t *testing.T) {
 	_, out = e.jsonDo("GET", "/api/admin/gallery?q=big", nil)
 	if prom, _ := out["promoted"].([]any); len(prom) != 0 {
 		t.Errorf("filtr q= nie objął polecanych: %v", prom)
+	}
+}
+
+// Katalog starszy niż galleryTTL odświeża się sam (RefreshIfStale), ale
+// świeży cache zostaje w spokoju, a po porażce nie ma ponowień przy każdym GET.
+func TestGalleryRefreshIfStale(t *testing.T) {
+	searches := 0
+	e := newGalleryEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/search/repositories"):
+			searches++
+			items := []map[string]any{ghSearchItem("alice", "nowa.koplugin", 1, "main")}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "items": items})
+		default:
+			w.WriteHeader(404)
+			json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+		}
+	})
+	g := e.s.gal
+	g.cache = galleryCache{UpdatedAt: time.Now().Add(-48 * time.Hour), Repos: []GalleryRepo{{Owner: "x", Repo: "stara", FullName: "x/stara"}}}
+
+	g.RefreshIfStale()
+	if searches == 0 {
+		t.Fatal("przeterminowany cache nie został odświeżony")
+	}
+	if c := g.Cached(); len(c.Repos) != 1 || c.Repos[0].FullName != "alice/nowa.koplugin" || time.Since(c.UpdatedAt) > time.Minute {
+		t.Fatalf("cache po odświeżeniu: %+v", c)
+	}
+	before := searches
+	g.RefreshIfStale() // świeży cache — bez zapytań
+	if searches != before {
+		t.Errorf("świeży cache odświeżony ponownie (%d → %d zapytań)", before, searches)
+	}
+
+	// porażka: kolejna próba dopiero po galleryRetry
+	g.mu.Lock()
+	g.cache.UpdatedAt = time.Now().Add(-48 * time.Hour)
+	g.lastTry = time.Now()
+	g.mu.Unlock()
+	before = searches
+	g.RefreshIfStale()
+	if searches != before {
+		t.Errorf("próba przed upływem galleryRetry")
 	}
 }

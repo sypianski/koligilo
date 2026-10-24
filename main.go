@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var Version = "0.7.2"
+var Version = "0.7.3"
 
 const usage = `koligilo %s — synchronizacja ustawień KOReadera
 
@@ -158,9 +158,9 @@ func main() {
 	}
 }
 
-// startGalleryTicker: okresowe sprawdzanie aktualizacji wtyczek z galerii
-// (TASK-12) — nie od razu (żeby nie palić limitu GitHub API przy każdym
-// restarcie), tylko co 12h; „od razu” i tak sprawdza pierwszy GET z panelu.
+// startGalleryTicker: okresowe odświeżanie katalogu galerii (gdy przeterminowany)
+// i sprawdzanie aktualizacji wtyczek z galerii (TASK-12) — nie od razu (żeby
+// nie palić limitu GitHub API przy każdym restarcie), tylko co 12h; „od razu” i tak sprawdza pierwszy GET z panelu.
 // active (może być nil) pozwala pominąć sprawdzenie, np. gdy komputer nie
 // jest akurat serwerem.
 func startGalleryTicker(g *Gallery, active func() bool) {
@@ -171,6 +171,7 @@ func startGalleryTicker(g *Gallery, active func() bool) {
 			if active != nil && !active() {
 				continue
 			}
+			g.RefreshIfStale()
 			if n, err := g.CheckUpdates(); err != nil {
 				log.Printf("koligilo: okresowe sprawdzenie aktualizacji galerii nie powiodło się (sprawdzono %d): %v", n, err)
 			}
