@@ -337,11 +337,11 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
     if ($("pv")) return;
     const shell = $("shell");
     const aside = h("aside", { id: "pv", class: "pv", role: "complementary", "aria-labelledby": "pv-title", hidden: true },
+      // TASK-32: panel stoi na stałe po prawej w widoku „Ustawienia czytników” — bez przycisku zamykania i Esc
       h("div", { class: "pv-head" },
         h("div", {},
           h("h2", { id: "pv-title" }, "Podgląd strony"),
-          h("p", { id: "pv-sub", class: "pv-sub" })),
-        h("button", { type: "button", class: "pv-x", "aria-label": "Zamknij podgląd (Esc)", title: "Zamknij (Esc)", onclick: () => close(true) }, "×")),
+          h("p", { id: "pv-sub", class: "pv-sub" }))),
       h("div", { class: "pv-bar" },
         h("label", { class: "pv-prof" }, h("span", {}, "Ekran"),
           h("select", { id: "pv-prof", onchange: ev => { st.prof = ev.target.value; try { localStorage.setItem(PROF_KEY, st.prof); } catch {} st.page = 0; draw(); } })),
@@ -360,9 +360,6 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
         h("button", { type: "button", class: "linkish", disabled: true, title: "Wierny podgląd prawdziwym crengine — w przygotowaniu (TASK-24)" }, "Wierny podgląd (crengine)")));
     shell.append(aside);
     new ResizeObserver(() => st.open && fit()).observe(aside);
-    document.addEventListener("keydown", ev => {
-      if (ev.key === "Escape" && st.open && !ev.defaultPrevented) { ev.preventDefault(); close(true); }
-    });
   }
 
   function frameBox(which) {
@@ -492,12 +489,11 @@ ${m.blockMode < 2 ? "span.dropcap, img { float: none !important; }" : ""}`;
     draw();
   }
 
-  function close(returnFocus) {
+  function close() {
     if (!st.open) return;
     st.open = false;
     $("pv").hidden = true;
     $("shell").classList.remove("pv-open");
-    if (returnFocus) document.querySelector(`.srow[data-id="${CSS.escape(st.id || "")}"]`)?.focus?.();
     st.id = null;
   }
 

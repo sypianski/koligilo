@@ -511,7 +511,6 @@ button.pmopen:hover { text-decoration: underline; }
 .pv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .pv-head h2 { font-size: 15px; margin: 0; }
 .pv-sub { margin: 2px 0 0; color: var(--subtext); font-size: 12.5px; }
-.pv-x { border: 1px solid var(--border); background: var(--field); color: var(--text); border-radius: 6px; width: 30px; height: 30px; font-size: 18px; line-height: 1; padding: 0; }
 .pv-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .pv-prof { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--subtext); min-width: 0; flex: 1 1 200px; }
 .pv-prof select { min-width: 0; flex: 1; font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--border-strong); border-radius: 6px; padding: 4px 6px; }
@@ -532,8 +531,7 @@ button.pmopen:hover { text-decoration: underline; }
 /* węższe okno: panel jako nakładka z prawej (niemodalna — lista ustawień dalej działa) */
 @media (max-width: 1100px) {
   .shell.pv-open { grid-template-columns: var(--side-w) minmax(0, 1fr); grid-template-areas: "side content" "status status"; }
-  .pv { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); z-index: 20;
-    box-shadow: -6px 0 18px color-mix(in srgb, var(--ctp-crust) 55%, transparent); }
+  .pv { display: none; } /* TASK-32: poniżej 1100 px podglądu nie ma (dawna nakładka zasłaniała listę) */
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -558,7 +556,6 @@ button.pmopen:hover { text-decoration: underline; }
   .vrow, .grid2 { grid-template-columns: 1fr; }
   .pair .code { font-size: 30px; }
   .shell.pv-open { grid-template-columns: minmax(0, 1fr); grid-template-areas: "side" "content" "status"; }
-  .pv { width: 100vw; }
 }
 
 /* ============================================================ e-ink (wariant B)

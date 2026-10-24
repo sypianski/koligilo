@@ -380,9 +380,12 @@ function render() {
   if (sheetBodyNew) sheetBodyNew.scrollTop = sheetScroll;
   if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
   // panel podglądu żyje poza #app (ramki nie przeładowują się co 3 s)
+  // TASK-32: w „Ustawieniach czytników” podgląd stoi od początku (na wybranym ustawieniu albo „Rozmiar czcionki”),
+  // ale tylko na szerokim oknie (poniżej 1100 px nie ma miejsca i jest ukryty, nie nakładany na listę).
   if (typeof Preview !== "undefined") {
-    if (S.tab === "wspolne" && S.state && !needsWizard()) Preview.update(pvSettings(), S.state.devices);
-    else Preview.close();
+    if (S.tab === "wspolne" && S.state && !needsWizard() && PV_WIDE.matches) {
+      if (Preview.isOpen()) Preview.update(pvSettings(), S.state.devices); else pvOpenDefault();
+    } else Preview.close();
   }
 }
 
@@ -2147,8 +2150,20 @@ function pvSettings() {
   return out;
 }
 
+const PV_WIDE = window.matchMedia("(min-width: 1101px)");
+PV_WIDE.addEventListener("change", () => { if (S.tab === "wspolne") render(); });
+
+// Ustawienie, na którym podgląd startuje: ostatnio zaznaczone, a bez niego „Rozmiar czcionki”.
+function pvOpenDefault() {
+  if (typeof KO === "undefined") return;
+  const o = KO.opts.find(x => S.valSel && idFor(x.file, x.key) === S.valSel && PV_SECTIONS.has(x.section))
+    || KO.opts.find(x => x.key === "copt_font_size");
+  const id = o && idFor(o.file, o.key);
+  if (id) Preview.open({ id, key: o.key, label: o.label, settings: pvSettings(), devices: S.state.devices });
+}
+
 function pvOpen(id) {
-  if (typeof Preview === "undefined" || typeof KO === "undefined" || !S.state) return;
+  if (typeof Preview === "undefined" || typeof KO === "undefined" || !S.state || !PV_WIDE.matches) return;
   const o = KO.opts.find(x => idFor(x.file, x.key) === id);
   if (!o || !PV_SECTIONS.has(o.section)) return;
   if (Preview.isOpen() && Preview.current() === id) return;
@@ -2289,7 +2304,9 @@ function tweaksCtl(o, id, cur, disabled) {
     h("span", {}, label, sub && h("span", { class: "muted small" }, " · " + sub)));
   // TASK-32: włączone poprawki na wierzchu (z „×”), wszystkie 120 w zwiniętej liście kategorii
   const known = new Map(KO.tweaks.map(t => [t.id, t]));
-  const enabled = [...on.keys()].filter(k => on.get(k) === true);
+  const order = new Map(KO.tweaks.map((t, i) => [t.id, i]));
+  const enabled = [...on.keys()].filter(k => on.get(k) === true)
+    .sort((a, b) => (order.has(a) ? order.get(a) : 1e6) - (order.has(b) ? order.get(b) : 1e6) || String(a).localeCompare(String(b)));
   const enabledRow = tid => {
     const t = known.get(tid);
     const title = t ? t.title : tid, sub = t && t.cat ? t.cat.split(" › ").join(" › ") : "spoza KOReadera " + KO.version;
