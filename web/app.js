@@ -47,6 +47,8 @@ const S = {
   valFull: {},         // pełne literały przyciętych podglądów: id -> {t, lit}
   valAdv: false,       // sekcja „Zaawansowane” rozwinięta?
   valOpen: {},         // rozwinięte kategorie/opisy w widoku ustawień: klucz -> true
+  valEx: null,         // rozwinięty wiersz ustawienia (id) — jeden naraz (TASK-32)
+  valDev: null,        // czytnik wybrany na pasku „Pokaż dla” (id) albo null = wszystkie (TASK-32)
   ctl: {},             // szkice pól liczbowych/tekstowych kontrolek: id(+część) -> tekst
   pad: { layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
 
@@ -135,6 +137,7 @@ const VIEW_SUB = {
   urzadzenia: st => st.devices.length === 0 ? "Nie połączono jeszcze żadnego czytnika"
     : `${st.devices.length} ${plPl(st.devices.length, "czytnik połączony", "czytniki połączone", "czytników połączonych")}`,
   konta: st => accountsSub(st),
+  wspolne: () => "Wspólna wersja ustawień. Czytnik bez wpisu zostaje przy własnym.",
 };
 
 const THEME_KEY = "koligilo.theme";
@@ -2099,25 +2102,100 @@ function helpText(o, id) {
       onclick: ev => { ev.stopPropagation(); S.valOpen[k] = !open; render(); } }, open ? "mniej" : "więcej"));
 }
 
+// TASK-32: wiersz zwinięty to kropka (● wspólne, ○ nieustawione), nazwa i wartość tekstem;
+// opis, kontrolka i źródło rozwijają się pod nim (jeden otwarty naraz: S.valEx).
+// Tabele sekcji (stopka, poprawki) zostają zawsze rozwinięte.
+function valueText(o, cv) {
+  if (cv.state === "loading") return "…";
+  if (cv.state === "bad") return "nie do pokazania";
+  const x = cv.state === "ok" ? cv.value : (o.kind === "bool" ? false : o.default);
+  if (x === undefined || x === null) return "—";
+  if (o.kind === "switch") return luaSame(x, o.on) ? "włączone" : "wyłączone";
+  if (o.kind === "bool") return x === true ? "włączone" : "wyłączone";
+  const t = fmtValue(o, x);
+  return o.unit && /^[-+−]?\d/.test(t) && !t.includes(o.unit) ? t + " " + o.unit : t; // jednostka tylko przy liczbach, nie przy „średni”/„brak”
+}
+
+// Czytniki, które NIE dostaną ustawienia, bo mają wyłączoną jego grupę (domyślnie wyłączone
+// są m.in. „Rozmiar czcionki i marginesy” i „Wybór czcionek”).
+function devLacking(id, devices) {
+  const g = groupOfId(id);
+  return g ? devices.filter(d => d.groups && d.groups[g] === false) : [];
+}
+// Czytniki wybrane na pasku „Pokaż dla”; przy jednym czytniku zawsze on.
+function devPicked() {
+  const ds = S.state.devices;
+  return ds.length === 1 ? ds : ds.filter(d => d.id === S.valDev);
+}
+
+function settingMeta(o, id, v, cv, def) {
+  const set = cv.state !== "absent";
+  return h("div", { class: "meta" },
+    set ? `z: ${v.from || "urządzenia, które już usunięto"} · ${ago(v.t)}` : (def != null ? `domyślnie: ${def}` : "nie ustawiono"),
+    set && h("button", { type: "button", class: "linkish", disabled: S.valBusy === id,
+      onclick: ev => { ev.stopPropagation(); ctlReset(id, o.label); } }, "usuń"));
+}
+
+function lackNote(id) {
+  const lack = devLacking(id, S.state.devices);
+  if (!lack.length) return null;
+  const g = catalogGroup(groupOfId(id));
+  return h("p", { class: "lack small" },
+    `${lack.map(d => d.name).join(", ")} ${lack.length > 1 ? "nie dostaną" : "nie dostanie"} tego: grupa „${g ? g.name : groupOfId(id)}” jest wyłączona. `,
+    h("button", { type: "button", class: "linkish", onclick: () => showTab("grupy") }, "Włącz w „Co synchronizować”"));
+}
+
 function settingRow(o, id, v, secLabel) {
   const cv = currentValue(v);
-  // jedna tabela na sekcję (stopka, poprawki) — bez powtórzonej nazwy
+  const set = cv.state !== "absent";
+  // jedna tabela na sekcję (stopka, poprawki) — bez powtórzonej nazwy, zawsze rozwinięta
   const wide = (o.kind === "flags" || o.kind === "tweaks") && o.label === secLabel;
   const def = o.default !== undefined ? fmtValue(o, o.default) : null;
-  return h("div", { class: "srow" + (S.valSel === id ? " sel" : "") + (cv.state === "absent" ? " absent" : "") + (wide ? " wide" : ""),
-      "data-id": id, "aria-label": wide ? o.label : null, onfocusin: () => valSelect(id), onclick: () => valSelect(id) },
-    !wide && h("div", { class: "sl" },
-      h("div", { class: "sname" }, o.label),
-      helpText(o, id)),
-    h("div", { class: "sc" },
-      control(o, id, cv),
-      h("div", { class: "meta" },
-        cv.state === "absent"
-          ? (def != null ? `nie ustawiono · KOReader domyślnie: ${def}` : "nie ustawiono")
-          : `z: ${v.from || "urządzenia, które już usunięto"} · ${ago(v.t)}`,
-        cv.state !== "absent" && h("button", { type: "button", class: "linkish", disabled: S.valBusy === id,
-          onclick: ev => { ev.stopPropagation(); ctlReset(id, o.label); } }, "usuń")),
-      valMsgFor(id)));
+  const dim = devLacking(id, devPicked()).length > 0;
+  const cls = "srow" + (S.valSel === id ? " sel" : "") + (set ? "" : " absent") + (wide ? " wide" : "") + (dim ? " dim" : "");
+  if (wide) {
+    return h("div", { class: cls, "data-id": id, "aria-label": o.label, onfocusin: () => valSelect(id), onclick: () => valSelect(id) },
+      h("div", { class: "sc" }, control(o, id, cv), lackNote(id), settingMeta(o, id, v, cv, def), valMsgFor(id)));
+  }
+  const open = S.valEx === id;
+  const text = valueText(o, cv) + (set ? "" : " (domyślnie)");
+  return h("div", { class: cls + (open ? " open" : ""), "data-id": id },
+    h("button", { type: "button", class: "srow-h", "aria-expanded": String(open), "aria-controls": "sb-" + id, "data-fk": id + "~h",
+        title: set ? `z: ${v.from || "urządzenia, które już usunięto"} · ${ago(v.t)}` : null,
+        onclick: () => {
+          S.valEx = open ? null : id;
+          if (!open) valSelect(id);
+          render();
+          app.querySelector(`[data-fk="${CSS.escape(id + "~h")}"]`)?.focus();
+        } },
+      h("span", { class: "sdot " + (set ? "on" : "off"), role: "img", "aria-label": set ? "wspólne" : "nieustawione" }),
+      h("span", { class: "sname" }, o.label),
+      dim && h("span", { class: "slack" }, "nie dostaje"),
+      h("span", { class: "sval" + (set ? "" : " def") }, text),
+      h("span", { class: "chev", "aria-hidden": "true" })),
+    open && h("div", { class: "srow-b", id: "sb-" + id, onfocusin: () => valSelect(id) },
+      helpText(o, id),
+      h("div", { class: "sc" }, control(o, id, cv), lackNote(id), settingMeta(o, id, v, cv, def), valMsgFor(id))));
+}
+
+// Pasek „Pokaż dla”: wybór czytnika przygasza ustawienia, których ten czytnik nie dostanie.
+function deviceBar(mapped, byId) {
+  const ds = S.state.devices;
+  if (ds.length === 0) return null;
+  if (S.valDev && !ds.some(d => d.id === S.valDev)) S.valDev = null;
+  const pick = ds.length === 1 ? ds[0] : ds.find(d => d.id === S.valDev);
+  const n = (list) => [...mapped].filter(id => byId.get(id) && !byId.get(id).deleted && devLacking(id, list).length > 0).length;
+  const chip = (d) => h("button", { type: "button", "aria-pressed": String(d ? d.id === pick?.id : !pick), "data-fk": "dev~" + (d ? d.id : "all"),
+    onclick: () => { S.valDev = d ? d.id : null; render(); app.querySelector(`[data-fk="${CSS.escape("dev~" + (d ? d.id : "all"))}"]`)?.focus(); } },
+    d ? d.name : "Wszystkie");
+  const k = pick ? n([pick]) : n(ds);
+  const note = pick
+    ? (k > 0 ? `${pick.name} nie dostaje ${k} ${plPl(k, "ustawienie", "ustawienia", "ustawień")} (grupa wyłączona)` : `${pick.name} dostaje wszystkie ustawione wartości`)
+    : (k > 0 ? `${k} ${plPl(k, "ustawienie nie trafia", "ustawienia nie trafiają", "ustawień nie trafia")} na każdy czytnik — wybierz czytnik, żeby zobaczyć które` : "Każdy czytnik dostaje wszystkie ustawione wartości");
+  return h("div", { class: "devbar" },
+    h("span", { class: "muted small" }, "Pokaż dla:"),
+    h("div", { class: "seg", role: "group", "aria-label": "Pokaż dla czytnika" }, (ds.length > 1 ? [chip(null)] : []).concat(ds.map(chip))),
+    h("span", { class: "small " + (k > 0 ? "lack" : "muted") }, note));
 }
 
 function valuesTab() {
@@ -2142,14 +2220,12 @@ function valuesTab() {
   if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
   const unmapped = values.filter(v => !v.deleted && !mapped.has(v.id)).length;
   return h("section", {},
-    explain(
-      "Aktualna wspólna wersja ustawień — to, co dostanie urządzenie przy następnej synchronizacji (w grupach, które ma włączone). Nazwy, opisy i przyciski są takie jak w KOReaderze; zmiana tutaj działa tak, jakby zrobiono ją na innym czytniku.",
-      "„Nie ustawiono” znaczy, że czytniki zostawiają własne ustawienie (albo domyślne KOReadera). Wszystko, czego ta mapa nie zna, jest w „Zaawansowane” jako surowe wartości."),
+    deviceBar(mapped, byId),
     sections,
     h("details", { class: "card adv", open: S.valAdv || null, ontoggle: ev => { S.valAdv = ev.target.open; } },
       h("summary", {}, "Zaawansowane — surowe wartości (literały Lua)",
         unmapped > 0 && h("span", { class: "cnt", title: "wartości spoza mapy KOReadera" }, String(unmapped))),
-      h("p", { class: "muted small" }, "Wszystkie wspólne wartości z identyfikatorami plików i kluczy — także te, których nie ma w mapie nazw KOReadera."),
+      h("p", { class: "muted small" }, "Wszystkie wspólne wartości z identyfikatorami plików i kluczy, także te, których nie ma w mapie nazw KOReadera. Zmiana tutaj działa tak, jakby zrobiono ją na innym czytniku."),
       advancedValues(catalog, values)),
     hasKO && h("p", { class: "muted small kover" },
       `Nazwy i opisy: KOReader ${KO.version}, tłumaczenie polskie (koreader-translations ${KO.l10n.slice(0, 7)}).`));
