@@ -4043,6 +4043,40 @@ function fontDropzone() {
       h("button", { type: "button", class: "linkbtn", onclick: () => showHow("fonts") }, "Jak to działa ›")));
 }
 
+// Próbka kroju (TASK-38): bajty idą z GET /api/admin/fonts/{sha}/file przez
+// fetch z nagłówkiem panelu (token admina nie może trafić do <link>/@font-face),
+// a przeglądarka dostaje je jako FontFace z bufora. Ładujemy tylko jeden plik na
+// rodzinę (styl podstawowy), raz na sha.
+const FONT_SAMPLE = "Zażółć gęślą jaźń · Pchnąć w tę łódź jeża · 0123456789";
+const fontFaces = new Map(); // sha → nazwa rodziny | Promise | null (nie wyszło)
+function sampleFile(g) {
+  const plain = f => !/bold|italic|oblique|black|light|thin|medium|semibold|heavy/i.test(f.file);
+  return g.files.find(f => /regular|roman|book/i.test(f.file) && plain(f)) || g.files.find(plain) || g.files[0];
+}
+function loadFontFace(f) {
+  if (fontFaces.has(f.sha256)) return Promise.resolve(fontFaces.get(f.sha256));
+  const headers = { [HDR]: "1" };
+  if (S.mode === "serve") headers.Authorization = "Bearer " + adminToken();
+  const name = "kg-" + f.sha256.slice(0, 12);
+  const p = fetch(`/api/admin/fonts/${f.sha256}/file`, { headers })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(buf => new FontFace(name, buf).load())
+    .then(face => { document.fonts.add(face); fontFaces.set(f.sha256, name); return name; })
+    .catch(() => { fontFaces.set(f.sha256, null); return null; });
+  fontFaces.set(f.sha256, p);
+  return p;
+}
+function fontSample(g) {
+  const f = sampleFile(g);
+  if (!f) return null;
+  const el = h("div", { class: "fsample muted", "aria-hidden": "true" }, FONT_SAMPLE);
+  const apply = name => { if (name) { el.style.fontFamily = `"${name}", serif`; el.classList.remove("muted"); } else el.hidden = true; };
+  const cur = fontFaces.get(f.sha256);
+  if (typeof cur === "string" || cur === null) apply(cur);
+  else loadFontFace(f).then(apply);
+  return el;
+}
+
 function fontFamilyRow(g) {
   const open = !!S.fontOpen[g.name], n = g.files.length;
   const badge = g.pending.length ? h("span", { class: "badge warn" }, "czeka na akceptację")
@@ -4055,6 +4089,7 @@ function fontFamilyRow(g) {
       h("span", { class: "muted small grow" }, ` · ${n} ${plPl(n, "plik", "pliki", "plików")} · ${fmtSize(g.size)} · ${g.src}`),
       badge,
       h("button", { type: "button", class: "danger", onclick: () => deleteFonts(g.files, g.name) }, n > 1 ? "Usuń rodzinę" : "Usuń")),
+    fontSample(g),
     open && h("ul", { class: "plain fam-files" }, g.files.map(f => h("li", { class: "row" },
       h("span", { class: "grow" }, h("b", {}, f.file)),
       h("span", { class: "muted small" }, fmtSize(f.size)),

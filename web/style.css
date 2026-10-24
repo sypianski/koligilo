@@ -1001,3 +1001,4 @@ ul.plain li.row .grow { flex: 1 1 14em; }
 button.fam-tog { border: 0; background: none; box-shadow: none; padding: 0; font: inherit; text-align: left; color: var(--text); }
 ul.plain li.fam > .row { padding: 0; }
 ul.plain.fam-files { margin: 6px 0 0 18px; }
+.fsample { font-size: 1.25rem; line-height: 1.35; margin: 4px 0 2px 18px; overflow-wrap: anywhere; }

@@ -267,6 +267,20 @@ func (st *Store) FontForDevice(d *Device, sha string) (string, int) {
 	return st.fontPath(sha), 200
 }
 
+// FontStored: ścieżka pliku z magazynu, o ile wersja jest zapisana (bez względu
+// na akceptację i zgodę czytnika — to widok administratora).
+func (st *Store) FontStored(sha string) (string, bool) {
+	if !shaRe.MatchString(sha) {
+		return "", false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.S.Fonts[sha] == nil {
+		return "", false
+	}
+	return st.fontPath(sha), true
+}
+
 // --- HTTP ---
 
 func (s *Server) fontRoutes(m *http.ServeMux) {
@@ -274,6 +288,7 @@ func (s *Server) fontRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/fonts", s.device(s.deviceFontUpload))
 	m.HandleFunc("GET /api/admin/fonts", s.admin(s.adminFonts))
 	m.HandleFunc("POST /api/admin/fonts", s.admin(s.adminFontUpload))
+	m.HandleFunc("GET /api/admin/fonts/{sha}/file", s.admin(s.adminFontFile))
 	m.HandleFunc("POST /api/admin/fonts/{sha}/approve", s.admin(s.adminFontApprove))
 	m.HandleFunc("DELETE /api/admin/fonts/{sha}", s.admin(s.adminFontDelete))
 }
@@ -301,6 +316,29 @@ func (s *Server) fontDownload(w http.ResponseWriter, r *http.Request, d *Device)
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Koligilo-Sha256", sha)
+	http.ServeContent(w, r, sha, time.Time{}, f)
+}
+
+// adminFontFile oddaje bajty zapisanej czcionki do podglądu w panelu (próbka
+// kroju). W odróżnieniu od fontDownload nie wymaga zgody czytnika ani
+// akceptacji: admin ma prawo obejrzeć także to, co jeszcze czeka na decyzję.
+// Plik jest adresowany sha256, więc treść pod danym adresem się nie zmienia.
+func (s *Server) adminFontFile(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha")
+	p, ok := s.st.FontStored(sha)
+	if !ok {
+		writeJSON(w, 404, map[string]string{"error": "nie ma takiej czcionki"})
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": "brak pliku w magazynie"})
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, sha, time.Time{}, f)
 }
 

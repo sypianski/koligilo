@@ -250,3 +250,34 @@ func TestFontsExportImport(t *testing.T) {
 		t.Error("eksport bez pliku czcionki powinien się nie udać")
 	}
 }
+
+// Podgląd w panelu (TASK-38): admin pobiera bajty także niezaakceptowanej
+// czcionki, czytnik i brak tokenu — nie; zły sha i nieznana wersja to 404.
+func TestAdminFontFile(t *testing.T) {
+	e := newPluginEnv(t)
+	_, tok, _ := e.s.st.Provision("Kobo", "", "", "")
+	body := fakeFont("OTTO", 9)
+	rec := e.do(tok, "POST", "/api/v1/fonts?file=Moja.otf", bytes.NewReader(body), "application/octet-stream")
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	sha := out["font"].(map[string]any)["sha256"].(string)
+
+	got := e.do(e.admin, "GET", "/api/admin/fonts/"+sha+"/file", nil, "")
+	if got.Code != 200 || !bytes.Equal(got.Body.Bytes(), body) {
+		t.Fatalf("admin: %d, %d bajtów", got.Code, got.Body.Len())
+	}
+	if got.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("brak nosniff: %v", got.Header())
+	}
+	if c := e.do(tok, "GET", "/api/admin/fonts/"+sha+"/file", nil, "").Code; c != 401 && c != 403 {
+		t.Errorf("token czytnika w trasie admina: %d", c)
+	}
+	if c := e.do("", "GET", "/api/admin/fonts/"+sha+"/file", nil, "").Code; c != 401 && c != 403 {
+		t.Errorf("bez tokenu: %d", c)
+	}
+	for _, bad := range []string{strings.Repeat("0", 64), "nie-sha", "..%2F..%2Fstate.json"} {
+		if c := e.do(e.admin, "GET", "/api/admin/fonts/"+bad+"/file", nil, "").Code; c != 404 {
+			t.Errorf("sha %q: %d", bad, c)
+		}
+	}
+}
