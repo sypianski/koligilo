@@ -11,7 +11,7 @@ const Preview = (() => {
   // Rozdzielczość = okno KOReadera w pionie (piksele ekranu). ppi tylko do opisu.
   const PROFILES = [
     { id: "bigme-hibreak", label: "BigMe HiBreak 6,13″", w: 824, h: 1648, ppi: 300, gray: true, re: /hibreak|bigme/i },
-    { id: "onyx-noteair3c", label: "Onyx Note Air3 C 10,3″", w: 1404, h: 1872, ppi: 227, gray: false, re: /note ?air|onyx|boox/i },
+    { id: "onyx-noteair3c", label: "Onyx Note Air3 C 10,3″", w: 1860, h: 2480, ppi: 300, gray: false, re: /note ?air|onyx|boox/i },
     { id: "steamdeck", label: "Steam Deck 7″ (poziomo)", w: 1280, h: 800, ppi: 216, gray: false, re: /steam ?deck/i },
     { id: "kindle-pw", label: "Kindle Paperwhite 6,8″", w: 1236, h: 1648, ppi: 300, gray: true, re: /kindle|paperwhite/i },
     { id: "kobo-libra", label: "Kobo Libra 2 7″", w: 1264, h: 1680, ppi: 300, gray: true, re: /libra/i },
