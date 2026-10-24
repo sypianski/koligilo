@@ -2102,7 +2102,10 @@ async function ctlSave(id, value, focusKey) {
   S.valBusy = id; render();
   try {
     await api("POST", "/api/admin/values", { set: { [id]: literal } });
-    S.valMsg[id] = { ok: true, text: "Zapisane — czytniki dostaną to przy najbliższej synchronizacji." };
+    const lack = devLacking(id, S.state.devices);
+    S.valMsg[id] = { ok: true, text: lack.length
+      ? `Zapisane — ale ${lack.map(d => d.name).join(", ")} ${lack.length > 1 ? "nie dostaną" : "nie dostanie"} tego (grupa wyłączona).${lack.length < S.state.devices.length ? " Pozostałe czytniki dostaną to przy najbliższej synchronizacji." : ""}`
+      : "Zapisane — czytniki dostaną to przy najbliższej synchronizacji." };
     pvCand(id, undefined);
     for (const k of Object.keys(S.ctl)) if (k === id || k.startsWith(id + "~")) delete S.ctl[k];
   } catch (e) {
@@ -2435,6 +2438,7 @@ function lackNote(id) {
   const g = catalogGroup(groupOfId(id));
   return h("p", { class: "lack small" },
     `${lack.map(d => d.name).join(", ")} ${lack.length > 1 ? "nie dostaną" : "nie dostanie"} tego: grupa „${g ? g.name : groupOfId(id)}” jest wyłączona. `,
+    "Możesz ustawić wartość — zapisze się, ale nie rozpropaguje na ", lack.length > 1 ? "te czytniki" : "ten czytnik", ". ",
     h("button", { type: "button", class: "linkish", onclick: () => showTab("grupy") }, "Włącz w „Co synchronizować”"));
 }
 
