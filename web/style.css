@@ -866,3 +866,13 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .keys-dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .keys-dialog .sheet-head { padding-top: 14px; }
 .keys-body { padding: 4px 18px 18px; }
+
+/* TASK-34: „Jak to działa” — tabela „kto co widzi” i przykład na prawdziwych czytnikach */
+.how-tw { overflow-x: auto; margin: 6px 0 10px; }
+.how-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.how-table th, .how-table td { border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+.how-table thead th { font-size: 12px; color: var(--subtext); font-weight: 600; white-space: nowrap; }
+.how-table tbody th { font-weight: 400; }
+.how-ex { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); border-radius: 8px; padding: 8px 14px 8px 32px; max-width: 76ch; }
+.how-topic + .how-topic { margin-top: 20px; }
+.how-topic h3 { margin: 0 0 6px; }

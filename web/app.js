@@ -2594,26 +2594,61 @@ function padActionsCard() {
 
 // ------------------------------------------------ zakładka: jak to działa
 
-function howTab() {
-  return h("section", { class: "card prose" },
-    h("h3", { style: "margin-top:0" }, "Po co to jest"),
-    h("p", {}, "KOReader ma kilka osobnych mechanizmów synchronizacji — postęp czytania (kosync), statystyki, Wallabag — ale każdy trzeba skonfigurować na każdym urządzeniu osobno, wpisując adresy i hasła. A gesty, stopka czy słowniki w ogóle się nie przenoszą. koligilo robi to za Ciebie."),
-    h("h3", {}, "Jak przebiega synchronizacja"),
-    h("ol", {},
-      h("li", {}, "Czytnik łączy się z Wi-Fi (albo klikasz „Synchronizuj teraz”)."),
-      h("li", {}, "Porównuje swoje ustawienia ze stanem z ostatniej synchronizacji: co zmieniło się tutaj, wysyła; co zmieniło się gdzie indziej, pobiera."),
-      h("li", {}, "Jeśli coś pobrał, prosi o ponowne uruchomienie KOReadera — dopiero wtedy wszystkie moduły widzą nowe ustawienia.")),
-    h("h3", {}, "Co z postępem czytania i książkami?"),
-    h("p", {}, "Postęp czytania i statystyki nadal synchronizują wbudowane mechanizmy KOReadera — koligilo tylko rozwozi ich konfigurację (adres serwera, login), więc nowe urządzenie działa od razu. Same książki przenosi osobne narzędzie (Libraro, Syncthing) — koligilo ich nie dotyka."),
-    h("h3", {}, "Bezpieczeństwo"),
+// TASK-34: „Jak to działa” — osobne tematy zamiast jednej ściany tekstu. Kolejność i treść zatwierdzone w
+// selektorze (wybor/jak). Przykład i tabela biorą nazwy z prawdziwego stanu panelu.
+function howNames() {
+  const d = (S.state?.devices || []).map(x => x.name || x.model).filter(Boolean);
+  return [d[0] || "pierwszy czytnik", d[1] || "drugi czytnik"];
+}
+function howServerName() {
+  return S.mode === "desktop" && S.local?.mode === "local" ? "Ten komputer" : "Twój serwer";
+}
+function howTable() {
+  const row = (...c) => h("tr", {}, h("th", { scope: "row" }, c[0]), c.slice(1).map(x => h("td", {}, x)));
+  return h("table", { class: "how-table" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Co"), h("th", {}, "Czytnik"), h("th", {}, howServerName()), h("th", {}, "Serwer autora"))),
+    h("tbody", {},
+      row("Ustawienia i adresy kont", h("b", {}, "tak"), h("b", {}, "tak"), "nie"),
+      row("Hasła Wallabag i kosync", h("b", {}, "tak"), h("b", {}, "tak, leżą tu"), "nie"),
+      row("Książki", h("b", {}, "tak"), "nie, koligilo ich nie rusza", "nie"),
+      row("Model czytnika, adres serwera, klucz", h("b", {}, "tak"), h("b", {}, "tak"),
+        h("b", {}, "do 10 min, w pamięci, tylko przy parowaniu kodem z innej sieci"))));
+}
+const HOW_TOPICS = [
+  ["why", "Po co to jest", "Po co", () => [
+    h("p", {}, "KOReader każe wpisywać adresy i hasła na każdym urządzeniu osobno, a gesty, stopka i słowniki w ogóle się nie przenoszą. koligilo rozwozi je za Ciebie.")]],
+  ["pair", "Jak dodać czytnik", "Nowy czytnik", () => [
+    h("p", {}, "Plugin koligilo instalujesz na czytniku raz, a potem łączysz go z tym panelem kodem: ",
+      h("b", {}, "Menu → Narzędzia → koligilo → Połącz z komputerem…"), " Kroki krok po kroku są w ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => showTab("urzadzenia") }, "Urządzenia → Dodaj czytnik"), ".")]],
+  ["flow", "Jak przebiega synchronizacja", "Przebieg", () => {
+    const [a, b] = howNames();
+    return [
+      h("p", {}, "Przykład: zmieniasz ustawienie stopki na czytniku „", a, "”."),
+      h("ol", { class: "how-ex" },
+        h("li", {}, "„", a, "” po połączeniu z Wi-Fi (albo po „Synchronizuj teraz”) wysyła tę zmianę na ", S.mode === "desktop" && S.local?.mode === "local" ? "ten komputer" : "serwer", "."),
+        h("li", {}, "„", b, "” przy swojej synchronizacji ją pobiera. Nie musi być wtedy włączony ten sam czytnik."),
+        h("li", {}, "„", b, "” prosi o ponowne uruchomienie KOReadera i dopiero wtedy ma nową stopkę."))];
+  }],
+  ["conf", "Gdy dwa czytniki zmienią to samo", "Konflikty", () => [
+    h("p", {}, "Jeśli dwa czytniki zmienią to samo ustawienie w międzyczasie, wygrywa zmiana, która pierwsza dotrze na serwer. Drugi czytnik przy następnej synchronizacji przyjmie wersję wspólną.")]],
+  ["books", "Co z postępem czytania i książkami?", "Książki", () => [
+    h("p", {}, "Postęp czytania i statystyki dalej synchronizuje sam KOReader. koligilo tylko ustawia mu adres serwera i login. Książek nie rusza: te przenosi Libraro albo Syncthing.")]],
+  ["plug", "Wtyczki", "Wtyczki", () => [
+    h("p", {}, "W panelu przypisujesz czytnikowi wtyczki, ale instaluje je dopiero sam czytnik. Najpierw włączasz na nim „Pozwól instalować wtyczki”, potem potwierdzasz każdą instalację i aktualizację. Wtyczka to program z pełnym dostępem do czytnika, więc koligilo nigdy nie instaluje jej bez Twojej zgody na czytniku.")]],
+  ["sec", "Bezpieczeństwo", "Bezpieczeństwo", () => [
+    h("div", { class: "how-tw" }, howTable()),
     h("ul", {},
-      h("li", {}, "Każde urządzenie dostaje przy parowaniu własny klucz; „Zapomnij” natychmiast go unieważnia."),
-      h("li", {}, "Czterocyfrowy kod chroni przed tym, by ktoś w tej samej sieci podpiął obce urządzenie — zatwierdzasz tylko prośbę z kodem widocznym na Twoim czytniku."),
-      h("li", {}, "Parowanie sześciocyfrowym kodem (z innej sieci) idzie przez punkt kontaktowy koligilo.sypian.ski, czyli serwer autora. Przez najwyżej 10 minut trzyma on w pamięci model czytnika, adres Twojego serwera i klucz dla czytnika, a po odebraniu je kasuje. Ustawień, kont ani książek nie widzi. Zamiast niego można użyć własnego serwera koligilo: na komputerze `koligilo --rendezvous ADRES`, na czytniku klucz `rendezvous` w settings/koligilo.lua."),
-      h("li", {}, "Czytnik nie wykonuje niczego, co przyjdzie z serwera: ustawienia przesyłane są jako czyste dane i odczytywane ścisłym parserem."),
-      h("li", {}, "Hasła (Wallabag, kosync) leżą na Twoim serwerze. W trybie Dropbox/WebDAV będą szyfrowane przed wysłaniem.")),
-    h("h3", {}, "Gdy coś pójdzie nie tak"),
-    h("p", {}, "Jeśli czytnik zauważy, że naraz zniknęła ponad połowa synchronizowanych ustawień (np. uszkodzony plik), wstrzymuje synchronizację i nic nie wysyła. Nieczytelne pliki ustawień są pomijane, a nie traktowane jak puste."));
+      h("li", {}, "Każdy czytnik ma własny klucz; „Zapomnij” unieważnia go od razu."),
+      h("li", {}, "Czytnik nie uruchamia niczego z serwera: ustawienia to same dane.")),
+    h("p", { class: "muted small" }, "Szyfrowanie haseł przed wysłaniem w trybie Dropbox/WebDAV: wkrótce. Własny punkt kontaktowy zamiast serwera autora: opis w README.")]],
+  ["fail", "Gdy coś pójdzie nie tak", "Awarie", () => [
+    h("p", {}, "Gdy naraz zniknie ponad połowa synchronizowanych ustawień (np. uszkodzony plik), czytnik wstrzymuje synchronizację i nic nie wysyła. Nieczytelnych plików nie traktuje jak pustych.")]],
+];
+function howTab() {
+  return h("section", { class: "card prose how" },
+    HOW_TOPICS.map(([id, title, , body], i) => h("div", { class: "how-topic", id: "how-" + id },
+      h("h3", i === 0 ? { style: "margin-top:0" } : {}, title), body())));
 }
 
 // ------------------------------------------------ zakładka: wtyczki (TASK-11)
