@@ -112,7 +112,7 @@ make e2e     # serwer + dwa symulowane czytniki przez prawdziwe HTTP
 make dist    # binarki: macOS arm64/amd64, Linux amd64/arm64, Windows amd64 + zip pluginu
 ```
 
-## Stan (0.6.0)
+## Stan (0.7.0)
 
 - [x] Własny serwer, parowanie kodem, grupy per urządzenie, auto-sync po Wi-Fi
 - [x] Konta w panelu: kosync, Wallabag, konta w chmurze (Dropbox z logowaniem przez kod, WebDAV, FTP), gdzie statystyki i słowniczek trzymają bazę
