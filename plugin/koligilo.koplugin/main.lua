@@ -46,6 +46,21 @@ local Koligilo = WidgetContainer:extend{
     is_doc_only = false,
 }
 
+-- Gdzie leży ten plugin i w jakiej jest wersji — ustalone RAZ, przy wczytaniu pliku.
+-- Po samoaktualizacji pliki na dysku są już nowe, ale ta kopia w pamięci zostaje
+-- starą wersją i tak ma o sobie myśleć do restartu KOReadera (TASK-39).
+Koligilo.selfParent = Sync.selfParentDir(debug.getinfo(1, "S").source)
+do
+    local f = Koligilo.selfParent and io.open(Koligilo.selfParent .. "/koligilo.koplugin/_meta.lua", "rb")
+    if f then
+        Koligilo.selfVersion = Sync.metaField(f:read(65536) or "", "version")
+        f:close()
+    end
+end
+-- po udanej podmianie plików nic więcej nie robimy aż do restartu: mieszanie starego
+-- main.lua z nowym sync.lua (require ładowany leniwie) byłoby loterią
+local restart_pending = false
+
 -- pytanie o pierwszą synchronizację zadajemy raz na uruchomienie KOReadera
 -- (plugin ma osobne instancje w menedżerze plików i w czytniku)
 local first_sync_asked = false
@@ -54,6 +69,7 @@ local plugin_dialog_open = false
 
 function Koligilo:init()
     self.settings = LuaSettings:open(DataStorage:getSettingsDir() .. "/koligilo.lua")
+    pcall(self.cleanupSelfUpdate, self)
     self.ui.menu:registerToMainMenu(self)
     -- Sparowany kablem z panelu na komputerze, ale jeszcze nigdy nie
     -- synchronizowany: pierwsza synchronizacja zawsze za zgodą użytkownika.
@@ -174,6 +190,36 @@ function Koligilo:addToMainMenu(menu_items)
                     callback = function()
                         self.settings:flipNilOrTrue("auto_sync")
                         self.settings:flush()
+                    end,
+                })
+                -- Samoaktualizacja koligilo (TASK-39, PC-019): zgoda tylko stąd, a każdą
+                -- aktualizację i tak potwierdza się osobno, z numerami wersji.
+                table.insert(items, {
+                    text_func = function() return T(_("Pozwól aktualizować koligilo (teraz %1)"), self.selfVersion or "?") end,
+                    checked_func = function() return self.settings:isTrue("self_update_allowed") end,
+                    keep_menu_open = true,
+                    callback = function(touchmenu_instance)
+                        local function tell_server()
+                            if NetworkMgr:isOnline() then
+                                UIManager:nextTick(function() self:sync(true) end)
+                            end
+                        end
+                        if self.settings:isTrue("self_update_allowed") then
+                            self.settings:delSetting("self_update_allowed")
+                            self.settings:flush()
+                            tell_server()
+                            return
+                        end
+                        UIManager:show(ConfirmBox:new{
+                            text = _("Pozwolić koligilo sprawdzać na serwerze, czy jest nowsza wersja koligilo, i proponować jej instalację na tym czytniku?\n\nSama aktualizacja nigdy nie rusza się bez Twojego potwierdzenia w oknie z numerami wersji. To program z pełnym dostępem do czytnika, więc zgadzaj się tylko, jeśli ufasz swojemu serwerowi koligilo."),
+                            ok_text = _("Pozwól"),
+                            ok_callback = function()
+                                self.settings:makeTrue("self_update_allowed")
+                                self.settings:flush()
+                                if touchmenu_instance then touchmenu_instance:updateItems() end
+                                tell_server()
+                            end,
+                        })
                     end,
                 })
                 -- Zgoda na wtyczki tylko tutaj, na czytniku — nigdy z panelu (PC-004).
@@ -1010,6 +1056,136 @@ function Koligilo:handlePlugins(target, inventory, silent, changed)
     return true
 end
 
+---------------------------------------------------------------- samoaktualizacja (TASK-39, PC-019)
+-- koligilo.koplugin zastępuje samo siebie, ale tylko: (1) za zgodą z menu czytnika,
+-- (2) po potwierdzeniu w oknie z numerami wersji, (3) do wersji WYŻSZEJ, (4) z zipa
+-- o sumie sha256 podanej przez uwierzytelniony serwer. Instalator zwykłych wtyczek
+-- (applyPluginOp) dalej NIGDY nie rusza koligilo.koplugin — to osobna, węższa ścieżka.
+
+--- Sprzątanie po poprzedniej aktualizacji: stara wersja leżała w .koligilo-old-koligilo
+-- (nazwa bez końcówki .koplugin, więc KOReader jej nie ładuje), na wypadek gdyby
+-- nowa nie wystartowała. Skoro init właśnie działa, nowa wersja się wczytała.
+function Koligilo:cleanupSelfUpdate()
+    if restart_pending or not self.selfParent then return end
+    local old = self.selfParent .. "/.koligilo-old-koligilo"
+    if is_dir(old) then purge(old) end
+end
+
+--- Pobiera, sprawdza i podmienia katalog pluginu. Zwraca true albo nil, komunikat.
+-- Stara wersja zostaje nietknięta, jeśli cokolwiek po drodze się nie zgadza.
+function Koligilo:applySelfUpdate(info, Archiver)
+    local parent, current = self.selfParent, self.selfVersion
+    if not parent or not current then
+        return nil, _("nie wiem, gdzie jest zainstalowane koligilo ani w jakiej wersji — zaktualizuj ręcznie")
+    end
+    if not Sync.versionNewer(info.version, current) then return nil, _("to nie jest nowsza wersja") end
+    local dir = "koligilo.koplugin"
+    local target = parent .. "/" .. dir
+    local new = parent .. "/.koligilo-new-koligilo"
+    local old = parent .. "/.koligilo-old-koligilo"
+    local zip = parent .. "/.koligilo-dl-koligilo.zip"
+    if not is_file(target .. "/main.lua") then return nil, _("nie widzę katalogu pluginu na dysku") end
+
+    local server, token = self.settings:readSetting("server"), self.settings:readSetting("token")
+    local body, derr = download(server .. info.url, token, Sync.SELF_MAX_ZIP)
+    if not body then return nil, derr end
+    local got = require("ffi/sha2").sha256(body):lower()
+    if got ~= info.sha256 then
+        return nil, T(_("zła suma sha256 pobranego pliku (%1…) — aktualizacja przerwana"), got:sub(1, 12))
+    end
+
+    local function cleanup() purge(new); purge(zip) end
+    purge(new); purge(zip)
+    local ok, err = write_file(zip, body)
+    body = nil -- luacheck: ignore
+    if not ok then cleanup(); return nil, T(_("nie udało się zapisać pliku (%1)"), tostring(err)) end
+    ok, err = extract(Archiver, zip, dir, new)
+    if not ok then cleanup(); return nil, err end
+    for _i, f in ipairs({ "main.lua", "_meta.lua", "sync.lua" }) do
+        if not is_file(new .. "/" .. f) then cleanup(); return nil, T(_("w ZIP-ie brakuje %1"), f) end
+        -- loadfile tylko kompiluje plik (niczego nie uruchamia); zepsuty plugin
+        -- zostawiłby czytnik bez koligilo, więc wolimy odmówić przed podmianą
+        local chunk, cerr = loadfile(new .. "/" .. f)
+        if not chunk then cleanup(); return nil, T(_("błąd składni w %1: %2"), f, tostring(cerr)) end
+    end
+    if Sync.metaField(read_file(new .. "/_meta.lua", 65536), "version") ~= info.version then
+        cleanup()
+        return nil, _("wersja w pobranym pluginie nie zgadza się z zapowiedzianą")
+    end
+    purge(zip)
+
+    purge(old)
+    ok, err = os.rename(target, old)
+    if not ok then cleanup(); return nil, T(_("nie udało się odsunąć starej wersji (%1)"), tostring(err)) end
+    ok, err = os.rename(new, target)
+    if not ok then
+        os.rename(old, target) -- rollback
+        cleanup()
+        return nil, T(_("nie udało się podmienić katalogu (%1)"), tostring(err))
+    end
+    return true
+end
+
+--- Etap samoaktualizacji po synchronizacji. Zwraca true, jeśli pokazał okno
+-- (wtedy sam zadba o restart, także za zmienione ustawienia).
+function Koligilo:handleSelfUpdate(raw, silent, changed)
+    local info, why = Sync.selfUpdateInfo(raw, self.selfVersion)
+    if not info then
+        if why then logger.warn("koligilo: wskazanie aktualizacji pluginu odrzucone:", why) end
+        return false
+    end
+    if plugin_dialog_open or restart_pending then return false end
+    -- odrzuconą wersję w tle nie pytamy drugi raz; ręczna synchronizacja pyta znowu
+    if silent and info.version == self.settings:readSetting("self_update_rejected") then return false end
+
+    local has_archiver, Archiver = pcall(require, "ffi/archiver")
+    if not has_archiver then
+        logger.warn("koligilo: brak ffi/archiver", Archiver)
+        if not silent then
+            UIManager:show(InfoMessage:new{ text = _("Ta wersja KOReadera nie umie rozpakować aktualizacji (brak modułu ffi/archiver). Zaktualizuj KOReadera do wersji 2025.08 lub nowszej.") })
+        end
+        return false
+    end
+
+    plugin_dialog_open = true
+    UIManager:show(ConfirmBox:new{
+        text = T(_("Jest nowa wersja koligilo: %1 → %2.\n\nAktualizacja zastąpi program koligilo na tym czytniku plikiem pobranym z Twojego serwera (%3) i sprawdzonym sumą sha256. Ustawienia i parowanie zostają. Po instalacji KOReader musi się uruchomić ponownie.\n\nTo program z pełnym dostępem do czytnika — zgódź się tylko, jeśli sam wypuściłeś tę wersję."),
+            self.selfVersion or "?", info.version, self.settings:readSetting("server") or "?"),
+        ok_text = _("Aktualizuj"),
+        cancel_text = _("Nie teraz"),
+        ok_callback = function()
+            plugin_dialog_open = false
+            self.settings:delSetting("self_update_rejected")
+            NetworkMgr:runWhenOnline(function()
+                local msg = InfoMessage:new{ text = _("Aktualizuję koligilo…") }
+                UIManager:show(msg)
+                UIManager:forceRePaint()
+                local okc, ok, err = pcall(self.applySelfUpdate, self, info, Archiver)
+                if not okc then ok, err = nil, tostring(ok) end
+                UIManager:close(msg)
+                if ok then
+                    restart_pending = true
+                    local text = T(_("koligilo zaktualizowane do wersji %1. KOReader musi się uruchomić ponownie, aby ją wczytać."), info.version)
+                    if changed > 0 then text = text .. "\n\n" .. T(_("Pobrano też %1 zmienionych ustawień."), changed) end
+                    UIManager:askForRestart(text)
+                else
+                    logger.warn("koligilo: samoaktualizacja", err)
+                    UIManager:show(InfoMessage:new{ text = T(_("Nie udało się zaktualizować koligilo — zostaje obecna wersja.\n\n%1"), tostring(err)) })
+                end
+            end)
+        end,
+        cancel_callback = function()
+            plugin_dialog_open = false
+            self.settings:saveSetting("self_update_rejected", info.version)
+            self.settings:flush()
+            if changed > 0 then
+                UIManager:askForRestart(T(_("koligilo pobrał %1 zmienionych ustawień z innych urządzeń. KOReader musi się uruchomić ponownie, aby je zastosować."), changed))
+            end
+        end,
+    })
+    return true
+end
+
 ---------------------------------------------------------------- czcionki (TASK-36, PC-018)
 -- Katalog fonts/koligilo w danych KOReadera (KOReader skanuje fonts/ rekurencyjnie).
 -- Ruszamy wyłącznie pliki z manifestu .koligilo-fonts.
@@ -1177,6 +1353,11 @@ end
 ---------------------------------------------------------------- synchronizacja
 
 function Koligilo:sync(silent, after_move)
+    -- po samoaktualizacji pliki na dysku są nowe, a w pamięci stare: nic nie robimy do restartu
+    if restart_pending then
+        if not silent then UIManager:askForRestart(_("koligilo zostało zaktualizowane. KOReader musi się uruchomić ponownie.")) end
+        return
+    end
     local server, token = self.settings:readSetting("server"), self.settings:readSetting("token")
     if not token then return end
     local function fail(text)
@@ -1190,6 +1371,8 @@ function Koligilo:sync(silent, after_move)
     local query = {}
     if plugins_allowed then query[#query + 1] = "plugins_allowed=1" end
     if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
+    local self_update_allowed = self.settings:isTrue("self_update_allowed")
+    if self_update_allowed then query[#query + 1] = "self_update=1" end
     -- ekran: żeby panel mógł pokazać podgląd strony także dla modelu, którego nie zna
     local ok_screen, screen = pcall(function()
         local scr = Device.screen
@@ -1315,6 +1498,12 @@ function Koligilo:sync(silent, after_move)
         elseif shown then
             return
         end
+    end
+
+    -- Na końcu, żeby nie pokazać dwóch okien naraz (wtyczki mają pierwszeństwo).
+    if self_update_allowed and remote.self_update ~= nil then
+        local oks, shown = pcall(self.handleSelfUpdate, self, remote.self_update, silent, changed)
+        if not oks then logger.warn("koligilo: samoaktualizacja", shown) elseif shown then return end
     end
 
     local font_text

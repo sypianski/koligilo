@@ -54,4 +54,10 @@ ok "czcionki (komputer): bez zgody czytnika brak listy" '[[ $(curl -s -H "Author
 ok "czcionki (komputer): za zgodą czytnik dostaje listę" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?fonts_allowed=1") == *"/api/v1/fonts/$FSHA"* ]]'
 ok "czcionki (komputer): pobranie identyczne z wgranym" 'curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/fonts/$FSHA" | cmp -s - "$TMP/Moja.ttf"'
 ok "czcionki (komputer): nasłuch czytników nie wystawia panelu czcionek" '[ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$DP/api/admin/fonts")" = 404 ]'
+# samoaktualizacja koligilo (TASK-39): wskazanie tylko za zgodą czytnika, suma zgodna z serwowanym zipem
+SUINFO=$(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?self_update=1")
+SUSHA=$(echo "$SUINFO" | grep -o '"self_update":{[^}]*}' | grep -o '"sha256":"[0-9a-f]*"' | cut -d'"' -f4)
+ok "samoaktualizacja (komputer): bez zgody brak wskazania" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync") != *"self_update"* ]]'
+ok "samoaktualizacja (komputer): za zgodą wskazanie z sumą" '[ ${#SUSHA} = 64 ]'
+ok "samoaktualizacja (komputer): suma zgadza się z zipem z nasłuchu czytników" '[ "$(curl -s "http://127.0.0.1:$DP/koligilo.koplugin.zip" | sha256sum | cut -d" " -f1)" = "$SUSHA" ]'
 exit $fail

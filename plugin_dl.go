@@ -2,10 +2,14 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"path"
+	"sync"
 )
 
 // Plugin wbudowany w binarkę: czytnik (albo człowiek w przeglądarce czytnika)
@@ -15,12 +19,20 @@ import (
 //go:embed all:plugin/koligilo.koplugin
 var pluginFS embed.FS
 
-func servePluginZip(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="koligilo.koplugin-`+Version+`.zip"`)
-	zw := zip.NewWriter(w)
-	defer zw.Close()
-	fs.WalkDir(pluginFS, "plugin", func(p string, d fs.DirEntry, err error) error {
+// Zip pluginu budujemy raz na proces: suma sha256, którą serwer podaje czytnikowi
+// w synchronizacji (samoaktualizacja, TASK-39), musi zgadzać się co do bajta z tym,
+// co potem serwuje /koligilo.koplugin.zip.
+var (
+	pluginZipOnce sync.Once
+	pluginZipData []byte
+	pluginZipSHA  string
+	pluginZipErr  error
+)
+
+func buildPluginZip() ([]byte, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	err := fs.WalkDir(pluginFS, "plugin", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -36,4 +48,52 @@ func servePluginZip(w http.ResponseWriter, r *http.Request) {
 		_, err = f.Write(b)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func pluginZip() ([]byte, string, error) {
+	pluginZipOnce.Do(func() {
+		pluginZipData, pluginZipErr = buildPluginZip()
+		if pluginZipErr == nil {
+			sum := sha256.Sum256(pluginZipData)
+			pluginZipSHA = hex.EncodeToString(sum[:])
+		}
+	})
+	return pluginZipData, pluginZipSHA, pluginZipErr
+}
+
+// selfUpdateInfo to wskazanie dla czytnika, który sam zgłosił zgodę na aktualizację
+// koligilo (?self_update=1). Wersja pochodzi z _meta.lua wbudowanego pluginu — z tego
+// samego pliku, który czytnik zobaczy po instalacji — a nie ze stałej Version serwera.
+func selfUpdateInfo() map[string]any {
+	b, sha, err := pluginZip()
+	if err != nil {
+		return nil
+	}
+	meta, err := pluginFS.ReadFile("plugin/koligilo.koplugin/_meta.lua")
+	if err != nil {
+		return nil
+	}
+	ver := parsePluginMeta(string(meta)).Version
+	if ver == "" {
+		return nil
+	}
+	return map[string]any{"version": ver, "sha256": sha, "size": len(b), "url": "/koligilo.koplugin.zip"}
+}
+
+func servePluginZip(w http.ResponseWriter, r *http.Request) {
+	b, _, err := pluginZip()
+	if err != nil {
+		http.Error(w, "nie udało się spakować pluginu", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="koligilo.koplugin-`+Version+`.zip"`)
+	w.Write(b)
 }

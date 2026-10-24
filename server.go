@@ -190,6 +190,13 @@ func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
 	if fs := s.st.FontTarget(d, fontsAllowed); fontsAllowed {
 		out["fonts"] = fontsWire(fs)
 	}
+	// Aktualizacja samego koligilo — tak samo tylko dla czytnika, który sam zgłosił zgodę
+	// (TASK-39, PC-019). Serwer tylko wskazuje wersję; instaluje wyłącznie czytnik, po potwierdzeniu.
+	if r.URL.Query().Get("self_update") == "1" {
+		if info := selfUpdateInfo(); info != nil {
+			out["self_update"] = info
+		}
+	}
 	writeJSON(w, 200, out)
 }
 

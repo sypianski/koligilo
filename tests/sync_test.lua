@@ -350,6 +350,33 @@ check("moved: ten sam adres to nie przenosiny", M("https://a.example", "https://
 check("moved: zły port", M("https://a", "https://b:99999") == nil)
 check("moved: spacje", M("https://a", "https://b.example/ x") == nil)
 
+-- samoaktualizacja (TASK-39) ----------------------------------------------------
+check("wersja: parsowanie", deep_eq(Sync.versionParse("0.8.1"), { 0, 8, 1 }) and deep_eq(Sync.versionParse("12.0.345"), { 12, 0, 345 }))
+check("wersja: śmieci odrzucone", Sync.versionParse("v0.8.1") == nil and Sync.versionParse("0.8") == nil and Sync.versionParse("0.8.1-beta") == nil
+    and Sync.versionParse(" 0.8.1") == nil and Sync.versionParse(nil) == nil and Sync.versionParse(81) == nil and Sync.versionParse("0.8.1.2") == nil)
+check("wersja: nowsza liczbowo, nie tekstowo", Sync.versionNewer("0.10.0", "0.9.9") and Sync.versionNewer("1.0.0", "0.99.99") and Sync.versionNewer("0.8.1", "0.8.0"))
+check("wersja: równa i starsza to nie nowsza", not Sync.versionNewer("0.8.0", "0.8.0") and not Sync.versionNewer("0.7.9", "0.8.0"))
+check("wersja: nierozpoznana to nie nowsza", not Sync.versionNewer("x", "0.8.0") and not Sync.versionNewer("0.9.0", nil))
+local SHA = ("a"):rep(64)
+local function SU(t, cur) return Sync.selfUpdateInfo(t, cur or "0.8.0") end
+local good = { version = "0.9.0", sha256 = SHA, url = "/koligilo.koplugin.zip", size = 200000 }
+check("self_update: poprawne wskazanie", SU(good) and SU(good).version == "0.9.0" and SU(good).size == 200000)
+local v, why = SU({ version = "0.8.0", sha256 = SHA, url = "/koligilo.koplugin.zip", size = 1 })
+check("self_update: ta sama wersja — cisza, bez powodu", v == nil and why == nil)
+check("self_update: nie-tabela — cisza", SU(nil) == nil and SU("x") == nil and select(2, SU("x")) == nil)
+check("self_update: zły numer — powód", select(2, SU({ version = "juz", sha256 = SHA, url = good.url, size = 1 })) ~= nil)
+check("self_update: zła suma — powód", select(2, SU({ version = "0.9.0", sha256 = "ABC", url = good.url, size = 1 })) ~= nil)
+check("self_update: obcy adres — powód", select(2, SU({ version = "0.9.0", sha256 = SHA, url = "http://evil.example/x.zip", size = 1 })) ~= nil
+    and select(2, SU({ version = "0.9.0", sha256 = SHA, url = "/inny.zip", size = 1 })) ~= nil)
+check("self_update: rozmiar spoza zakresu — powód", select(2, SU({ version = "0.9.0", sha256 = SHA, url = good.url, size = 0 })) ~= nil
+    and select(2, SU({ version = "0.9.0", sha256 = SHA, url = good.url, size = 99 * 1024 * 1024 })) ~= nil
+    and select(2, SU({ version = "0.9.0", sha256 = SHA, url = good.url })) ~= nil)
+check("self_update: nieznana własna wersja — nie aktualizujemy", Sync.selfUpdateInfo(good, nil) == nil)
+check("katalog własny: z ścieżki main.lua", Sync.selfParentDir("@/sdcard/koreader/plugins/koligilo.koplugin/main.lua") == "/sdcard/koreader/plugins"
+    and Sync.selfParentDir("@/opt/koreader-shared/plugins/koligilo.koplugin/main.lua") == "/opt/koreader-shared/plugins")
+check("katalog własny: inna nazwa katalogu odrzucona", Sync.selfParentDir("@/x/plugins/moje-koligilo.koplugin/main.lua") == nil
+    and Sync.selfParentDir("@/x/plugins/koligilo.koplugin/inny.lua") == nil and Sync.selfParentDir(nil) == nil and Sync.selfParentDir("=stdin") == nil)
+
 -- parametr screen --------------------------------------------------------------
 check("screen: e-ink", Sync.screenParam(1404, 1872, 227, false) == "1404x1872@227")
 check("screen: kolorowy", Sync.screenParam(1404, 1872, 227, true) == "1404x1872@227,c")

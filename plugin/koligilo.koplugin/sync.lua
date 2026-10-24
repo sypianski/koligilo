@@ -733,6 +733,52 @@ function Sync.movedURL(old, new)
     return new
 end
 
+-- Samoaktualizacja pluginu (TASK-39, PC-019) -----------------------------------
+-- Serwer podaje tylko wersję, sha256 i rozmiar; zip leży zawsze pod jednym,
+-- stałym adresem. Aktualizujemy wyłącznie do WYŻSZEJ wersji (bez downgrade'u).
+Sync.SELF_UPDATE_URL = "/koligilo.koplugin.zip"
+Sync.SELF_MAX_ZIP = 2 * 1024 * 1024 -- plugin waży ok. 0,2 MB; więcej to nie nasz plik
+
+--- "0.8.1" → {0, 8, 1}; wszystko inne (przyrostki, "v", puste) → nil.
+function Sync.versionParse(v)
+    if type(v) ~= "string" or #v > 20 then return nil end
+    local a, b, c = v:match("^(%d%d?%d?%d?)%.(%d%d?%d?%d?)%.(%d%d?%d?%d?)$")
+    if not a then return nil end
+    return { tonumber(a), tonumber(b), tonumber(c) }
+end
+
+--- Czy `new` jest ściśle nowsze od `cur`. Nierozpoznany numer = nie.
+function Sync.versionNewer(new, cur)
+    local n, c = Sync.versionParse(new), Sync.versionParse(cur)
+    if not n or not c then return false end
+    for i = 1, 3 do
+        if n[i] ~= c[i] then return n[i] > c[i] end
+    end
+    return false
+end
+
+--- Wskazanie aktualizacji od serwera (remote.self_update) → {version, sha256, url,
+-- size} albo nil. Drugi wynik: powód, gdy wskazanie jest wadliwe (nil bez powodu =
+-- wszystko w porządku, tylko nie ma nic nowszego).
+function Sync.selfUpdateInfo(info, current)
+    if type(info) ~= "table" then return nil end
+    if not Sync.versionParse(info.version) then return nil, "zły numer wersji" end
+    if not Sync.versionNewer(info.version, current) then return nil end
+    if not sha_ok(info.sha256) then return nil, "zła suma sha256" end
+    if info.url ~= Sync.SELF_UPDATE_URL then return nil, "nieoczekiwany adres pliku" end
+    local size = tonumber(info.size)
+    if not size or size < 1 or size > Sync.SELF_MAX_ZIP then return nil, "zły rozmiar pliku" end
+    return { version = info.version, sha256 = info.sha256, url = info.url, size = size }
+end
+
+--- Katalog nadrzędny, w którym leży koligilo.koplugin, z `debug.getinfo(1,"S").source`
+-- pliku main.lua ("@/…/plugins/koligilo.koplugin/main.lua"). Inna nazwa katalogu
+-- (ręczna kopia pod inną nazwą) = nil: wtedy nie aktualizujemy.
+function Sync.selfParentDir(source)
+    if type(source) ~= "string" then return nil end
+    return source:match("^@(.+)/koligilo%.koplugin/main%.lua$")
+end
+
 -- Parametr `screen` synchronizacji: rozdzielczość, ppi i czy ekran jest kolorowy,
 -- np. "1404x1872@227,c". Po tym panel buduje podgląd strony dla nowego czytnika
 -- bez znajomości jego modelu. Zakresy jak w parseScreen w Go (nieprawdopodobne

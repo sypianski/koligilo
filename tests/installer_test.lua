@@ -118,6 +118,10 @@ P["ffi/archiver"] = function()
 end
 
 local Koligilo = dofile("plugin/koligilo.koplugin/main.lua")
+-- BEZPIECZNIK: samoaktualizacja podmienia katalog pluginu na dysku. Wczytany z repo main.lua
+-- uważa, że mieszka w ./plugin/ — bez tego test nadpisałby prawdziwy plugin atrapą.
+-- Sandbox ustawiamy na poziomie klasy, zanim cokolwiek zostanie wywołane.
+Koligilo.selfParent, Koligilo.selfVersion = TMP .. "/selfroot", "0.8.0"
 local settings_data = { server = "http://srv", token = "tok" }
 local K = setmetatable({ settings = {
     readSetting = function(_, k) return settings_data[k] end,
@@ -351,6 +355,115 @@ ok, err = K:applyFontOp("install", { file = "../x.ttf", sha256 = ftA.sha256, url
 check("font: ścieżka w nazwie odrzucona", not ok)
 local sf = K:sendableFonts()
 check("font: do wysłania tylko Reczna.ttf", #sf == 1 and sf[1].file == "Reczna.ttf", #sf)
+
+-- 11) TASK-39: samoaktualizacja koligilo (osobna ścieżka; applyPluginOp dalej odmawia — test 6)
+local SELF = TMP .. "/selfroot"
+local SELFDIR = SELF .. "/koligilo.koplugin"
+local function self_leftovers() return out("ls -a " .. q(SELF) .. " | grep '^\\.koligilo-' || true") end
+local function self_install(version)
+    sh("rm -rf " .. q(SELF) .. " && mkdir -p " .. q(SELFDIR))
+    spit(SELFDIR .. "/_meta.lua", 'return { name = "koligilo", version = "' .. version .. '" }\n')
+    spit(SELFDIR .. "/main.lua", "-- stary\nreturn {}\n")
+    spit(SELFDIR .. "/sync.lua", "-- stary\nreturn {}\n")
+    spit(SELFDIR .. "/ustawienie-gracza.txt", "nie powinno przeżyć podmiany katalogu\n")
+end
+-- zip jak serwerowy: sam katalog koligilo.koplugin; sha liczony z bajtów zipa
+local function self_zip(version, tweak, meta_version)
+    local src = TMP .. "/src/self-" .. version
+    sh("rm -rf " .. q(src) .. " && mkdir -p " .. q(src .. "/koligilo.koplugin"))
+    spit(src .. "/koligilo.koplugin/_meta.lua", 'return { name = "koligilo", version = "' .. (meta_version or version) .. '" }\n')
+    spit(src .. "/koligilo.koplugin/main.lua", "-- nowy " .. version .. "\nreturn {}\n")
+    spit(src .. "/koligilo.koplugin/sync.lua", "-- nowy " .. version .. "\nreturn {}\n")
+    if tweak then tweak(src .. "/koligilo.koplugin") end
+    local z = src .. ".zip"
+    sh("rm -f " .. q(z) .. " && cd " .. q(src) .. " && zip -qry " .. q(z) .. " koligilo.koplugin")
+    local body = slurp(z)
+    served["http://srv/koligilo.koplugin.zip"] = body
+    return { version = version, sha256 = out("sha256sum " .. q(z)):match("^(%x+)"), url = "/koligilo.koplugin.zip", size = #body }
+end
+check("self: test działa w sandboksie, nie na prawdziwym pluginie", K.selfParent == SELF and K.selfParent:find(TMP, 1, true) == 1)
+
+self_install("0.8.0")
+local up = self_zip("0.9.0")
+ok, err = K:applySelfUpdate(up, Archiver)
+check("self: aktualizacja ok", ok, err)
+check("self: nowe pliki", (slurp(SELFDIR .. "/main.lua") or ""):find("nowy 0.9.0", 1, true) and (slurp(SELFDIR .. "/sync.lua") or ""):find("nowy 0.9.0", 1, true))
+check("self: stara wersja czeka w .koligilo-old-koligilo", (slurp(SELF .. "/.koligilo-old-koligilo/main.lua") or ""):find("stary", 1, true))
+check("self: brak plików roboczych poza kopią starej", self_leftovers() == ".koligilo-old-koligilo\n", self_leftovers())
+
+-- sprzątanie po starcie nowej wersji (init) usuwa kopię; po aktualizacji w tym samym procesie — jeszcze nie
+K:cleanupSelfUpdate()
+check("self: init sprząta kopię starej wersji", self_leftovers() == "", self_leftovers())
+
+-- zła suma: nic nie ruszone
+self_install("0.8.0")
+local bad_up = self_zip("0.9.0"); bad_up.sha256 = ("0"):rep(64)
+ok, err = K:applySelfUpdate(bad_up, Archiver)
+check("self: zła suma — odmowa", not ok and tostring(err):find("sha256"), err)
+check("self: zła suma — stara wersja nietknięta, brak śmieci", (slurp(SELFDIR .. "/main.lua") or ""):find("stary", 1, true) and self_leftovers() == "")
+
+-- błąd składni w main.lua: odmowa przed podmianą (czytnik nie zostaje bez koligilo)
+local broken = self_zip("0.9.1", function(d) spit(d .. "/main.lua", "to nie jest lua ((\n") end)
+ok, err = K:applySelfUpdate(broken, Archiver)
+check("self: błąd składni — odmowa", not ok and tostring(err):find("składni"), err)
+check("self: błąd składni — stara wersja nietknięta", (slurp(SELFDIR .. "/main.lua") or ""):find("stary", 1, true) and self_leftovers() == "")
+
+-- brakujący plik
+local missing = self_zip("0.9.2", function(d) os.remove(d .. "/sync.lua") end)
+ok, err = K:applySelfUpdate(missing, Archiver)
+check("self: brak sync.lua — odmowa", not ok and tostring(err):find("sync.lua"), err)
+
+-- wersja w pliku inna niż zapowiedziana
+local liar = self_zip("0.9.3", nil, "0.7.0")
+ok, err = K:applySelfUpdate(liar, Archiver)
+check("self: wersja w pliku ≠ zapowiedziana — odmowa", not ok and tostring(err):find("zapowiedzian"), err)
+check("self: kłamca — stara wersja nietknięta", (slurp(SELFDIR .. "/main.lua") or ""):find("stary", 1, true) and self_leftovers() == "")
+
+-- downgrade i ta sama wersja
+ok, err = K:applySelfUpdate(self_zip("0.7.0"), Archiver)
+check("self: downgrade — odmowa", not ok and tostring(err):find("nowsza"), err)
+ok, err = K:applySelfUpdate(self_zip("0.8.0"), Archiver)
+check("self: ta sama wersja — odmowa", not ok)
+
+-- zip-slip i link w ZIP-ie przechodzą przez te same sprawdzenia co wtyczki
+local slip = self_zip("0.9.4", function(d) sh("ln -s /etc/passwd " .. q(d .. "/link")) end)
+ok, err = K:applySelfUpdate(slip, Archiver)
+check("self: link w ZIP-ie — odmowa", not ok and tostring(err):find("typ"), err)
+
+-- nieznany katalog / wersja (ręczna kopia): bez zgadywania
+local keep_parent = K.selfParent
+K.selfParent = false -- nil odsłoniłby wartość z klasy (sandbox)
+ok, err = K:applySelfUpdate(self_zip("0.9.0"), Archiver)
+check("self: nieznane położenie — odmowa", not ok and tostring(err):find("ręcznie"), err)
+K.selfParent = keep_parent
+
+-- okno potwierdzenia: bez zgody nic się nie dzieje, odmowa pamiętana, zgoda instaluje i prosi o restart
+self_install("0.8.0")
+local up2 = self_zip("0.9.0")
+shown = {}
+check("self: starsza/ta sama wersja — bez okna", K:handleSelfUpdate({ version = "0.8.0", sha256 = up2.sha256, url = up2.url, size = up2.size }, false, 0) == false and #shown == 0)
+check("self: wadliwe wskazanie (zły url) — bez okna", K:handleSelfUpdate({ version = "0.9.0", sha256 = up2.sha256, url = "http://evil/x.zip", size = 10 }, false, 0) == false and #shown == 0)
+check("self: wadliwe wskazanie (zła suma) — bez okna", K:handleSelfUpdate({ version = "0.9.0", sha256 = "zz", url = up2.url, size = 10 }, false, 0) == false and #shown == 0)
+local showed2 = K:handleSelfUpdate(up2, false, 0)
+local box2 = shown[1]
+check("self: okno z numerami wersji", showed2 and box2 and box2.kind == "confirm" and box2.text:find("0.8.0 → 0.9.0", 1, true), box2 and box2.text)
+check("self: przed zgodą nic nie zmienione", (slurp(SELFDIR .. "/main.lua") or ""):find("stary", 1, true))
+box2.cancel_callback()
+check("self: odmowa zapamiętana", settings_data.self_update_rejected == "0.9.0")
+shown = {}
+check("self: odrzuconej wersji w tle nie pytamy ponownie", K:handleSelfUpdate(up2, true, 0) == false and #shown == 0)
+shown = {}
+check("self: ręczna synchronizacja pyta znowu", K:handleSelfUpdate(up2, false, 0) == true)
+shown[1].ok_callback()
+check("self: zgoda — zainstalowano", (slurp(SELFDIR .. "/main.lua") or ""):find("nowy 0.9.0", 1, true))
+check("self: zgoda — prośba o restart", shown[#shown].kind == "restart" and shown[#shown].text:find("0.9.0", 1, true), shown[#shown].text)
+check("self: zgoda czyści pamięć odmowy", settings_data.self_update_rejected == nil)
+-- po podmianie ten proces nie sprząta kopii starej wersji (nowa jeszcze nie wystartowała)
+K:cleanupSelfUpdate()
+check("self: w tym samym procesie kopia starej wersji zostaje", self_leftovers() == ".koligilo-old-koligilo\n", self_leftovers())
+-- i nie pozwala już na kolejne okna ani synchronizację (stare pliki w pamięci, nowe na dysku)
+shown = {}
+check("self: po podmianie brak kolejnych okien", K:handleSelfUpdate(self_zip("0.9.5"), false, 0) == false and #shown == 0)
 
 
 sh("rm -rf " .. q(TMP))

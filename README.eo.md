@@ -70,6 +70,7 @@ Nur parigo per sescifera kodo el alia reto uzas la renkontejon `koligilo.sypian.
 
 - **Via propra servilo.** Anstataŭ la komputilo, VPS povas esti la servilo (`koligilo serve`). La datumoj transiras inter ili sen nova parigo de la legiloj. Detaloj: [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md) (pole).
 - **Kromprogramoj.** Galerio de kromprogramoj por KOReader el GitHub, fiksitaj al konkreta enmeto (commit). Instalo, ĝisdatigo aŭ forigo okazas nur post via konfirmo en la legilo (KOReader 2025.08 aŭ pli nova).
+- **Ĝisdatigo de koligilo.** La legilo mem povas proponi pli novan version de koligilo, sed nur se vi ŝaltas tion en la menuo de la legilo ("Pozwól aktualizować koligilo"). Vi konfirmas ĉiun ĝisdatigon en dialogo kun ambaŭ versionumeroj, la dosiero estas kontrolita per sumo sha256, kaj poste KOReader devas relanĉiĝi. La antaŭa versio restas en `.koligilo-old-koligilo` ĝis la sekva starto.
 - **Kion koligilo ne faras.** Ĝi ne movas librojn nek legoprogreson. Kiel vi sinkronigas ilin, dependas de vi (ekzemple per la enkonstruita progres-sinkronigo de KOReader aŭ per Syncthing); koligilo zorgas nur pri agordoj.
 
 ## Rimarkoj
