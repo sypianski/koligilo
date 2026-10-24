@@ -890,3 +890,5 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
   .how-toc { position: static; flex-direction: row; flex-wrap: wrap; }
   .how-toc button + button { border-top: 0; border-left: 1px solid var(--border); }
 }
+/* „?” przy nagłówku widoku → temat w „Jak to działa” (TASK-34) */
+button.help-q { width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 13px; font-weight: 700; line-height: 1; align-self: center; flex: none; }

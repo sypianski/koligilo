@@ -789,6 +789,7 @@ function main() {
   const view = VIEWS.find(v => v[0] === S.tab) || VIEWS[0];
   return h("div", { class: "view", role: "region", "aria-labelledby": "view-title" },
     h("header", { class: "view-head", "data-drag": true }, h("h1", { id: "view-title" }, view[1]),
+      HOW_HELP[S.tab] && helpMark(HOW_HELP[S.tab]),
       VIEW_SUB[S.tab] && h("span", { class: "sub" }, VIEW_SUB[S.tab](st))),
     st.pending.map(pairBanner),
     S.error && h("p", { class: "err" }, S.error),
@@ -2660,6 +2661,15 @@ function howFacts() {
     h("p", {}, h("b", {}, head), " · ", addr, " · ", VIEW_SUB.urzadzenia(st),
       last ? ` · ostatnia synchronizacja ${ago(last.last_sync.at)}` : ""),
     h("p", { class: "muted small" }, rule));
+}
+// „?” przy nagłówku widoku (TASK-34) prowadzi do tematu w „Jak to działa”. Widoki bez wpisu go nie mają.
+const HOW_HELP = { urzadzenia: "pair", grupy: "conf", wspolne: "conf", konta: "books", wtyczki: "plug" };
+function helpMark(topic) {
+  const t = HOW_TOPICS.find(x => x[0] === topic)[1];
+  return h("button", {
+    type: "button", class: "help-q", title: `Jak to działa: ${t}`,
+    "aria-label": `Jak to działa: ${t}`, onclick: () => showHow(topic),
+  }, "?");
 }
 // Przejście do tematu: ze spisu, a z „?” przy nagłówkach innych widoków (showHow) także z innej zakładki.
 function howGo(id) { S.howTopic = id; S.howScroll = id; render(); }
