@@ -876,3 +876,6 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .how-ex { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); border-radius: 8px; padding: 8px 14px 8px 32px; max-width: 76ch; }
 .how-topic + .how-topic { margin-top: 20px; }
 .how-topic h3 { margin: 0 0 6px; }
+.how-facts { border-bottom: 1px solid var(--border); margin: 0 0 16px; padding-bottom: 12px; }
+.how-facts p { margin: 0; max-width: none; }
+.how-facts p + p { margin-top: 3px; }

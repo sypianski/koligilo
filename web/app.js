@@ -2645,8 +2645,25 @@ const HOW_TOPICS = [
   ["fail", "Gdy coś pójdzie nie tak", "Awarie", () => [
     h("p", {}, "Gdy naraz zniknie ponad połowa synchronizowanych ustawień (np. uszkodzony plik), czytnik wstrzymuje synchronizację i nic nie wysyła. Nieczytelnych plików nie traktuje jak pustych.")]],
 ];
+// Pasek „Twoja konfiguracja”: odpowiedź na „czemu mój czytnik nie widzi zmian” zależy od trybu.
+// Dane już są w stanie panelu (to samo pokazuje stopka okna), nic nie dochodzi.
+function howFacts() {
+  const st = S.state, local = S.mode === "desktop" && S.local?.mode === "local";
+  const head = local ? "Ten komputer jest serwerem"
+    : S.mode === "desktop" ? "Czytniki łączą się z własnym serwerem" : "Ten panel działa na serwerze";
+  const addr = local ? (S.local.public_url || "brak adresu w sieci") : S.mode === "desktop" ? S.local.server : location.origin;
+  const last = (st.devices || []).filter(d => d.last_sync).sort((a, b) => new Date(b.last_sync.at) - new Date(a.last_sync.at))[0];
+  const rule = local ? "Czytniki synchronizują się tylko wtedy, gdy ten komputer jest włączony i widoczny w sieci."
+    : S.mode === "desktop" ? "Czytniki łączą się z serwerem bezpośrednio, a ten komputer jest tylko panelem."
+      : "Czytniki łączą się z tym serwerem bezpośrednio.";
+  return h("div", { class: "how-facts" },
+    h("p", {}, h("b", {}, head), " · ", addr, " · ", VIEW_SUB.urzadzenia(st),
+      last ? ` · ostatnia synchronizacja ${ago(last.last_sync.at)}` : ""),
+    h("p", { class: "muted small" }, rule));
+}
 function howTab() {
   return h("section", { class: "card prose how" },
+    howFacts(),
     HOW_TOPICS.map(([id, title, , body], i) => h("div", { class: "how-topic", id: "how-" + id },
       h("h3", i === 0 ? { style: "margin-top:0" } : {}, title), body())));
 }
