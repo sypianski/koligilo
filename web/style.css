@@ -858,3 +858,11 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .statline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 2px solid var(--border-strong); border-radius: 10px; padding: 9px 13px; }
 .statline .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ctp-green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctp-green) 25%, transparent); flex: none; }
 .statline .grow { flex: 1; min-width: 12em; }
+
+/* stopka: „? skróty” i okno ze skrótami (TASK-35) */
+.status .keys-btn { border: 0; background: none; padding: 0 4px; font-size: 12px; font-weight: 400; color: var(--subtext); min-height: 0; }
+.status .keys-btn:hover { background: none; color: var(--text); text-decoration: underline; }
+.keys-dialog { border: 1.5px solid var(--border-strong); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0; width: min(520px, calc(100% - 32px)); }
+.keys-dialog::backdrop { background: rgba(0, 0, 0, .4); }
+.keys-dialog .sheet-head { padding-top: 14px; }
+.keys-body { padding: 4px 18px 18px; }

@@ -26,10 +26,12 @@
     <div id="conn" class="conn" hidden></div>
     <span id="sync" class="sync"></span>
     <span class="spacer"></span>
-    <span class="keys" aria-hidden="true"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>7</kbd> widoki</span>
+    <button type="button" id="keys-btn" class="keys keys-btn" aria-haspopup="dialog" title="Skróty klawiszowe"><kbd>?</kbd> skróty</button>
     <span id="ver"></span>
   </footer>
 </div>
+
+<dialog id="keys-dialog" class="keys-dialog" aria-labelledby="keys-title"></dialog>
 
 <script src="lua.js"></script>
 <script src="koreader_opts.js"></script>

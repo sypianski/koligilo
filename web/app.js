@@ -557,12 +557,7 @@ function ustawieniaTab() {
 function panelPane() {
   return h("div", {},
     h("p", { class: "muted small", style: "margin-top:0" }, "Motyw panelu — zapamiętywany w tej przeglądarce."),
-    themeControl(),
-    // tymczasowo: wersja i skróty zostają tu, dopóki nie dostaną miejsca w stopce (TASK-35, krok 4)
-    h("div", { class: "sub prose" },
-      h("h4", {}, "O aplikacji"),
-      h("p", { style: "margin-top:0" }, "koligilo ", S.state ? S.state.version : "…"),
-      shortcutsList()));
+    themeControl());
 }
 
 // Tryb serwera (VPS, koligilo serve): panel zarządza serwerem, na którym sam działa —
@@ -595,8 +590,24 @@ function shortcutsList() {
   return h("dl", { class: "shortcuts" },
     h("dt", {}, h("kbd", {}, "Alt"), "+", h("kbd", {}, "1"), "…", h("kbd", {}, "7")), h("dd", {}, "przełącz zakładkę"),
     h("dt", {}, h("kbd", {}, "/")), h("dd", {}, "szukaj w galerii wtyczek (otwiera „Dodaj wtyczkę”)"),
-    h("dt", {}, h("kbd", {}, "←"), " ", h("kbd", {}, "→"), " ", h("kbd", {}, "Home"), " ", h("kbd", {}, "End")), h("dd", {}, "po zakładkach, gdy jest na nich fokus"));
+    h("dt", {}, h("kbd", {}, "←"), " ", h("kbd", {}, "→"), " ", h("kbd", {}, "Home"), " ", h("kbd", {}, "End")), h("dd", {}, "po zakładkach, gdy jest na nich fokus"),
+    h("dt", {}, h("kbd", {}, "?")), h("dd", {}, "ta lista skrótów"));
 }
+
+// Okno ze skrótami (TASK-35): przycisk „? skróty” w stopce i klawisz „?”. Natywny <dialog> — fokus zostaje w oknie,
+// Esc zamyka, po zamknięciu fokus wraca tam, skąd go otwarto.
+function openKeys() {
+  const d = document.getElementById("keys-dialog");
+  if (d.open) return;
+  d.replaceChildren(
+    h("div", { class: "sheet-head" },
+      h("h2", { id: "keys-title" }, "Skróty klawiszowe"),
+      h("button", { type: "button", "aria-label": "Zamknij", onclick: () => d.close() }, "×")),
+    h("div", { class: "keys-body" }, shortcutsList()));
+  d.showModal();
+}
+document.getElementById("keys-btn").addEventListener("click", openKeys);
+document.getElementById("keys-dialog").addEventListener("click", ev => { if (ev.target === ev.currentTarget) ev.currentTarget.close(); }); // klik w tło
 
 // ------------------------------------------------ sekcja „Serwer” (tryb desktop, TASK-15)
 
@@ -3494,6 +3505,11 @@ document.addEventListener("keydown", ev => {
     }
   }
   const t = ev.target, editing = t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+  if (navReady && ev.key === "?" && !editing && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+    ev.preventDefault();
+    openKeys();
+    return;
+  }
   if (navReady && ev.key === "/" && !editing && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
     ev.preventDefault();
     // „Wtyczki” → arkusz „Dodaj wtyczkę” na galerii; refresh() zwraca
