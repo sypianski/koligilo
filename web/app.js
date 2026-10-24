@@ -332,6 +332,9 @@ async function refresh() {
     const plugSet = S.tab === "wtyczki" && S.plugView === PLUGSET; // Wtyczki → Ustawienia wtyczek (TASK-26)
     if (S.tab === "wspolne") await valLoadFull();
     if (plugSet) await padLoadFull(); // pełny padmap (565 znaków) przekracza podgląd 400 znaków
+    if (S.tab === "czcionki") {
+      try { S.fontCat = (await api("GET", "/api/admin/font-catalog")).families; } catch (e) { S.fontCat = S.fontCat || null; S.error = e.message; }
+    }
     if (S.tab === "konta") {
       try { S.acc = await api("GET", "/api/admin/accounts"); } catch (e) { S.acc = null; S.error = e.message; }
     }
@@ -3879,7 +3882,7 @@ function fmtSize(n) {
   if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1).replace(".", ",") + " MB";
   return Math.max(1, Math.round(n / 1024)) + " KB";
 }
-const FONT_SRC = { upload: "wgrana z panelu", "urządzenie": "z czytnika" };
+const FONT_SRC = { upload: "wgrana z panelu", "urządzenie": "z czytnika", "katalog": "z katalogu polecanych" };
 
 async function uploadFonts() {
   const inp = document.getElementById("f-font-files");
@@ -3900,6 +3903,51 @@ async function uploadFonts() {
     ? { ok: false, text: (done.length ? `Wgrano ${done.length}. ` : "") + "Nie udało się: " + bad.join("; ") }
     : { ok: true, text: `Wgrano: ${done.join(", ")}. Trafią na czytniki przy ich następnej synchronizacji.` };
   await refresh();
+}
+
+// Katalog polecanych (TASK-37): serwer sam pobiera pliki z przypiętych adresów i sprawdza ich sumy.
+async function addCatalogFamilies(fams) {
+  S.fontCatBusy = fams.map(f => f.id); S.fontMsg = null; render();
+  let added = 0;
+  const bad = [];
+  for (const f of fams) {
+    try { added += (await api("POST", `/api/admin/font-catalog/${f.id}`)).added; }
+    catch (e) { bad.push(`${f.name}: ${e.message}`); }
+  }
+  S.fontCatBusy = null;
+  const names = fams.map(f => f.name).join(", ");
+  S.fontMsg = bad.length
+    ? { ok: false, text: "Nie udało się pobrać: " + bad.join("; ") }
+    : { ok: true, text: `Dodano: ${names} (${added} ${plPl(added, "plik", "pliki", "plików")}). Trafią na czytniki przy ich następnej synchronizacji.` };
+  await refresh();
+}
+
+function fontCatalogCard() {
+  const cat = S.fontCat;
+  const busy = S.fontCatBusy || [];
+  const starter = (cat || []).filter(f => f.starter);
+  const starterTodo = starter.filter(f => f.have < f.files);
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Polecane do czytania"),
+    h("p", { class: "muted small", style: "margin-top:0" },
+      "Sprawdzone kroje o otwartej licencji (SIL OFL), z repozytoriów autorów. Serwer pobiera je sam, z przypiętych adresów, i odrzuca plik o innej sumie niż w katalogu. Każda rodzina to cztery style (zwykły, kursywa, pogrubiony, pogrubiona kursywa)."),
+    !cat ? h("p", { class: "loading" }, "Wczytuję katalog…") : [
+      starter.length > 0 && h("div", { class: "row", style: "margin-bottom:8px" },
+        h("button", { type: "button", class: "primary", disabled: busy.length > 0 || starterTodo.length === 0,
+          onclick: () => addCatalogFamilies(starterTodo) },
+          starterTodo.length === 0 ? "Zestaw startowy jest dodany"
+            : busy.length ? "Pobieram…" : `Dodaj zestaw startowy (${starterTodo.map(f => f.name).join(", ")} · ${fmtSize(starterTodo.reduce((n, f) => n + f.size, 0))})`)),
+      h("ul", { class: "plain" }, cat.map(f => {
+        const done = f.have === f.files, working = busy.includes(f.id);
+        return h("li", { class: "row" },
+          h("div", { class: "grow" },
+            h("b", {}, f.name),
+            h("span", { class: "muted small" }, ` · ${f.scripts} · ${fmtSize(f.size)} · `),
+            h("a", { href: f.source, target: "_blank", rel: "noopener noreferrer", class: "small" }, f.license),
+            h("div", { class: "muted small" }, f.description)),
+          h("button", { type: "button", disabled: done || busy.length > 0, onclick: () => addCatalogFamilies([f]) },
+            done ? "Dodana" : working ? "Pobieram…" : f.have > 0 ? "Dopełnij" : "Dodaj"));
+      }))]);
 }
 
 async function approveFont(f) {
@@ -3941,6 +3989,7 @@ function fontsTab() {
         h("input", { type: "file", id: "f-font-files", accept: ".ttf,.otf,.ttc,.otc", multiple: true, "aria-label": "Pliki czcionek" }),
         h("button", { type: "button", class: "primary", disabled: S.fontBusy, onclick: uploadFonts }, S.fontBusy ? "Wgrywam…" : "Wgraj")),
       S.fontMsg && h("p", { class: S.fontMsg.ok ? "ok" : "err", role: "status" }, S.fontMsg.text)),
+    fontCatalogCard(),
     pending.length > 0 && h("section", { class: "card" },
       h("h3", { style: "margin-top:0" }, `Czeka na akceptację (${pending.length})`),
       h("p", { class: "muted small", style: "margin-top:0" }, "Te czcionki wysłały czytniki. Dopóki ich nie zaakceptujesz, nie trafią na inne urządzenia."),
@@ -3975,7 +4024,7 @@ function showTab(id) {
   S.tab = id;
   history.replaceState(null, "", "#" + id);
   if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; }
-  if (id === "konta" || id === "wtyczki") return refresh();
+  if (id === "konta" || id === "wtyczki" || id === "czcionki") return refresh();
   render();
 }
 

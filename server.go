@@ -63,6 +63,7 @@ func (s *Server) Routes() *http.ServeMux {
 	s.connRoutes(m)
 	s.pluginRoutes(m)
 	s.fontRoutes(m)
+	s.fontCatalogRoutes(m)
 	s.galleryRoutes(m)
 	s.transferRoutes(m)
 	m.HandleFunc("GET /koligilo.koplugin.zip", servePluginZip)
