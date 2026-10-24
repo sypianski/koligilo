@@ -47,6 +47,25 @@ func TestRoutesBuild(t *testing.T) {
 	}
 }
 
+// TASK-30: każda grupa ma kategorię z listy Categories, a każda kategoria ma grupę (panel układa nimi tabelę).
+func TestCatalogCategories(t *testing.T) {
+	known := map[string]bool{}
+	for _, c := range Categories {
+		known[c.ID] = false
+	}
+	for _, g := range Catalog {
+		if _, ok := known[g.Category]; !ok {
+			t.Errorf("grupa %q ma nieznaną kategorię %q", g.ID, g.Category)
+		}
+		known[g.Category] = true
+	}
+	for id, used := range known {
+		if !used {
+			t.Errorf("kategoria %q nie ma żadnej grupy", id)
+		}
+	}
+}
+
 func TestCatalogMatches(t *testing.T) {
 	cases := map[string]string{
 		"settings.reader.lua#copt_line_spacing":    "wyglad",

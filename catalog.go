@@ -22,12 +22,27 @@ type Entry struct {
 
 type Group struct {
 	ID          string  `json:"id"`
+	Category    string  `json:"category"` // klucz z Categories: porządek grup w panelu (TASK-30), nie wpływa na synchronizację
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Warning     string  `json:"warning,omitempty"` // dlaczego domyślnie wyłączone / na co uważać
 	Secret      bool    `json:"secret,omitempty"`  // zawiera hasła/tokeny
 	Default     bool    `json:"default"`
 	Entries     []Entry `json:"entries"`
+}
+
+// Kategorie grup — tylko do układu panelu („Co synchronizować”): kolejność i nazwy sekcji.
+// Nie zmieniają identyfikatorów grup ani tego, co wolno synchronizować.
+type Category struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+var Categories = []Category{
+	{"wyglad", "Wygląd tekstu i ekranu"},
+	{"czytanie", "Czytanie i obsługa"},
+	{"konta", "Konta i dane logowania"},
+	{"wtyczki", "Wtyczki"},
 }
 
 const readerFile = "settings.reader.lua"
@@ -47,56 +62,56 @@ var layoutKeys = []string{
 
 var Catalog = []Group{
 	{
-		ID: "wyglad", Name: "Wygląd tekstu",
+		ID: "wyglad", Category: "wyglad", Name: "Wygląd tekstu",
 		Description: "Domyślne opcje dokumentu: interlinia, odstępy między słowami, dzielenie wyrazów, tryb renderowania, pogrubienie. To, jak wygląda tekst po otwarciu nowej książki.",
 		Default:     true,
 		Entries: []Entry{{File: readerFile, Prefix: pfx("copt_"),
 			Except: append([]string{"copt_rotation_mode"}, layoutKeys...)}},
 	},
 	{
-		ID: "uklad", Name: "Rozmiar czcionki i marginesy",
+		ID: "uklad", Category: "wyglad", Name: "Rozmiar czcionki i marginesy",
 		Description: "Domyślny rozmiar czcionki i marginesy strony.",
 		Warning:     "Zależą od wielkości i rozdzielczości ekranu — 20 pt na 6-calowym czytniku to co innego niż na telefonie. Włącz tylko między urządzeniami o podobnym ekranie.",
 		Entries:     keys(readerFile, layoutKeys...),
 	},
 	{
-		ID: "style", Name: "Poprawki stylu (style tweaks)",
+		ID: "style", Category: "wyglad", Name: "Poprawki stylu (style tweaks)",
 		Description: "Włączone poprawki CSS: np. wdowy i sieroty, wyświetlanie przypisów, justowanie.",
 		Default:     true,
 		Entries:     keys(readerFile, "style_tweaks", "style_tweaks_in_dispatcher"),
 	},
 	{
-		ID: "fonty", Name: "Wybór czcionek",
+		ID: "fonty", Category: "wyglad", Name: "Wybór czcionek",
 		Description: "Domyślna czcionka, czcionki rodzin i czcionka zapasowa.",
 		Warning:     "Działa tylko, jeśli te same pliki czcionek są zainstalowane na urządzeniu docelowym — inaczej KOReader wróci do czcionki domyślnej.",
 		Entries:     keys(readerFile, "cre_font", "cre_font_family_fonts", "fallback_font"),
 	},
 	{
-		ID: "stopka", Name: "Stopka i pasek postępu",
+		ID: "stopka", Category: "wyglad", Name: "Stopka i pasek postępu",
 		Description: "Co pokazuje stopka (godzina, bateria, strony, rozdział), znaczniki spisu treści, separatory.",
 		Default:     true,
 		Entries:     keys(readerFile, "footer", "reader_footer_mode"),
 	},
 	{
-		ID: "slowniki", Name: "Słowniki",
+		ID: "slowniki", Category: "czytanie", Name: "Słowniki",
 		Description: "Kolejność słowników, wyłączone słowniki i zestawy (presety). Same pliki słowników przenieś osobno.",
 		Default:     true,
 		Entries:     keys(readerFile, "dicts_order", "dicts_disabled", "dict_presets"),
 	},
 	{
-		ID: "gesty", Name: "Gesty",
+		ID: "gesty", Category: "czytanie", Name: "Gesty",
 		Description: "Co robi stuknięcie w róg, przeciągnięcie, uszczypnięcie — w czytniku i w menedżerze plików.",
 		Default:     true,
 		Entries:     keys("settings/gestures.lua", "gesture_fm", "gesture_reader"),
 	},
 	{
-		ID: "skroty", Name: "Skróty klawiszowe",
+		ID: "skroty", Category: "czytanie", Name: "Skróty klawiszowe",
 		Description: "Przypisania klawiszy fizycznych (hotkeys).",
 		Warning:     "Urządzenia mają różne klawiatury i przyciski — przypisanie z Kindle'a może nie mieć sensu na telefonie.",
 		Entries:     []Entry{{File: "settings/hotkeys.lua", Prefix: pfx("")}},
 	},
 	{
-		ID: "profile", Name: "Profile",
+		ID: "profile", Category: "czytanie", Name: "Profile",
 		Description: "Zapisane profile (zestawy akcji uruchamiane jednym gestem) i ich autostart.",
 		Default:     true,
 		Entries: []Entry{
@@ -105,7 +120,7 @@ var Catalog = []Group{
 		},
 	},
 	{
-		ID: "listy", Name: "Menedżer plików i listy",
+		ID: "listy", Category: "czytanie", Name: "Menedżer plików i listy",
 		Description: "Sortowanie, filtr historii, ekran startowy, liczba pozycji na stronie w zakładkach i spisie treści.",
 		Default:     true,
 		Entries: keys(readerFile, "collate", "reverse_collate", "collate_mixed", "start_with",
@@ -113,7 +128,7 @@ var Catalog = []Group{
 			"toc_items_per_page", "inertial_scroll", "auto_save_settings_interval_minutes"),
 	},
 	{
-		ID: "statystyki", Name: "Opcje statystyk",
+		ID: "statystyki", Category: "czytanie", Name: "Opcje statystyk",
 		Description: "Jak wygląda kalendarz i statystyki czytania (bez samego serwera synchronizacji — ten jest w grupie „Serwer statystyk”).",
 		Default:     true,
 		Entries: keys(readerFile, "statistics.freeze_finished_books", "statistics.calendar_browse_future_months",
@@ -121,7 +136,7 @@ var Catalog = []Group{
 			"statistics.calendar_start_day_of_week"),
 	},
 	{
-		ID: "konto_kosync", Name: "Konto synchronizacji postępu (kosync)",
+		ID: "konto_kosync", Category: "konta", Name: "Konto synchronizacji postępu (kosync)",
 		Description: "Adres serwera postępu czytania, login i klucz. Dzięki temu nowe urządzenie od razu wie, na której stronie przerwano lekturę — bez wpisywania czegokolwiek.",
 		Secret:      true, Default: true,
 		Entries: keys("settings/kosync.lua", "settings.custom_server", "settings.username",
@@ -129,7 +144,7 @@ var Catalog = []Group{
 			"settings.sync_backward", "settings.checksum_method"),
 	},
 	{
-		ID: "konto_wallabag", Name: "Konto Wallabag",
+		ID: "konto_wallabag", Category: "konta", Name: "Konto Wallabag",
 		Description: "Adres serwera Wallabag, login, hasło i klucze API. Folder pobierania zostaje lokalny, bo na każdym urządzeniu jest inny.",
 		Secret:      true, Default: true,
 		Entries: keys("settings/wallabag.lua", "wallabag.server_url", "wallabag.client_id",
@@ -139,30 +154,30 @@ var Catalog = []Group{
 			"wallabag.is_delete_read", "wallabag.is_auto_delete", "wallabag.send_review_as_tags"),
 	},
 	{
-		ID: "konta_chmura", Name: "Konta w chmurze (Dropbox, WebDAV, FTP)",
+		ID: "konta_chmura", Category: "konta", Name: "Konta w chmurze (Dropbox, WebDAV, FTP)",
 		Description: "Lista kont z Menu → Chmura: adresy, loginy i tokeny. Z tych kont korzystają m.in. synchronizacja statystyk i słowniczka.",
 		Secret:      true, Default: true,
 		Entries: keys("settings/cloudstorage.lua", "cs_servers"),
 	},
 	{
-		ID: "konto_statystyki", Name: "Synchronizacja statystyk i słowniczka",
+		ID: "konto_statystyki", Category: "konta", Name: "Synchronizacja statystyk i słowniczka",
 		Description: "Na którym koncie w chmurze i w jakim folderze statystyki czytania i słowniczek (vocabulary builder) trzymają wspólną bazę.",
 		Secret:      true, Default: true,
 		Entries: keys(readerFile, "statistics.sync_server", "vocabulary_builder.server"),
 	},
 	{
-		ID: "kopad", Name: "KOPad",
+		ID: "kopad", Category: "wtyczki", Name: "KOPad",
 		Description: "Mapowanie przycisków gamepada dla wtyczki KOPad: która kontrolka pada pełni jaką rolę (osobno dla każdego znanego układu: Xbox, PlayStation, Nintendo, Valve) oraz co dana rola robi podczas czytania (np. RB otwiera menu zamiast przewracać stronę). Układ pada wybiera się na samym urządzeniu (menu → kopad → „Gamepad layout”), a włączenie KOPada też zostaje lokalne. Edytor jest w Wtyczki → „Ustawienia wtyczek”.",
 		Entries:     keys(kopadFile, "padmap"),
 	},
 	{
-		ID: "klawiatura", Name: "Klawiatura ekranowa",
+		ID: "klawiatura", Category: "czytanie", Name: "Klawiatura ekranowa",
 		Description: "Układ i styl etykiet klawiatury programowej (np. Colemak, litery/symbole).",
 		Warning:     "Ma sens tylko między urządzeniami, na których i tak używasz tej samej klawiatury programowej.",
 		Entries:     []Entry{{File: "settings/kokeyboard.lua", Prefix: pfx("")}},
 	},
 	{
-		ID: "asystent", Name: "Asystent AI (assistant)",
+		ID: "asystent", Category: "wtyczki", Name: "Asystent AI (assistant)",
 		Description: "Preferencje wtyczki Assistant: dostawca i model AI, język pytań/odpowiedzi, czy dołączać słownik/Wikipedię, tryb strumieniowy.",
 		Entries: keys("settings/assistant.lua", "auto_copy_asked_question", "dict_language",
 			"dict_popup_show_dictionary", "dict_popup_show_wikipedia", "large_stream_dialog",
@@ -170,7 +185,7 @@ var Catalog = []Group{
 			"stream_mode_auto_scroll", "use_stream_mode"),
 	},
 	{
-		ID: "rosetta_ustawienia", Name: "Rosetta — ustawienia tłumaczenia",
+		ID: "rosetta_ustawienia", Category: "wtyczki", Name: "Rosetta — ustawienia tłumaczenia",
 		Description: "Preferencje wtyczki Rosetta (tłumaczenie na żywo): język źródłowy/docelowy, tryb formatowania, czcionka i rozmiar panelu tłumaczenia.",
 		Entries: keys("settings/rosetta.lua", "auto_translate", "backend", "clear_cache_on_start",
 			"font_override", "font_size", "font_size_percent", "formatting_mode",
@@ -178,7 +193,7 @@ var Catalog = []Group{
 			"source_lang", "target_lang", "anchor_min_confidence"),
 	},
 	{
-		ID: "rosetta_klucze", Name: "Rosetta — klucze API",
+		ID: "rosetta_klucze", Category: "wtyczki", Name: "Rosetta — klucze API",
 		Description: "Dostęp do backendu AI używanego przez Rosettę: adres API, model i klucz.",
 		Warning:     "Klucz API to sekret — włączaj tylko między urządzeniami, którym ufasz.",
 		Secret:      true,

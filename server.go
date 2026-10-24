@@ -265,6 +265,7 @@ func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 		"devices":        devs,
 		"pending":        s.st.Pending(),
 		"catalog":        Catalog,
+		"categories":     Categories,
 		"never":          NeverSynced,
 		"values":         vals,
 		"favorites":      s.st.Favorites(),
