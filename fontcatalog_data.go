@@ -5,7 +5,7 @@ package main
 var fontCatalog = []FontFamily{
 	{
 		ID: "literata", Name: "Literata", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/googlefonts/literata/tree/0c2761b727a1b3a7cffd313c37f0f5163dfc7a63", Starter: true,
+		Source: "https://github.com/googlefonts/literata/tree/0c2761b727a1b3a7cffd313c37f0f5163dfc7a63", Starter: true, Tags: []string{"lat", "cyr", "grc"},
 		Description: "Krój zaprojektowany do długiego czytania na ekranie (dla Google Play Books). Łacina, cyrylica, greka.",
 		Fonts: []CatalogFont{
 			{"Literata-Regular.ttf", "https://raw.githubusercontent.com/googlefonts/literata/0c2761b727a1b3a7cffd313c37f0f5163dfc7a63/fonts/ttf/Literata-Regular.ttf", "0390890de9bb9d5862a6ba4125b82c61792ccc3d66b63e73eee75c1a16fcd208", 319964},
@@ -16,7 +16,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "source-serif", Name: "Source Serif 4", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/adobe-fonts/source-serif/tree/80d3f8894c09c937bebfa9011247d2e1c79fd6f4", Starter: false,
+		Source: "https://github.com/adobe-fonts/source-serif/tree/80d3f8894c09c937bebfa9011247d2e1c79fd6f4", Starter: false, Tags: []string{"lat", "cyr", "grc"},
 		Description: "Neutralna, czytelna antykwa Adobe. Dobra do tekstów naukowych.",
 		Fonts: []CatalogFont{
 			{"SourceSerif4-Regular.otf", "https://raw.githubusercontent.com/adobe-fonts/source-serif/80d3f8894c09c937bebfa9011247d2e1c79fd6f4/OTF/SourceSerif4-Regular.otf", "edf160d0d584deee8a3bb2c3371b2a7624ca63580fbe02c57c1f4c91e84d8787", 241392},
@@ -27,7 +27,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "eb-garamond", Name: "EB Garamond", Scripts: "łacina, greka", License: "OFL-1.1",
-		Source: "https://github.com/octaviopardo/EBGaramond12/tree/106a4a6d377987459ae5e68673a4570f13b957fb", Starter: false,
+		Source: "https://github.com/octaviopardo/EBGaramond12/tree/106a4a6d377987459ae5e68673a4570f13b957fb", Starter: false, Tags: []string{"lat", "grc"},
 		Description: "Klasyczna garamondowa antykwa, elegancka w druku i na dużych ekranach. Pełna łacina, greka.",
 		Fonts: []CatalogFont{
 			{"EBGaramond-Regular.otf", "https://raw.githubusercontent.com/octaviopardo/EBGaramond12/106a4a6d377987459ae5e68673a4570f13b957fb/fonts/otf/EBGaramond-Regular.otf", "8d618a6bc6e1f4444e1990c39770a62ccbc29394e57afcc58acd530c16489275", 316832},
@@ -38,7 +38,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "merriweather", Name: "Merriweather", Scripts: "łacina, cyrylica", License: "OFL-1.1",
-		Source: "https://github.com/SorkinType/Merriweather/tree/4481226b336843648b5b2ee64f75737f262ded15", Starter: false,
+		Source: "https://github.com/SorkinType/Merriweather/tree/4481226b336843648b5b2ee64f75737f262ded15", Starter: false, Tags: []string{"lat", "cyr"},
 		Description: "Mocna, szeroka antykwa o dużym x-height, czytelna na małych ekranach i e-ink.",
 		Fonts: []CatalogFont{
 			{"Merriweather-Regular.ttf", "https://raw.githubusercontent.com/SorkinType/Merriweather/4481226b336843648b5b2ee64f75737f262ded15/fonts/ttf/Merriweather-Regular.ttf", "10ec10d1f7a9b5f0eb1a964e06348ce20587d478c661ea36728cce7b57f3de1c", 282844},
@@ -49,7 +49,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "lora", Name: "Lora", Scripts: "łacina, cyrylica", License: "OFL-1.1",
-		Source: "https://github.com/cyrealtype/Lora-Cyrillic/tree/2d53b449b60e185b39f671b44fded83e0910ad30", Starter: false,
+		Source: "https://github.com/cyrealtype/Lora-Cyrillic/tree/2d53b449b60e185b39f671b44fded83e0910ad30", Starter: false, Tags: []string{"lat", "cyr"},
 		Description: "Nowoczesna antykwa o kaligraficznym rysunku, dobra do beletrystyki.",
 		Fonts: []CatalogFont{
 			{"Lora-Regular.ttf", "https://raw.githubusercontent.com/cyrealtype/Lora-Cyrillic/2d53b449b60e185b39f671b44fded83e0910ad30/fonts/ttf/Lora-Regular.ttf", "c72a925082ba55885e7b4ead25d34a3c91fa44edda72a16a3a2983fc7fa7cef3", 198380},
@@ -60,7 +60,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "noto-serif", Name: "Noto Serif", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/notofonts/notofonts.github.io/tree/42af67ccd12bc0e31ed85384bf73e39248265374", Starter: false,
+		Source: "https://github.com/notofonts/notofonts.github.io/tree/42af67ccd12bc0e31ed85384bf73e39248265374", Starter: false, Tags: []string{"lat", "cyr", "grc"},
 		Description: "Uniwersalna antykwa Google, pewny wybór przy mieszanych alfabetach.",
 		Fonts: []CatalogFont{
 			{"NotoSerif-Regular.ttf", "https://raw.githubusercontent.com/notofonts/notofonts.github.io/42af67ccd12bc0e31ed85384bf73e39248265374/fonts/NotoSerif/hinted/ttf/NotoSerif-Regular.ttf", "19e72cd8d595fae5bd74a5206f5d938512e1183d4fed7abb1ec1be1d7efa5f88", 712444},
@@ -71,7 +71,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "charis-sil", Name: "Charis", Scripts: "łacina (rozszerzona), cyrylica, IPA", License: "OFL-1.1",
-		Source: "https://github.com/silnrsi/font-charis/tree/5ec7633b01adb2dec51a7c258c5e7e1fc1b82120", Starter: false,
+		Source: "https://github.com/silnrsi/font-charis/tree/5ec7633b01adb2dec51a7c258c5e7e1fc1b82120", Starter: false, Tags: []string{"lat", "cyr", "ipa"},
 		Description: "Antykwa SIL oparta na Bitstream Charter, z ogromnym zestawem znaków diakrytycznych i IPA. Dla filologii.",
 		Fonts: []CatalogFont{
 			{"Charis-Regular.ttf", "https://raw.githubusercontent.com/silnrsi/font-charis/5ec7633b01adb2dec51a7c258c5e7e1fc1b82120/references/v7000/Charis-Regular.ttf", "c03738834bd3a43c3e4a59b11878bd6ede3ee505998242ae649ed1f9cd2edcf6", 878076},
@@ -82,7 +82,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "gentium-book-plus", Name: "Gentium Book", Scripts: "łacina, greka (polytoniczna), cyrylica", License: "OFL-1.1",
-		Source: "https://github.com/silnrsi/font-gentium/tree/c863a83aa401bdf1ecc87a222c3226e88b5d7a44", Starter: false,
+		Source: "https://github.com/silnrsi/font-gentium/tree/c863a83aa401bdf1ecc87a222c3226e88b5d7a44", Starter: false, Tags: []string{"lat", "grc", "cyr", "ipa"},
 		Description: "Antykwa SIL z pełną greką polytoniczną i szerokimi znakami diakrytycznymi. Dla klasyków.",
 		Fonts: []CatalogFont{
 			{"GentiumBook-Regular.ttf", "https://raw.githubusercontent.com/silnrsi/font-gentium/c863a83aa401bdf1ecc87a222c3226e88b5d7a44/references/v7000/GentiumBook-Regular.ttf", "2027f6a864e5a9907c113438969d1d03fa91dfdd1a3885fa0fdeb496f0f682e4", 965888},
@@ -93,7 +93,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "amiri", Name: "Amiri", Scripts: "arabski, łacina", License: "OFL-1.1",
-		Source: "https://github.com/aliftype/amiri/tree/d3d0c5cb6fe7196cb4a58608fc5c8ecd2e6e80fa", Starter: false,
+		Source: "https://github.com/aliftype/amiri/tree/d3d0c5cb6fe7196cb4a58608fc5c8ecd2e6e80fa", Starter: false, Tags: []string{"ara", "lat"},
 		Description: "Naskh w stylu klasycznych druków bulackich. Do tekstów arabskich (z łaciną).",
 		Fonts: []CatalogFont{
 			{"Amiri-Regular.ttf", "https://raw.githubusercontent.com/aliftype/amiri/d3d0c5cb6fe7196cb4a58608fc5c8ecd2e6e80fa/fonts/Amiri-Regular.ttf", "2444788b85996d795f0db7e14f3f6bfc3ea1c985e391267db0269b9e40f3447d", 612940},
@@ -104,7 +104,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "atkinson-hyperlegible", Name: "Atkinson Hyperlegible", Scripts: "łacina", License: "OFL-1.1",
-		Source: "https://github.com/googlefonts/atkinson-hyperlegible/tree/1cb311624b2ddf88e9e37873999d165a8cd28b46", Starter: true,
+		Source: "https://github.com/googlefonts/atkinson-hyperlegible/tree/1cb311624b2ddf88e9e37873999d165a8cd28b46", Starter: true, Tags: []string{"lat", "acc"},
 		Description: "Krój Braille Institute o maksymalnej rozróżnialności liter. Dla osób słabowidzących.",
 		Fonts: []CatalogFont{
 			{"AtkinsonHyperlegible-Regular.ttf", "https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible/1cb311624b2ddf88e9e37873999d165a8cd28b46/fonts/ttf/AtkinsonHyperlegible-Regular.ttf", "7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669", 54348},
@@ -115,7 +115,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "opendyslexic", Name: "OpenDyslexic", Scripts: "łacina", License: "OFL-1.1",
-		Source: "https://github.com/antijingoist/opendyslexic/tree/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7", Starter: true,
+		Source: "https://github.com/antijingoist/opendyslexic/tree/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7", Starter: true, Tags: []string{"lat", "acc"},
 		Description: "Krój z obciążonymi dołami liter, ułatwiający czytanie osobom z dysleksją.",
 		Fonts: []CatalogFont{
 			{"OpenDyslexic-Regular.otf", "https://raw.githubusercontent.com/antijingoist/opendyslexic/1824da5c0e41dc3e13ffc7f3a636dcaf695d61b7/compiled/OpenDyslexic-Regular.otf", "32f5840fb2bf844bdabafe372591ddfb9286e98117f5b21950aaf54ea856919a", 175872},
@@ -126,7 +126,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "crimson-pro", Name: "Crimson Pro", Scripts: "łacina", License: "OFL-1.1",
-		Source: "https://github.com/Fonthausen/CrimsonPro/tree/475ca6a0469ba2bd9c2a3bbf038957099392c04d", Starter: false,
+		Source: "https://github.com/Fonthausen/CrimsonPro/tree/475ca6a0469ba2bd9c2a3bbf038957099392c04d", Starter: false, Tags: []string{"lat"},
 		Description: "Garamondowa antykwa z rodziny Crimson, lekka i zwarta, dobra do tekstów naukowych.",
 		Fonts: []CatalogFont{
 			{"CrimsonPro-Regular.otf", "https://raw.githubusercontent.com/Fonthausen/CrimsonPro/475ca6a0469ba2bd9c2a3bbf038957099392c04d/fonts/otf/CrimsonPro-Regular.otf", "732aa86d42ca617754e34ff74b80d5f20df9c3a1758991c0281f95450e7587a8", 101124},
@@ -137,7 +137,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "vollkorn", Name: "Vollkorn", Scripts: "łacina, cyrylica, greka", License: "OFL-1.1",
-		Source: "https://github.com/FAlthausen/Vollkorn-Typeface/tree/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6", Starter: true,
+		Source: "https://github.com/FAlthausen/Vollkorn-Typeface/tree/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6", Starter: true, Tags: []string{"lat", "cyr", "grc"},
 		Description: "Ciemna, ciepła antykwa o mocnym kolorze strony. Dobrze wygląda na e-papierze.",
 		Fonts: []CatalogFont{
 			{"Vollkorn-Regular.ttf", "https://raw.githubusercontent.com/FAlthausen/Vollkorn-Typeface/38ab7a896bd6b163ac7f834ec696d6c68e5dedd6/fonts/ttf/Vollkorn-Regular.ttf", "e31e2437f6c4ebd67d6bbbfa730ba077dbeb10deda42784fbac02559bcbfee45", 419116},
@@ -148,7 +148,7 @@ var fontCatalog = []FontFamily{
 	},
 	{
 		ID: "pt-serif", Name: "PT Serif", Scripts: "łacina, cyrylica", License: "OFL-1.1",
-		Source: "https://github.com/google/fonts/tree/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0", Starter: false,
+		Source: "https://github.com/google/fonts/tree/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0", Starter: false, Tags: []string{"lat", "cyr"},
 		Description: "Pragmatyczna antykwa ParaType o dużej rozróżnialności, dobra przy polsko-rosyjskich tekstach.",
 		Fonts: []CatalogFont{
 			{"PT_Serif-Web-Regular.ttf", "https://raw.githubusercontent.com/google/fonts/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/ptserif/PT_Serif-Web-Regular.ttf", "a4951fade06ff8f09b7673aa81ffb65a8cd409e24d3289a6dc670bc4dda2557a", 359048},

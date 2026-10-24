@@ -61,6 +61,10 @@ const S = {
   // TASK-20: gwiazdki ulubionych.
   plugins: null,       // /api/admin/plugins → lista PluginVersion
   plugView: "main",    // "main" | "ustawienia-wtyczek" (PLUGSET)
+  fontView: "lib",     // zakładka wewnętrzna „Czcionek”: "lib" | "cat" | "dev" (TASK-38)
+  fontScript: "all",   // filtr pisma w katalogu polecanych
+  fontOpen: {},        // rozwinięte rodziny w Bibliotece: nazwa -> true
+  fontAddedOpen: false, // rozwinięta lista „Dodane” w katalogu
   plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
   addSheet: null,      // arkusz „Dodaj wtyczkę”: patrz newSheet()
   plugSel: null,       // zaznaczona wtyczka w macierzy „Zainstalowane”: {dir, dev|null} (TASK-33)
@@ -2968,6 +2972,13 @@ const HOW_TOPICS = [
     h("p", {}, "Postęp czytania i statystyki dalej synchronizuje sam KOReader. koligilo tylko ustawia mu adres serwera i login. Książek nie rusza: te przenosi Libraro albo Syncthing.")]],
   ["plug", "Wtyczki", "Wtyczki", () => [
     h("p", {}, "W panelu przypisujesz czytnikowi wtyczki, ale instaluje je dopiero sam czytnik. Najpierw włączasz na nim „Pozwól instalować wtyczki”, potem potwierdzasz każdą instalację i aktualizację. Wtyczka to program z pełnym dostępem do czytnika, więc koligilo nigdy nie instaluje jej bez Twojej zgody na czytniku.")]],
+  ["fonts", "Czcionki", "Czcionki", () => [
+    h("p", {}, "Czcionki to zwykłe pliki (TTF, OTF), więc koligilo rozsyła je jako dane, nie jako kod. Wgrywasz je w panelu albo dodajesz z katalogu polecanych: serwer pobiera je wtedy sam, z przypiętych adresów autorów, i odrzuca plik o innej sumie niż w katalogu."),
+    h("p", {}, "Czytnik dostaje czcionki dopiero wtedy, gdy sam na to pozwolisz: ", h("b", {}, "Menu → Narzędzia → koligilo → Synchronizuj czcionki"), ". Zgodę da się włączyć tylko na czytniku, nigdy z panelu."),
+    h("ul", {},
+      h("li", {}, "Pliki trafiają do katalogu fonts/koligilo i pojawiają się w KOReaderze po jego ponownym uruchomieniu. Czcionek dodanych ręcznie koligilo nie rusza."),
+      h("li", {}, "Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Limit to 40 MB na plik i 150 MB pobrań na jedną synchronizację."),
+      h("li", {}, "Czcionka wysłana z czytnika czeka na Twoją akceptację w panelu, zanim trafi na inne urządzenia."))]],
   ["sec", "Bezpieczeństwo", "Bezpieczeństwo", () => [
     h("div", { class: "how-tw" }, howTable()),
     h("ul", {},
@@ -2994,7 +3005,7 @@ function howFacts() {
     h("p", { class: "muted small" }, rule));
 }
 // „?” przy nagłówku widoku (TASK-34) prowadzi do tematu w „Jak to działa”. Widoki bez wpisu go nie mają.
-const HOW_HELP = { urzadzenia: "pair", grupy: "conf", wspolne: "conf", konta: "books", wtyczki: "plug" };
+const HOW_HELP = { urzadzenia: "pair", grupy: "conf", wspolne: "conf", konta: "books", wtyczki: "plug", czcionki: "fonts" };
 function helpMark(topic) {
   const t = HOW_TOPICS.find(x => x[0] === topic)[1];
   return h("button", {
@@ -3883,10 +3894,38 @@ function fmtSize(n) {
   return Math.max(1, Math.round(n / 1024)) + " KB";
 }
 const FONT_SRC = { upload: "wgrana z panelu", "urządzenie": "z czytnika", "katalog": "z katalogu polecanych" };
+const FONT_SCRIPTS = [["all", "Wszystkie"], ["lat", "Łacina"], ["cyr", "Cyrylica"], ["grc", "Greka"], ["ara", "Arabski"], ["ipa", "IPA"], ["acc", "Dostępność"]];
 
-async function uploadFonts() {
-  const inp = document.getElementById("f-font-files");
-  const files = inp && inp.files ? [...inp.files] : [];
+// TASK-38: zakładka „Czcionki” w trzech widokach wewnętrznych (Biblioteka · Katalog · Czytniki), z banerem
+// „czeka na akceptację” nad nimi. Kolejność i warianty zatwierdzone w selektorze (wybor/czcionki-panel).
+
+// Rodzina pliku: z serwera (f.family), a bez niej zgadnięta z nazwy („Literata-Bold.ttf” → „Literata”).
+function fontFamily(f) {
+  if (f.family) return f.family;
+  if (f.source === "katalog" && f.source_ref) return f.source_ref; // katalog zapisuje tu nazwę rodziny
+  const stem = f.file.replace(/\.[^.]+$/, "");
+  return (stem.split("-")[0].replace(/_/g, " ").trim()) || stem;
+}
+function fontGroups(fonts) {
+  const m = new Map();
+  for (const f of fonts) {
+    const n = fontFamily(f);
+    if (!m.has(n)) m.set(n, { name: n, files: [] });
+    m.get(n).files.push(f);
+  }
+  return [...m.values()].map(g => {
+    g.files.sort((a, b) => a.file.localeCompare(b.file));
+    g.size = g.files.reduce((n, f) => n + f.size, 0);
+    g.pending = g.files.filter(f => !f.approved);
+    g.active = g.files.filter(f => f.active);
+    const f0 = g.files[0];
+    g.src = (FONT_SRC[f0.source] || f0.source) + (f0.source === "urządzenie" && f0.source_ref ? " · " + f0.source_ref.replace(/ \(.*\)$/, "") : "");
+    return g;
+  }).sort((a, b) => a.name.localeCompare(b.name, "pl"));
+}
+
+async function uploadFonts(files) {
+  files = [...(files || [])];
   if (!files.length) { S.fontMsg = { ok: false, text: "Wybierz plik czcionki (.ttf, .otf, .ttc, .otc)." }; return render(); }
   S.fontBusy = true; S.fontMsg = null; render();
   const done = [], bad = [];
@@ -3922,45 +3961,155 @@ async function addCatalogFamilies(fams) {
   await refresh();
 }
 
-function fontCatalogCard() {
-  const cat = S.fontCat;
-  const busy = S.fontCatBusy || [];
-  const starter = (cat || []).filter(f => f.starter);
-  const starterTodo = starter.filter(f => f.have < f.files);
+async function approveFonts(list) {
+  const bad = [];
+  for (const f of list) {
+    try { await api("POST", `/api/admin/fonts/${f.sha256}/approve`); } catch (e) { bad.push(`${f.file}: ${e.message}`); }
+  }
+  S.fontMsg = bad.length ? { ok: false, text: "Nie udało się zaakceptować: " + bad.join("; ") }
+    : { ok: true, text: list.length === 1 ? `Zaakceptowano „${list[0].file}”.` : `Zaakceptowano ${list.length} ${plPl(list.length, "plik", "pliki", "plików")}.` };
+  return refresh();
+}
+
+async function deleteFonts(list, what) {
+  const n = list.length;
+  if (!confirm(`Usunąć ${n === 1 ? `czcionkę „${list[0].file}”` : `„${what}” (${n} ${plPl(n, "plik", "pliki", "plików")})`} z panelu?\n\nCzytniki, które ${n === 1 ? "ją mają" : "je mają"}, usuną ${n === 1 ? "ten plik" : "te pliki"} przy najbliższej synchronizacji (czcionek dodanych ręcznie to nie dotyczy).`)) return;
+  const bad = [];
+  for (const f of list) {
+    try { await api("DELETE", `/api/admin/fonts/${f.sha256}`); } catch (e) { bad.push(`${f.file}: ${e.message}`); }
+  }
+  S.fontMsg = bad.length ? { ok: false, text: "Nie udało się usunąć: " + bad.join("; ") }
+    : { ok: true, text: n === 1 ? `Usunięto „${list[0].file}”.` : `Usunięto „${what}” (${n} ${plPl(n, "plik", "pliki", "plików")}).` };
+  return refresh();
+}
+
+function fontBanner(pending) {
+  if (!pending.length) return null;
+  const n = pending.length, first = pending[0];
+  const who = (first.source_ref || "czytnik").replace(/ \(.*\)$/, "");
+  const text = n === 1 ? `1 czcionka od czytnika czeka na akceptację: ${first.file} (${who})`
+    : `${n} ${plPl(n, "czcionka", "czcionki", "czcionek")} od czytników czeka na akceptację: ${first.file} i ${n - 1} ${plPl(n - 1, "inna", "inne", "innych")}`;
+  return h("div", { class: "font-banner", role: "status" },
+    h("span", { class: "grow" }, h("b", {}, text)),
+    h("button", { type: "button", id: "b-font-approve", onclick: () => approveFonts(pending) }, n === 1 ? "Zaakceptuj" : "Zaakceptuj wszystkie"),
+    h("button", { type: "button", class: "ghost", onclick: () => deleteFonts(pending, "czcionki od czytników") }, "Usuń"));
+}
+
+// Jedno zdanie stanu pod tytułem: ile plików, kto czeka, co wymaga uwagi.
+function fontSentence(fonts, active, pending) {
+  const devs = S.state.devices || [];
+  const reported = d => d.font_report_at && !d.font_report_at.startsWith("0001");
+  const p = [];
+  const fams = new Set(fonts.filter(f => f.approved).map(fontFamily)).size;
+  p.push(active.length ? `${active.length} ${plPl(active.length, "plik", "pliki", "plików")} z ${fams} ${plPl(fams, "rodziny", "rodzin", "rodzin")}` : "brak czcionek w panelu");
+  const wait = devs.filter(d => d.fonts_allowed && active.length && !reported(d)).length;
+  if (wait) p.push(`${wait} ${plPl(wait, "czytnik czeka", "czytniki czekają", "czytników czeka")} na pierwszą synchronizację`);
+  const noc = devs.filter(d => !d.fonts_allowed).length;
+  if (noc) p.push(`${noc} ${plPl(noc, "czytnik bez zgody", "czytniki bez zgody", "czytników bez zgody")}`);
+  if (pending.length) p.push(`${pending.length} ${plPl(pending.length, "czcionka czeka", "czcionki czekają", "czcionek czeka")} na akceptację`);
+  return h("p", { class: "muted", id: "font-sentence" }, p.join(" · "));
+}
+
+const FONT_VIEWS = [["lib", "Biblioteka"], ["cat", "Katalog"], ["dev", "Czytniki"]];
+function showFontView(id) { S.fontView = id; render(); document.getElementById("fonttab-" + id)?.focus(); }
+function fontTablist(cur, counts) {
+  return h("div", { class: "tabs", role: "tablist", "aria-label": "Czcionki" },
+    FONT_VIEWS.map(([id, label], i) => h("button", {
+      type: "button", role: "tab", id: "fonttab-" + id, "aria-selected": String(cur === id),
+      "aria-controls": "fontpanel", tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
+      onclick: () => showFontView(id),
+      onkeydown: ev => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
+        if (d == null && !home && !end) return;
+        ev.preventDefault();
+        showFontView(FONT_VIEWS[home ? 0 : end ? FONT_VIEWS.length - 1 : (i + d + FONT_VIEWS.length) % FONT_VIEWS.length][0]);
+      },
+    }, label, counts[id] != null && ` (${counts[id]})`)));
+}
+
+function fontDropzone() {
+  const over = (ev, on) => { ev.preventDefault(); ev.currentTarget.classList.toggle("over", on); };
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Wgraj czcionkę"),
+    h("div", { class: "dropzone", id: "f-drop",
+      ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
+      ondrop: ev => { over(ev, false); uploadFonts(ev.dataTransfer.files); } },
+      h("p", {}, h("b", {}, S.fontBusy ? "Wgrywam…" : "Przeciągnij tu pliki czcionek")),
+      h("p", { class: "muted small" }, "albo"),
+      h("button", { type: "button", class: "primary", disabled: S.fontBusy, onclick: () => document.getElementById("f-font-files").click() }, "Wybierz pliki…"),
+      h("input", { type: "file", id: "f-font-files", accept: ".ttf,.otf,.ttc,.otc", multiple: true, hidden: true, "aria-label": "Pliki czcionek",
+        onchange: ev => uploadFonts(ev.target.files) })),
+    h("p", { class: "muted small", style: "margin-bottom:0" }, "TTF, OTF, TTC, OTC, do 40 MB każdy. Nowy plik o tej samej nazwie zastępuje poprzedni. ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => showHow("fonts") }, "Jak to działa ›")));
+}
+
+function fontFamilyRow(g) {
+  const open = !!S.fontOpen[g.name], n = g.files.length;
+  const badge = g.pending.length ? h("span", { class: "badge warn" }, "czeka na akceptację")
+    : g.active.length ? h("span", { class: "badge" }, "na czytnikach")
+      : h("span", { class: "badge soon", title: "Jest nowsza wersja pliku o tej samej nazwie" }, "zastąpiona");
+  return h("li", { class: "fam" },
+    h("div", { class: "row" },
+      h("button", { type: "button", class: "fam-tog", "aria-expanded": String(open),
+        onclick: () => { S.fontOpen[g.name] = !open; render(); } }, open ? "▾ " : "▸ ", h("b", {}, g.name)),
+      h("span", { class: "muted small grow" }, ` · ${n} ${plPl(n, "plik", "pliki", "plików")} · ${fmtSize(g.size)} · ${g.src}`),
+      badge,
+      h("button", { type: "button", class: "danger", onclick: () => deleteFonts(g.files, g.name) }, n > 1 ? "Usuń rodzinę" : "Usuń")),
+    open && h("ul", { class: "plain fam-files" }, g.files.map(f => h("li", { class: "row" },
+      h("span", { class: "grow" }, h("b", {}, f.file)),
+      h("span", { class: "muted small" }, fmtSize(f.size)),
+      h("button", { type: "button", class: "danger", onclick: () => deleteFonts([f], f.file) }, "Usuń")))));
+}
+
+function fontLibraryPane(fonts) {
+  const groups = fontGroups(fonts);
+  return [
+    fontDropzone(),
+    h("section", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Czcionki w panelu"),
+      groups.length === 0
+        ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Wgraj plik, dodaj kroje z katalogu albo wyślij czcionkę z czytnika (menu koligilo → Wyślij czcionkę na serwer).")
+        : h("ul", { class: "plain" }, groups.map(fontFamilyRow)))];
+}
+
+function fontCatalogRow(f, busy, name) {
+  const done = f.have === f.files, working = busy.includes(f.id);
+  return h("li", { class: "row" },
+    h("div", { class: "grow" },
+      h("b", {}, f.name),
+      h("span", { class: "muted small" }, ` · ${f.scripts} · ${fmtSize(f.size)} · `),
+      h("a", { href: f.source, target: "_blank", rel: "noopener noreferrer", class: "small" }, f.license),
+      !name && h("div", { class: "muted small" }, f.description)),
+    h("button", { type: "button", disabled: done || busy.length > 0, onclick: () => addCatalogFamilies([f]) },
+      done ? "Dodana" : working ? "Pobieram…" : f.have > 0 ? "Dopełnij" : "Dodaj"));
+}
+
+function fontCatalogPane() {
+  const cat = S.fontCat, busy = S.fontCatBusy || [];
+  if (!cat) return h("p", { class: "loading" }, "Wczytuję katalog…");
+  const done = f => f.have === f.files, sc = S.fontScript || "all";
+  const hasTag = (f, id) => id === "all" || (f.tags || []).includes(id);
+  const starterTodo = cat.filter(f => f.starter && !done(f));
+  const added = cat.filter(done), todo = cat.filter(f => !done(f) && hasTag(f, sc));
   return h("section", { class: "card" },
     h("h3", { style: "margin-top:0" }, "Polecane do czytania"),
-    h("p", { class: "muted small", style: "margin-top:0" },
-      "Sprawdzone kroje o otwartej licencji (SIL OFL), z repozytoriów autorów. Serwer pobiera je sam, z przypiętych adresów, i odrzuca plik o innej sumie niż w katalogu. Każda rodzina to cztery style (zwykły, kursywa, pogrubiony, pogrubiona kursywa)."),
-    !cat ? h("p", { class: "loading" }, "Wczytuję katalog…") : [
-      starter.length > 0 && h("div", { class: "row", style: "margin-bottom:8px" },
-        h("button", { type: "button", class: "primary", disabled: busy.length > 0 || starterTodo.length === 0,
-          onclick: () => addCatalogFamilies(starterTodo) },
-          starterTodo.length === 0 ? "Zestaw startowy jest dodany"
-            : busy.length ? "Pobieram…" : `Dodaj zestaw startowy (${starterTodo.map(f => f.name).join(", ")} · ${fmtSize(starterTodo.reduce((n, f) => n + f.size, 0))})`)),
-      h("ul", { class: "plain" }, cat.map(f => {
-        const done = f.have === f.files, working = busy.includes(f.id);
-        return h("li", { class: "row" },
-          h("div", { class: "grow" },
-            h("b", {}, f.name),
-            h("span", { class: "muted small" }, ` · ${f.scripts} · ${fmtSize(f.size)} · `),
-            h("a", { href: f.source, target: "_blank", rel: "noopener noreferrer", class: "small" }, f.license),
-            h("div", { class: "muted small" }, f.description)),
-          h("button", { type: "button", disabled: done || busy.length > 0, onclick: () => addCatalogFamilies([f]) },
-            done ? "Dodana" : working ? "Pobieram…" : f.have > 0 ? "Dopełnij" : "Dodaj"));
-      }))]);
-}
-
-async function approveFont(f) {
-  try { await api("POST", `/api/admin/fonts/${f.sha256}/approve`); S.fontMsg = { ok: true, text: `Zaakceptowano „${f.file}”.` }; }
-  catch (e) { S.fontMsg = { ok: false, text: e.message }; }
-  refresh();
-}
-
-async function deleteFont(f) {
-  if (!confirm(`Usunąć czcionkę „${f.file}” z panelu?\n\nCzytniki, które ją mają, usuną ten plik przy najbliższej synchronizacji (czcionek dodanych ręcznie to nie dotyczy).`)) return;
-  try { await api("DELETE", `/api/admin/fonts/${f.sha256}`); S.fontMsg = { ok: true, text: `Usunięto „${f.file}”.` }; }
-  catch (e) { S.fontMsg = { ok: false, text: e.message }; }
-  refresh();
+    h("p", { class: "muted small", style: "margin-top:0" }, "Kroje o otwartej licencji (SIL OFL), po cztery style. Serwer pobiera je sam z przypiętych adresów. ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => showHow("fonts") }, "Jak to działa ›")),
+    h("div", { class: "fchips", role: "group", "aria-label": "Filtr pisma" }, FONT_SCRIPTS.map(([id, label]) => {
+      const n = cat.filter(f => !done(f) && hasTag(f, id)).length;
+      if (!n && sc !== id) return null; // pusty filtr nic nie daje
+      return h("button", { type: "button", "aria-pressed": String(sc === id), onclick: () => { S.fontScript = id; render(); } }, `${label} (${n})`);
+    })),
+    cat.some(f => f.starter) && h("div", { class: "row", style: "margin-bottom:8px" },
+      h("button", { type: "button", class: "primary", disabled: busy.length > 0 || starterTodo.length === 0, onclick: () => addCatalogFamilies(starterTodo) },
+        starterTodo.length === 0 ? "Zestaw startowy jest dodany"
+          : busy.length ? "Pobieram…" : `Dodaj zestaw startowy (${starterTodo.map(f => f.name).join(", ")} · ${fmtSize(starterTodo.reduce((n, f) => n + f.size, 0))})`)),
+    added.length > 0 && h("div", {},
+      h("button", { type: "button", class: "linkbtn", "aria-expanded": String(!!S.fontAddedOpen), onclick: () => { S.fontAddedOpen = !S.fontAddedOpen; render(); } },
+        `${S.fontAddedOpen ? "▾" : "▸"} Dodane (${added.length}): ${added.map(f => f.name).join(", ")}`),
+      S.fontAddedOpen && h("ul", { class: "plain" }, added.map(f => fontCatalogRow(f, busy, true)))),
+    todo.length === 0 ? h("p", { class: "muted" }, sc === "all" ? "Wszystko z katalogu jest już dodane." : "Wszystko z tego filtra jest już dodane.")
+      : h("ul", { class: "plain" }, todo.map(f => fontCatalogRow(f, busy, false))));
 }
 
 function fontDeviceRow(d, active) {
@@ -3976,45 +4125,25 @@ function fontDeviceRow(d, active) {
   return h("li", {}, h("b", {}, d.name), " — ", h("span", { class: cls }, state));
 }
 
+function fontDevicesPane(active) {
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Czytniki"),
+    S.state.devices.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
+      : h("ul", { class: "plain" }, S.state.devices.map(d => fontDeviceRow(d, active))));
+}
+
 function fontsTab() {
   const fonts = S.state.fonts || [];
   const active = fonts.filter(f => f.active);
   const pending = fonts.filter(f => !f.approved);
+  const cur = FONT_VIEWS.some(([id]) => id === S.fontView) ? S.fontView : "lib";
+  const body = cur === "lib" ? fontLibraryPane(fonts) : cur === "cat" ? fontCatalogPane() : fontDevicesPane(active);
   return h("div", {},
-    h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, "Wgraj czcionkę"),
-      h("p", { class: "muted small", style: "margin-top:0" },
-        "Pliki TTF, OTF, TTC albo OTC, do 40 MB każdy. Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Czcionki instalują się w katalogu fonts/koligilo i pojawiają się w KOReaderze po jego ponownym uruchomieniu."),
-      h("div", { class: "row" },
-        h("input", { type: "file", id: "f-font-files", accept: ".ttf,.otf,.ttc,.otc", multiple: true, "aria-label": "Pliki czcionek" }),
-        h("button", { type: "button", class: "primary", disabled: S.fontBusy, onclick: uploadFonts }, S.fontBusy ? "Wgrywam…" : "Wgraj")),
-      S.fontMsg && h("p", { class: S.fontMsg.ok ? "ok" : "err", role: "status" }, S.fontMsg.text)),
-    fontCatalogCard(),
-    pending.length > 0 && h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, `Czeka na akceptację (${pending.length})`),
-      h("p", { class: "muted small", style: "margin-top:0" }, "Te czcionki wysłały czytniki. Dopóki ich nie zaakceptujesz, nie trafią na inne urządzenia."),
-      h("ul", { class: "plain" }, pending.map(f => h("li", { class: "row" },
-        h("span", { class: "grow" }, h("b", {}, f.file), h("span", { class: "muted small" }, ` · ${fmtSize(f.size)} · ${f.source_ref || "czytnik"}`)),
-        h("button", { type: "button", class: "primary", onclick: () => approveFont(f) }, "Zaakceptuj"),
-        h("button", { type: "button", class: "danger", onclick: () => deleteFont(f) }, "Usuń"))))),
-    h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, "Czcionki w panelu"),
-      fonts.length === 0
-        ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Wgraj plik albo wyślij czcionkę z czytnika (menu koligilo → Wyślij czcionkę na serwer).")
-        : h("table", { class: "matrix plugins" },
-          h("thead", {}, h("tr", {}, ["Plik", "Rozmiar", "Źródło", "Stan", ""].map(t => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, fonts.map(f => h("tr", {},
-            h("td", {}, h("b", {}, f.file)),
-            h("td", {}, fmtSize(f.size)),
-            h("td", { class: "muted small" }, (FONT_SRC[f.source] || f.source) + (f.source_ref ? " · " + f.source_ref : "")),
-            h("td", {}, !f.approved ? h("span", { class: "badge warn" }, "czeka na akceptację")
-              : f.active ? h("span", { class: "badge" }, "na czytnikach")
-              : h("span", { class: "badge soon", title: "Jest nowsza wersja pliku o tej samej nazwie" }, "zastąpiona")),
-            h("td", {}, h("button", { type: "button", class: "danger", onclick: () => deleteFont(f) }, "Usuń"))))))),
-    h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, "Czytniki"),
-      S.state.devices.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
-        : h("ul", { class: "plain" }, S.state.devices.map(d => fontDeviceRow(d, active)))));
+    fontBanner(pending),
+    fontSentence(fonts, active, pending),
+    fontTablist(cur, { lib: fonts.length, dev: S.state.devices.length }),
+    S.fontMsg && h("p", { class: S.fontMsg.ok ? "ok" : "err", role: "status" }, S.fontMsg.text),
+    h("div", { id: "fontpanel", role: "tabpanel", "aria-labelledby": "fonttab-" + cur }, body));
 }
 
 const TABS = VIEWS.map(v => v[0]);

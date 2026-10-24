@@ -34,8 +34,9 @@ type FontFamily struct {
 	Description string
 	Scripts     string
 	License     string
-	Source      string // strona repozytorium (przypięta do commitu)
-	Starter     bool   // wchodzi do „zestawu startowego”
+	Source      string   // strona repozytorium (przypięta do commitu)
+	Starter     bool     // wchodzi do „zestawu startowego”
+	Tags        []string // pisma i cechy do filtra w panelu: lat, cyr, grc, ara, ipa, acc (dostępność)
 	Fonts       []CatalogFont
 }
 
@@ -154,7 +155,7 @@ func (s *Server) adminFontCatalog(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"id": f.ID, "name": f.Name, "description": f.Description, "scripts": f.Scripts,
-			"license": f.License, "source": f.Source, "starter": f.Starter,
+			"license": f.License, "source": f.Source, "starter": f.Starter, "tags": f.Tags,
 			"files": len(f.Fonts), "have": n, "size": f.totalSize(),
 		})
 	}
