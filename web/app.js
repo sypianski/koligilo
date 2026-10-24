@@ -2978,7 +2978,8 @@ const HOW_TOPICS = [
     h("ul", {},
       h("li", {}, "Pliki trafiają do katalogu fonts/koligilo i pojawiają się w KOReaderze po jego ponownym uruchomieniu. Czcionek dodanych ręcznie koligilo nie rusza."),
       h("li", {}, "Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Limit to 40 MB na plik i 150 MB pobrań na jedną synchronizację."),
-      h("li", {}, "Czcionka wysłana z czytnika czeka na Twoją akceptację w panelu, zanim trafi na inne urządzenia."))]],
+      h("li", {}, "Czcionka wysłana z czytnika czeka na Twoją akceptację w panelu, zanim trafi na inne urządzenia."),
+      h("li", {}, "W zakładce „Czytniki” możesz wyłączyć rodzinę na wybranym czytniku. Dostaje ją wtedy tylko reszta, a ten czytnik usuwa jej pliki (tylko te od koligilo) przy następnej synchronizacji."))]],
   ["sec", "Bezpieczeństwo", "Bezpieczeństwo", () => [
     h("div", { class: "how-tw" }, howTable()),
     h("ul", {},
@@ -4160,11 +4161,60 @@ function fontDeviceRow(d, active) {
   return h("li", {}, h("b", {}, d.name), " — ", h("span", { class: cls }, state));
 }
 
-function fontDevicesPane(active) {
-  return h("section", { class: "card" },
-    h("h3", { style: "margin-top:0" }, "Czytniki"),
-    S.state.devices.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
-      : h("ul", { class: "plain" }, S.state.devices.map(d => fontDeviceRow(d, active))));
+// Przydział rodzin do czytników (TASK-38): przełącznik wyłącza rodzinę tylko
+// jako filtr stanu docelowego — czytnik usunie jej pliki z manifestu koligilo
+// przy następnej synchronizacji. Czytnik bez zgody na czcionki dostaje „—”.
+async function assignFont(dev, family, on, text) {
+  try {
+    await api("POST", "/api/admin/fonts/assign", { device: dev, family, on });
+    S.fontMsg = { ok: true, text };
+  } catch (e) { S.fontMsg = { ok: false, text: `Nie udało się: ${e.message}` }; }
+  return refresh();
+}
+
+function fontMatrix(groups, devs) {
+  const on = (d, name) => !(d.fonts_off || []).includes(name);
+  const ready = devs.filter(d => d.fonts_allowed);
+  const head = h("thead", {}, h("tr", {},
+    h("th", { scope: "col" }, "Rodzina"),
+    devs.map(d => h("th", { scope: "col" }, d.name)),
+    ready.length > 1 && h("th", { scope: "col" }, "Wszystkie")));
+  const rows = groups.map(g => {
+    const n = ready.filter(d => on(d, g.name)).length;
+    const all = h("input", { type: "checkbox", checked: n === ready.length,
+      "aria-label": `${g.name} na wszystkich czytnikach`,
+      onchange: ev => assignFont("*", g.name, ev.target.checked,
+        `${ev.target.checked ? "Włączono" : "Wyłączono"} „${g.name}” na wszystkich czytnikach.`) });
+    all.indeterminate = n > 0 && n < ready.length;
+    return h("tr", {},
+      h("th", { scope: "row", class: "gname" }, g.name),
+      devs.map(d => h("td", { class: "cell" }, !d.fonts_allowed
+        ? h("span", { class: "muted", title: "Czytnik nie dał zgody na czcionki" }, "—")
+        : h("label", { class: "switch", title: `${g.name} — ${d.name}` },
+          h("input", { type: "checkbox", checked: on(d, g.name), "aria-label": `${g.name} na ${d.name}`,
+            onchange: ev => assignFont(d.id, g.name, ev.target.checked, ev.target.checked
+              ? `Włączono „${g.name}” na ${d.name}. Pliki trafią na czytnik przy następnej synchronizacji.`
+              : `Wyłączono „${g.name}” na ${d.name}. Czytnik usunie jej pliki przy następnej synchronizacji.`) }),
+          h("span", {}))),
+      ),
+      ready.length > 1 && h("td", { class: "cell" },
+        h("label", { class: "switch" + (all.indeterminate ? " part" : ""), title: "Wszystkie czytniki" }, all, h("span", {}))));
+  });
+  return h("div", { class: "matrix-wrap" },
+    h("table", { class: "matrix", "aria-label": "Rodziny czcionek na czytnikach" }, head, h("tbody", {}, rows)));
+}
+
+function fontDevicesPane(active, fonts) {
+  const devs = S.state.devices, groups = fontGroups(fonts).filter(g => g.active.length);
+  return [
+    h("section", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Czytniki"),
+      devs.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
+        : h("ul", { class: "plain" }, devs.map(d => fontDeviceRow(d, active)))),
+    devs.length > 0 && groups.length > 0 && h("section", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Co gdzie"),
+      h("p", { class: "muted small", style: "margin-top:0" }, "Domyślnie każdy czytnik ze zgodą dostaje wszystkie rodziny. Wyłącz rodzinę tam, gdzie jej nie chcesz."),
+      fontMatrix(groups, devs))];
 }
 
 function fontsTab() {
@@ -4172,7 +4222,7 @@ function fontsTab() {
   const active = fonts.filter(f => f.active);
   const pending = fonts.filter(f => !f.approved);
   const cur = FONT_VIEWS.some(([id]) => id === S.fontView) ? S.fontView : "lib";
-  const body = cur === "lib" ? fontLibraryPane(fonts) : cur === "cat" ? fontCatalogPane() : fontDevicesPane(active);
+  const body = cur === "lib" ? fontLibraryPane(fonts) : cur === "cat" ? fontCatalogPane() : fontDevicesPane(active, fonts);
   return h("div", {},
     fontBanner(pending),
     fontSentence(fonts, active, pending),

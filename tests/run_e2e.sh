@@ -54,6 +54,12 @@ ok "czcionki (komputer): bez zgody czytnika brak listy" '[[ $(curl -s -H "Author
 ok "czcionki (komputer): za zgodą czytnik dostaje listę" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?fonts_allowed=1") == *"/api/v1/fonts/$FSHA"* ]]'
 ok "czcionki (komputer): pobranie identyczne z wgranym" 'curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/fonts/$FSHA" | cmp -s - "$TMP/Moja.ttf"'
 ok "czcionki (komputer): nasłuch czytników nie wystawia panelu czcionek" '[ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$DP/api/admin/fonts")" = 404 ]'
+# podgląd kroju i przydział rodziny (TASK-38): bajty przez panel, wyłączenie rodziny zdejmuje ją z celu czytnika
+ok "czcionki (komputer): panel oddaje bajty do podglądu" 'curl -s "${H[@]:0:4}" "http://127.0.0.1:$PP/api/admin/fonts/$FSHA/file" | cmp -s - "$TMP/Moja.ttf"'
+curl -s "${H[@]:0:4}" -H "Content-Type: application/json" -d '{"device":"*","family":"Moja","on":false}' "http://127.0.0.1:$PP/api/admin/fonts/assign" >/dev/null
+ok "czcionki (komputer): wyłączona rodzina znika z celu czytnika" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?fonts_allowed=1") != *"/api/v1/fonts/$FSHA"* ]]'
+curl -s "${H[@]:0:4}" -H "Content-Type: application/json" -d '{"device":"*","family":"Moja","on":true}' "http://127.0.0.1:$PP/api/admin/fonts/assign" >/dev/null
+ok "czcionki (komputer): włączona rodzina wraca do celu" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?fonts_allowed=1") == *"/api/v1/fonts/$FSHA"* ]]'
 # samoaktualizacja koligilo (TASK-39): wskazanie tylko za zgodą czytnika, suma zgodna z serwowanym zipem
 SUINFO=$(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?self_update=1")
 SUSHA=$(echo "$SUINFO" | grep -o '"self_update":{[^}]*}' | grep -o '"sha256":"[0-9a-f]*"' | cut -d'"' -f4)

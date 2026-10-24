@@ -281,3 +281,118 @@ func TestAdminFontFile(t *testing.T) {
 		}
 	}
 }
+
+func TestFontFamilyName(t *testing.T) {
+	for _, c := range []struct {
+		f    FontFile
+		want string
+	}{
+		{FontFile{File: "Charis-Regular.ttf"}, "Charis"},
+		{FontFile{File: "PT_Serif-Web-Regular.ttf"}, "PT Serif"},
+		{FontFile{File: "Moja.otf"}, "Moja"},
+		{FontFile{File: "-x.ttf"}, "-x"},
+		{FontFile{File: "AtkinsonHyperlegible-Regular.ttf", Source: SrcCatalog, SourceRef: "Atkinson Hyperlegible"}, "Atkinson Hyperlegible"},
+		{FontFile{File: "Lora-Bold.ttf", Source: SrcCatalog}, "Lora"},
+	} {
+		if got := fontFamilyName(&c.f); got != c.want {
+			t.Errorf("%s: %q, chciałem %q", c.f.File, got, c.want)
+		}
+	}
+}
+
+// Przydział rodzin (TASK-38): wyłączona rodzina znika ze stanu docelowego i z
+// pobierania tylko u tego czytnika, a włączenie ją przywraca.
+func TestFontAssign(t *testing.T) {
+	e := newPluginEnv(t)
+	d1, tok1, _ := e.s.st.Provision("Kobo", "", "", "")
+	d2, tok2, _ := e.s.st.Provision("Kindle", "", "", "")
+	shaA := e.fontOK("Alfa-Regular.ttf", fakeFont("OTTO", 1))
+	e.fontOK("Alfa-Bold.ttf", fakeFont("OTTO", 2))
+	e.fontOK("Beta-Regular.ttf", fakeFont("OTTO", 3))
+	names := func(tok string) []string {
+		var out []string
+		fs, _ := e.syncFonts(tok, true)["fonts"].([]any)
+		for _, f := range fs {
+			out = append(out, f.(map[string]any)["file"].(string))
+		}
+		return out
+	}
+	assign := func(dev, fam string, on bool) int {
+		b, _ := json.Marshal(map[string]any{"device": dev, "family": fam, "on": on})
+		return e.do(e.admin, "POST", "/api/admin/fonts/assign", bytes.NewReader(b), "application/json").Code
+	}
+	if n := len(names(tok1)); n != 3 {
+		t.Fatalf("domyślnie wszystko: %v", names(tok1))
+	}
+	if c := assign(d1.ID, "Alfa", false); c != 200 {
+		t.Fatalf("wyłączenie: %d", c)
+	}
+	if got := names(tok1); len(got) != 1 || got[0] != "Beta-Regular.ttf" {
+		t.Errorf("czytnik 1 po wyłączeniu Alfy: %v", got)
+	}
+	if n := len(names(tok2)); n != 3 {
+		t.Errorf("czytnik 2 nie powinien się zmienić: %d", n)
+	}
+	if rec := e.do(tok1, "GET", "/api/v1/fonts/"+shaA, nil, ""); rec.Code != 403 {
+		t.Errorf("pobranie wyłączonej rodziny: %d", rec.Code)
+	}
+	if rec := e.do(tok2, "GET", "/api/v1/fonts/"+shaA, nil, ""); rec.Code != 200 {
+		t.Errorf("pobranie u czytnika bez wyłączenia: %d", rec.Code)
+	}
+	// panel widzi rodzinę z serwera i listę wyłączonych
+	var st struct {
+		Devices []struct {
+			ID       string   `json:"id"`
+			FontsOff []string `json:"fonts_off"`
+		} `json:"devices"`
+	}
+	json.Unmarshal(e.do(e.admin, "GET", "/api/admin/state", nil, "").Body.Bytes(), &st)
+	var off []string
+	for _, d := range st.Devices {
+		if d.ID == d1.ID {
+			off = d.FontsOff
+		}
+	}
+	if len(off) != 1 || off[0] != "Alfa" {
+		t.Errorf("fonts_off w stanie panelu: %v (%+v)", off, st)
+	}
+	var fl struct {
+		Fonts []struct{ File, Family string } `json:"fonts"`
+	}
+	json.Unmarshal(e.do(e.admin, "GET", "/api/admin/fonts", nil, "").Body.Bytes(), &fl)
+	for _, f := range fl.Fonts {
+		if f.Family == "" {
+			t.Errorf("brak family przy %s", f.File)
+		}
+	}
+	// powtórzenie niczego nie psuje, nieznana rodzina i urządzenie
+	if c := assign(d1.ID, "Alfa", false); c != 200 {
+		t.Errorf("powtórne wyłączenie: %d", c)
+	}
+	if n := len(e.s.st.S.Devices[d1.ID].FontsOff); n != 1 {
+		t.Errorf("duplikat w FontsOff: %d", n)
+	}
+	if c := assign(d1.ID, "Nieznana", false); c != 404 {
+		t.Errorf("nieznana rodzina: %d", c)
+	}
+	if c := assign("nie-ma", "Alfa", true); c != 400 {
+		t.Errorf("nieznane urządzenie: %d", c)
+	}
+	if c := assign(d1.ID, "   ", true); c != 400 {
+		t.Errorf("pusta rodzina: %d", c)
+	}
+	// "*" wyłącza u wszystkich, włączenie przywraca
+	if c := assign("*", "Beta", false); c != 200 {
+		t.Fatalf("wyłączenie u wszystkich: %d", c)
+	}
+	if got := names(tok2); len(got) != 2 {
+		t.Errorf("czytnik 2 po wyłączeniu Bety: %v", got)
+	}
+	if c := assign(d1.ID, "Alfa", true); c != 200 {
+		t.Fatalf("włączenie: %d", c)
+	}
+	if got := names(tok1); len(got) != 2 {
+		t.Errorf("czytnik 1 po włączeniu Alfy (Beta nadal off): %v", got)
+	}
+	_ = d2
+}

@@ -42,6 +42,7 @@ type Device struct {
 	FontsAllowed  bool            `json:"fonts_allowed"`
 	FontInventory []InstalledFont `json:"font_inventory,omitempty"`
 	FontReportAt  *time.Time      `json:"font_report_at,omitempty"`
+	FontsOff      []string        `json:"fonts_off,omitempty"` // rodziny wyłączone dla tego czytnika (TASK-38); domyślnie wszystkie włączone
 }
 
 // Screen to ekran czytnika widziany przez KOReadera (piksele i ppi). Panel buduje

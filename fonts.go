@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,7 @@ type FontFile struct {
 	Approved  bool      `json:"approved"`             // czcionka z urządzenia czeka na admina
 	Added     time.Time `json:"added"`
 	Active    bool      `json:"active,omitempty"` // tylko w odpowiedzi: ta wersja trafia na czytniki
+	Family    string    `json:"family,omitempty"` // tylko w odpowiedzi: rodzina (fontFamilyName)
 }
 
 // InstalledFont — wpis inwentarza czcionek zarządzanych przez koligilo na czytniku.
@@ -165,6 +167,7 @@ func (st *Store) ListFonts() []FontFile {
 	for _, v := range st.S.Fonts {
 		c := *v
 		c.Active = act[v.File] == v
+		c.Family = fontFamilyName(v)
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -223,6 +226,9 @@ func (st *Store) FontTarget(d *Device, allowed bool) []FontFile {
 		return out
 	}
 	for _, v := range st.activeFontsLocked() {
+		if d.fontOff(fontFamilyName(v)) {
+			continue
+		}
 		out = append(out, *v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
@@ -261,10 +267,93 @@ func (st *Store) FontForDevice(d *Device, sha string) (string, int) {
 	if v == nil {
 		return "", 404
 	}
-	if !v.Approved {
+	if !v.Approved || d.fontOff(fontFamilyName(v)) {
 		return "", 403
 	}
 	return st.fontPath(sha), 200
+}
+
+// fontFamilyName to rodzina pliku, wspólna dla panelu i filtra czytników.
+// Katalog zapisuje nazwę rodziny w SourceRef; reszta dostaje ją z nazwy pliku
+// (początek przed pierwszym „-”, „_” jako spacja). Ta sama reguła jest w
+// web/app.js (fontFamily) — zmieniaj obie naraz. Nie czytamy tabeli `name`
+// z pliku: panel i serwer musiałyby się zgadzać co do każdego dziwnego kroju.
+func fontFamilyName(f *FontFile) string {
+	if f.Source == SrcCatalog && f.SourceRef != "" {
+		return f.SourceRef
+	}
+	stem := strings.TrimSuffix(f.File, filepath.Ext(f.File))
+	head, _, _ := strings.Cut(stem, "-")
+	if n := strings.TrimSpace(strings.ReplaceAll(head, "_", " ")); n != "" {
+		return n
+	}
+	return stem
+}
+
+func (d *Device) fontOff(family string) bool {
+	for _, x := range d.FontsOff {
+		if x == family {
+			return true
+		}
+	}
+	return false
+}
+
+const fontsOffMax = 200
+
+// SetFontFamily włącza albo wyłącza rodzinę dla czytnika (devID "*" = wszystkie).
+// Wyłączenie wyrzuca jej pliki ze stanu docelowego, więc czytnik usunie je przy
+// następnej synchronizacji (tylko te z manifestu koligilo). Wyłączyć można
+// wyłącznie rodzinę, która jest w magazynie.
+func (st *Store) SetFontFamily(devID, family string, on bool) error {
+	family = strings.TrimSpace(family)
+	if family == "" || len(family) > 100 || strings.ContainsAny(family, "\x00\n\r") {
+		return errors.New("zła nazwa rodziny")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !on {
+		found := false
+		for _, v := range st.S.Fonts {
+			if fontFamilyName(v) == family {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errNotFound
+		}
+	}
+	var targets []*Device
+	if devID == "*" {
+		for _, d := range st.S.Devices {
+			targets = append(targets, d)
+		}
+	} else if d := st.S.Devices[devID]; d != nil {
+		targets = []*Device{d}
+	} else {
+		return errors.New("nieznane urządzenie")
+	}
+	for _, d := range targets {
+		off := d.fontOff(family)
+		switch {
+		case on && off:
+			next := make([]string, 0, len(d.FontsOff))
+			for _, x := range d.FontsOff {
+				if x != family {
+					next = append(next, x)
+				}
+			}
+			d.FontsOff = next
+		case !on && !off:
+			if len(d.FontsOff) >= fontsOffMax {
+				return errors.New("za dużo wyłączonych rodzin dla jednego czytnika")
+			}
+			d.FontsOff = append(append([]string(nil), d.FontsOff...), family)
+			sort.Strings(d.FontsOff)
+		}
+	}
+	return st.saveLocked()
 }
 
 // FontStored: ścieżka pliku z magazynu, o ile wersja jest zapisana (bez względu
@@ -288,6 +377,7 @@ func (s *Server) fontRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/fonts", s.device(s.deviceFontUpload))
 	m.HandleFunc("GET /api/admin/fonts", s.admin(s.adminFonts))
 	m.HandleFunc("POST /api/admin/fonts", s.admin(s.adminFontUpload))
+	m.HandleFunc("POST /api/admin/fonts/assign", s.admin(s.adminFontAssign))
 	m.HandleFunc("GET /api/admin/fonts/{sha}/file", s.admin(s.adminFontFile))
 	m.HandleFunc("POST /api/admin/fonts/{sha}/approve", s.admin(s.adminFontApprove))
 	m.HandleFunc("DELETE /api/admin/fonts/{sha}", s.admin(s.adminFontDelete))
@@ -340,6 +430,30 @@ func (s *Server) adminFontFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, sha, time.Time{}, f)
+}
+
+// adminFontAssign: {"device": "<id>" | "*", "family": "Literata", "on": false}.
+// Przydział to tylko filtr stanu docelowego; zgodę na czcionki nadal daje
+// wyłącznie czytnik (PC-018).
+func (s *Server) adminFontAssign(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Device string `json:"device"`
+		Family string `json:"family"`
+		On     bool   `json:"on"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "zły JSON"})
+		return
+	}
+	err := s.st.SetFontFamily(in.Device, in.Family, in.On)
+	switch {
+	case errors.Is(err, errNotFound):
+		writeJSON(w, 404, map[string]string{"error": "nie ma takiej rodziny w magazynie"})
+	case err != nil:
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+	default:
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	}
 }
 
 func fontError(w http.ResponseWriter, err error) bool {
