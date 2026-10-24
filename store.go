@@ -74,6 +74,11 @@ type State struct {
 	// instalacji — tylko zakładkę/filtr w panelu. Przechodzi przez
 	// export/import razem z resztą State (transfer.go), bez osobnego kodu.
 	Favorites []string `json:"favorites,omitempty"`
+	// SharedPlugins (TASK-33, PC-017): „wtyczki wspólne” — katalog → sha256 zaakceptowanej
+	// wersji. Każdy nowo sparowany czytnik dostaje je jako stan docelowy (applySharedLocked),
+	// a zmiana listy trafia też do już sparowanych (SetSharedPlugins). To tylko stan
+	// docelowy: zgodę i potwierdzenie instalacji nadal daje wyłącznie czytnik (PC-004).
+	SharedPlugins map[string]string `json:"shared_plugins,omitempty"`
 	// MovedTo: dane przeniesiono na inny serwer (TASK-15). Czytnik ze znanym
 	// tokenem dostaje na /api/v1/* odpowiedź 410 {moved_to} i sam się przepina.
 	MovedTo string `json:"moved_to,omitempty"`
@@ -271,6 +276,7 @@ func (st *Store) Decide(id string, approve bool) (*Device, error) {
 		KOVersion: p.KOVersion, TokenHash: hash(tok), PairedAt: time.Now(),
 		Groups: map[string]bool{},
 	}
+	st.applySharedLocked(d)
 	st.S.Devices[d.ID] = d
 	p.Status, p.DeviceID, p.token = "approved", d.ID, tok
 	return d, st.saveLocked()
@@ -288,6 +294,7 @@ func (st *Store) Provision(name, model, platform, kover string) (*Device, string
 		KOVersion: clip(kover, 40), TokenHash: hash(tok), PairedAt: time.Now(),
 		Groups: map[string]bool{},
 	}
+	st.applySharedLocked(d)
 	st.S.Devices[d.ID] = d
 	return d, tok, st.saveLocked()
 }

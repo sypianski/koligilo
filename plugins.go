@@ -570,6 +570,11 @@ func (st *Store) DeletePlugin(sha string) error {
 			}
 		}
 	}
+	for _, s := range st.S.SharedPlugins {
+		if s == sha {
+			users = append(users, "wtyczki wspólne")
+		}
+	}
 	if len(users) > 0 {
 		sort.Strings(users)
 		return fmt.Errorf("wersja przypisana do: %s — najpierw ją odepnij", strings.Join(users, ", "))
@@ -621,6 +626,15 @@ func (st *Store) UpdateGalleryPluginSHA(dir, repoFullName, newSHA string) ([]str
 		}
 	}
 	changed := []string{}
+	if cur, ok := st.S.SharedPlugins[dir]; ok && old[cur] {
+		shared := make(map[string]string, len(st.S.SharedPlugins))
+		for k, v := range st.S.SharedPlugins {
+			shared[k] = v
+		}
+		shared[dir] = newSHA
+		st.S.SharedPlugins = shared
+		changed = append(changed, "wtyczki wspólne")
+	}
 	for _, d := range st.S.Devices {
 		cur, ok := d.Plugins[dir]
 		if !ok || !old[cur] {
@@ -638,6 +652,29 @@ func (st *Store) UpdateGalleryPluginSHA(dir, repoFullName, newSHA string) ([]str
 	return changed, nil
 }
 
+// checkPluginSetLocked sprawdza zbiór katalog → sha256: wersje muszą istnieć, pasować do
+// katalogu i być zaakceptowane. Zwraca kopię. Wołać pod st.mu.
+func (st *Store) checkPluginSetLocked(want map[string]string) (map[string]string, error) {
+	next := map[string]string{}
+	for dir, sha := range want {
+		v := st.S.Plugins[sha]
+		if v == nil {
+			return nil, fmt.Errorf("nie ma wersji %s", sha)
+		}
+		if v.Dir != dir {
+			return nil, fmt.Errorf("wersja %s to %s, nie %s", sha[:12], v.Dir, dir)
+		}
+		if !v.Approved {
+			return nil, fmt.Errorf("%s (%s) czeka na akceptację w panelu", dir, sha[:12])
+		}
+		if err := checkPluginDir(dir); err != nil {
+			return nil, err
+		}
+		next[dir] = sha
+	}
+	return next, nil
+}
+
 // SetDevicePlugins zastępuje docelowy zbiór wtyczek urządzenia
 // (katalog → sha256). Wtyczki to zbiór wersji, bez scalania klucz po kluczu.
 func (st *Store) SetDevicePlugins(devID string, want map[string]string) error {
@@ -647,25 +684,73 @@ func (st *Store) SetDevicePlugins(devID string, want map[string]string) error {
 	if d == nil {
 		return errors.New("nieznane urządzenie")
 	}
-	next := map[string]string{}
-	for dir, sha := range want {
-		v := st.S.Plugins[sha]
-		if v == nil {
-			return fmt.Errorf("nie ma wersji %s", sha)
-		}
-		if v.Dir != dir {
-			return fmt.Errorf("wersja %s to %s, nie %s", sha[:12], v.Dir, dir)
-		}
-		if !v.Approved {
-			return fmt.Errorf("%s (%s) czeka na akceptację w panelu", dir, sha[:12])
-		}
-		if err := checkPluginDir(dir); err != nil {
-			return err
-		}
-		next[dir] = sha
+	next, err := st.checkPluginSetLocked(want)
+	if err != nil {
+		return err
 	}
 	d.Plugins = next // nowa mapa: adminState kopiuje Device płytko
 	return st.saveLocked()
+}
+
+// applySharedLocked (PC-017) dopisuje wtyczki wspólne do stanu docelowego nowego
+// urządzenia. Pomija wersje, które przestały być zaakceptowane albo zniknęły z magazynu.
+func (st *Store) applySharedLocked(d *Device) {
+	for dir, sha := range st.S.SharedPlugins {
+		if v := st.S.Plugins[sha]; v != nil && v.Approved && v.Dir == dir {
+			if d.Plugins == nil {
+				d.Plugins = map[string]string{}
+			}
+			d.Plugins[dir] = sha
+		}
+	}
+}
+
+// SharedPluginList zwraca kopię listy wtyczek wspólnych (katalog → sha256).
+func (st *Store) SharedPluginList() map[string]string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := make(map[string]string, len(st.S.SharedPlugins))
+	for k, v := range st.S.SharedPlugins {
+		out[k] = v
+	}
+	return out
+}
+
+// SetSharedPlugins (PC-017) zastępuje listę wtyczek wspólnych i dopisuje nowe oraz zmienione
+// pozycje do stanu docelowego WSZYSTKICH sparowanych urządzeń. Usunięcie pozycji z listy
+// nie rusza urządzeń (to nie jest odinstalowanie) — przestaje tylko trafiać do nowych.
+// Zwraca posortowane nazwy urządzeń, którym zmieniono stan docelowy.
+func (st *Store) SetSharedPlugins(want map[string]string) ([]string, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	next, err := st.checkPluginSetLocked(want)
+	if err != nil {
+		return nil, err
+	}
+	st.S.SharedPlugins = next
+	if len(next) == 0 {
+		st.S.SharedPlugins = nil
+	}
+	changed := []string{}
+	for _, d := range st.S.Devices {
+		plugins := make(map[string]string, len(d.Plugins)+len(next))
+		for k, v := range d.Plugins {
+			plugins[k] = v
+		}
+		touched := false
+		for dir, sha := range next {
+			if plugins[dir] != sha {
+				plugins[dir] = sha
+				touched = true
+			}
+		}
+		if touched {
+			d.Plugins = plugins // nowa mapa: adminState kopiuje Device płytko
+			changed = append(changed, d.Name)
+		}
+	}
+	sort.Strings(changed)
+	return changed, st.saveLocked()
 }
 
 // DevicePluginTarget zwraca stan docelowy urządzenia i zapamiętuje, czy
@@ -817,6 +902,7 @@ func (s *Server) pluginRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/admin/plugins/{sha}/approve", s.admin(s.adminPluginApprove))
 	m.HandleFunc("DELETE /api/admin/plugins/{sha}", s.admin(s.adminPluginDelete))
 	m.HandleFunc("POST /api/admin/devices/{id}/plugins", s.admin(s.adminDevicePlugins))
+	m.HandleFunc("POST /api/admin/shared-plugins", s.admin(s.adminSharedPlugins))
 	m.HandleFunc("PUT /api/admin/plugins/favorites", s.admin(s.adminFavoritePut))
 	m.HandleFunc("DELETE /api/admin/plugins/favorites", s.admin(s.adminFavoriteDelete))
 }
@@ -976,6 +1062,25 @@ func (s *Server) adminDevicePlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// adminSharedPlugins (PC-017): {"plugins": {"foo.koplugin": "<sha256>", …}} — pełna lista
+// wtyczek wspólnych. Odpowiedź: {"ok": true, "changed": [nazwy urządzeń ze zmienionym celem]}.
+// Jak przy przypisaniu pojedynczego urządzenia: panel nie włącza zgody czytnika.
+func (s *Server) adminSharedPlugins(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Plugins map[string]string `json:"plugins"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "zły JSON"})
+		return
+	}
+	changed, err := s.st.SetSharedPlugins(in.Plugins)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "changed": changed})
 }
 
 // pluginsWire — pole "plugins" w GET /api/v1/sync.

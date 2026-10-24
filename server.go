@@ -258,15 +258,16 @@ func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 	s.st.mu.Unlock()
 	sort.Slice(vals, func(i, j int) bool { return vals[i].ID < vals[j].ID })
 	writeJSON(w, 200, map[string]any{
-		"version":    Version,
-		"public_url": s.public(),
-		"moved_to":   s.st.MovedTo(),
-		"devices":    devs,
-		"pending":    s.st.Pending(),
-		"catalog":    Catalog,
-		"never":      NeverSynced,
-		"values":     vals,
-		"favorites":  s.st.Favorites(),
+		"version":        Version,
+		"public_url":     s.public(),
+		"moved_to":       s.st.MovedTo(),
+		"devices":        devs,
+		"pending":        s.st.Pending(),
+		"catalog":        Catalog,
+		"never":          NeverSynced,
+		"values":         vals,
+		"favorites":      s.st.Favorites(),
+		"shared_plugins": s.st.SharedPluginList(),
 	})
 }
 

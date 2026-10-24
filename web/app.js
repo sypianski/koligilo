@@ -2466,7 +2466,8 @@ function installedPanel() {
             h("tbody", {}, rows.map(dir => pluginMatrixRow(dir, devs))))),
     S.plugSel && plugDetail(),
     h("div", { class: "legend small muted", "aria-label": "Znaczenie znaków" },
-      ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", {}, plugGlyph(k), PLUG_STATE[k].text.replace(" na czytniku", "")))),
+      ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", {}, plugGlyph(k), PLUG_STATE[k].text.replace(" na czytniku", ""))),
+      h("span", {}, h("b", {}, "⇄ wspólna"), " — trafia do każdego nowego czytnika i do wszystkich obecnych")),
     other.size > 0 && h("details", { class: "card otherplug" },
       h("summary", {}, `Ręczne i wbudowane na czytnikach (${other.size})`),
       h("p", { class: "muted small" }, "koligilo ich nie rusza — nie aktualizuje ani nie usuwa. Lista tylko pokazuje, co czytniki zgłosiły."),
@@ -2541,11 +2542,16 @@ function pluginMatrixRow(dir, devs) {
   const versions = (S.plugins || []).filter(v => v.dir === dir);
   const upd = updateFor(dir), pend = pendingVersions(dir);
   const sel = S.plugSel && S.plugSel.dir === dir;
+  const shared = !!(S.state.shared_plugins || {})[dir];
   return h("tr", { class: sel ? "sel" : "" },
     h("th", { scope: "row" },
       h("span", { class: "pmname" }, favStar("dir:" + dir),
         h("button", { type: "button", class: "linkbtn pmopen", "aria-expanded": String(!!(sel && !S.plugSel.dev)),
           onclick: () => plugSelect(dir, null) }, pluginLabel(dir)),
+        h("button", { type: "button", class: "chip pin" + (shared ? " on" : ""), "aria-pressed": String(shared), disabled: S.sharedBusy,
+          title: shared ? "Wspólna: trafia do każdego nowego czytnika i do wszystkich obecnych. Kliknij, żeby przestać (czytniki zachowują ją)."
+            : "Dodaj do wtyczek wspólnych: trafi do wszystkich czytników i do każdego nowego.",
+          onclick: () => toggleShared(dir) }, "⇄ wspólna"),
         upd && h("span", { class: "badge warn", title: "Nowsza wersja w galerii" }, "↑ " + (upd.latest_tag || upd.latest_sha.slice(0, 7))),
         pend.length > 0 && h("span", { class: "badge warn", title: "Wtyczka wysłana z czytnika czeka na Twoją akceptację" }, "czeka na akceptację"))),
     devs.map(d => {
@@ -2563,6 +2569,34 @@ function pluginMatrixRow(dir, devs) {
         "aria-expanded": String(on), onclick: () => plugSelect(dir, d.id) },
         plugGlyph(c.k), h("span", { class: "vv" }, plugVer(c))));
     }));
+}
+
+// Wtyczki wspólne (PC-017): jedna lista dla wszystkich czytników. Zmiana listy dopisuje pozycję
+// do stanu docelowego każdego sparowanego czytnika i każdego nowego; zdjęcie z listy niczego nie
+// odinstalowuje. Zgodę i potwierdzenie instalacji nadal daje wyłącznie czytnik (PC-004).
+async function saveShared(next, okText) {
+  S.sharedBusy = true; S.plugMsg = null; render();
+  try {
+    const out = await api("POST", "/api/admin/shared-plugins", { plugins: next });
+    S.plugMsg = { ok: true, text: okText(out.changed || []) };
+  } catch (e) {
+    S.plugMsg = { ok: false, text: e.message };
+  }
+  S.sharedBusy = false;
+  await refresh();
+}
+
+function toggleShared(dir) {
+  const shared = { ...(S.state.shared_plugins || {}) }, name = pluginTitle(dir);
+  if (shared[dir]) {
+    delete shared[dir];
+    return saveShared(shared, () => `„${name}” nie jest już wspólna: nowe czytniki jej nie dostaną, a czytniki, które ją mają, ją zachowują.`);
+  }
+  const v = latestApproved(dir);
+  if (!v) { S.plugMsg = { ok: false, text: `„${name}” nie ma zaakceptowanej wersji w panelu — zaakceptuj ją najpierw.` }; return render(); }
+  if (!confirm(`Dodać „${name}” do wtyczek wspólnych?\n\nTrafi do wszystkich czytników (${S.state.devices.length}) i do każdego nowego. Czytnik i tak poprosi o potwierdzenie instalacji.`)) return;
+  shared[dir] = v.sha256;
+  return saveShared(shared, ch => `„${name}” jest wspólna.` + (ch.length ? ` Dopisano ją czytnikom: ${ch.join(", ")}. ${SYNC_HINT}` : " Wszystkie czytniki już ją mają."));
 }
 
 function plugSelect(dir, dev) {
@@ -2825,7 +2859,7 @@ async function refreshGallery() {
 // Arkusz mieszka w S.addSheet (przeżywa przerysowania; render() odtwarza przewinięcie i fokus).
 
 function newSheet(src) {
-  return { src, repo: null, promoted: false, sha: null, devices: null, busy: false, msg: null, candidates: null, path: "" };
+  return { src, repo: null, promoted: false, sha: null, devices: null, shared: false, busy: false, msg: null, candidates: null, path: "" };
 }
 
 function openAddSheet(src, q, devIds) {
@@ -2978,16 +3012,21 @@ function sheetFoot(sh) {
     h("p", { class: "muted small", style: "margin:0" }, sh.src === "galeria" ? "Wybierz wtyczkę z listy." : "Wybierz wtyczkę z magazynu."),
     sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
   const chosen = sheetDevices(sh), n = devs.filter(d => chosen.has(d.id)).length;
-  const label = sh.src === "galeria" ? (n > 0 ? `Dodaj i przypisz (${n})` : "Dodaj do magazynu") : `Przypisz (${n})`;
+  const label = sh.shared ? (sh.src === "galeria" ? "Dodaj jako wspólną" : "Przypisz jako wspólną")
+    : sh.src === "galeria" ? (n > 0 ? `Dodaj i przypisz (${n})` : "Dodaj do magazynu") : `Przypisz (${n})`;
   return h("footer", { class: "sheet-foot" },
     sh.src === "galeria" && !sh.promoted && h("div", { class: "plugin-warn", role: "note", style: "padding:10px 12px;border-radius:8px" },
       h("b", {}, "⚠ Zewnętrzny kod z pełnymi uprawnieniami. "),
       "Tę wtyczkę pisze społeczność, nie autorzy koligilo ani KOReadera. Na czytniku ma te same uprawnienia co reszta systemu — dostęp do plików, sieci, ustawień. Sprawdź repozytorium (opis, gwiazdki, aktywność), zanim klikniesz „Dodaj”. Instalacja i tak wymaga osobnego potwierdzenia na czytniku."),
-    h("fieldset", { class: "shdev" },
+    h("label", { class: "row sharedopt" },
+      h("input", { type: "checkbox", id: "sh-shared", checked: sh.shared, disabled: sh.busy,
+        onchange: ev => { sh.shared = ev.target.checked; render(); } }),
+      h("span", {}, h("b", {}, "Wtyczka wspólna"), " — trafi do wszystkich czytników i do każdego nowego")),
+    h("fieldset", { class: "shdev" + (sh.shared ? " off" : "") },
       h("legend", {}, "Na które czytniki?"),
       devs.length === 0 ? h("p", { class: "muted small", style: "margin:0" }, "Brak połączonych czytników — wtyczka trafi tylko do magazynu.")
         : h("div", { class: "devpick" }, devs.map(d => h("label", { class: "row" },
-          h("input", { type: "checkbox", checked: chosen.has(d.id), disabled: sh.busy,
+          h("input", { type: "checkbox", checked: sh.shared || chosen.has(d.id), disabled: sh.busy || sh.shared,
             onchange: ev => { if (ev.target.checked) chosen.add(d.id); else chosen.delete(d.id); render(); } }),
           d.name,
           !d.plugins_allowed && h("span", { class: "muted small", title: PLUG_STATE.consent.hint }, " (" + CONSENT_SHORT + " — przypisanie poczeka)"))))),
@@ -2996,7 +3035,7 @@ function sheetFoot(sh) {
       h("select", { onchange: ev => { sh.path = ev.target.value; } },
         sh.candidates.map(c => h("option", { value: c === "." ? "" : c, selected: (sh.path === (c === "." ? "" : c)) || undefined }, c)))),
     h("div", { class: "row" },
-      h("button", { type: "button", id: "sh-go", class: "primary", disabled: sh.busy || (sh.src !== "galeria" && n === 0), onclick: sheetSubmit },
+      h("button", { type: "button", id: "sh-go", class: "primary", disabled: sh.busy || (sh.src !== "galeria" && n === 0 && !sh.shared), onclick: sheetSubmit },
         sh.busy ? "Pracuję…" : label),
       h("button", { type: "button", disabled: sh.busy, onclick: closeAddSheet }, "Anuluj")),
     sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
@@ -3025,7 +3064,11 @@ async function sheetSubmit() {
     plugin = (S.plugins || []).find(v => v.sha256 === sh.sha);
   }
   const names = [], errs = [];
-  for (const devId of sheetDevices(sh)) {
+  if (sh.shared) {
+    const r = await apiRaw("POST", "/api/admin/shared-plugins", { plugins: { ...(S.state.shared_plugins || {}), [plugin.dir]: plugin.sha256 } });
+    if (r.ok) names.push(...((r.data && r.data.changed) || [])); else errs.push(`wtyczki wspólne: ${(r.data && r.data.error) || r.status}`);
+  }
+  for (const devId of sh.shared ? [] : sheetDevices(sh)) {
     const d = S.state.devices.find(x => x.id === devId);
     if (!d) continue;
     const r = await apiRaw("POST", `/api/admin/devices/${devId}/plugins`, { plugins: { ...(d.plugins || {}), [plugin.dir]: plugin.sha256 } });
@@ -3042,7 +3085,8 @@ async function sheetSubmit() {
   S.addSheet = null;
   S.plugSel = null;
   S.plugMsg = { ok: true, text: names.length
-    ? `Dodano ${what} i przypisano do: ${names.join(", ")}. ${SYNC_HINT}`
+    ? `Dodano ${what}${sh.shared ? " jako wspólną" : ""} i przypisano do: ${names.join(", ")}. ${SYNC_HINT}`
+    : sh.shared ? `Dodano ${what} jako wspólną — wszystkie czytniki już ją mają.`
     : `Dodano ${what} do magazynu. Przypisz ją czytnikom w tabeli (znak ＋).` };
   await refresh();
   document.getElementById("b-add")?.focus();

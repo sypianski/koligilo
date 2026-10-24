@@ -448,6 +448,9 @@ button.pmopen:hover { text-decoration: underline; }
 .steps3 { margin: 0 0 16px; }
 .steps3 h3 { margin-top: 0; }
 .steps3 .steps { margin-bottom: 8px; }
+.chip.pin { padding: 1px 9px; font-size: 12px; }
+.sharedopt { gap: 8px; align-items: flex-start; font-weight: 400; }
+.shdev.off { opacity: .55; }
 .newdev { margin: 0 0 16px; }
 .checklist { list-style: none; padding: 0; margin: 8px 0 10px; }
 .checklist li { display: flex; gap: 10px; align-items: flex-start; margin: 9px 0; }
