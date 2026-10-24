@@ -99,16 +99,19 @@ func (s *Server) cloudTest(w http.ResponseWriter, r *http.Request) {
 
 // --- wspólne ---
 
+// Klient testu NIE idzie za przekierowaniami: nagłówki (x-auth-key) i ciało POST (client_secret,
+// hasło) mogłyby trafić na inny host. Przekierowanie to wynik testu, nie powód do dalszej drogi.
 func checkClient() *http.Client {
 	return &http.Client{
-		Timeout: checkTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return errors.New("za dużo przekierowań")
-			}
-			return nil
-		},
+		Timeout:       checkTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
+}
+
+func isRedirect(code int) bool { return code >= 300 && code < 400 }
+
+func redirected(code int) checkResult {
+	return fail("Serwer przekierował żądanie (HTTP %d) — nie idę za przekierowaniami, żeby nie wysłać haseł na inny adres. Podaj adres docelowy (np. https zamiast http albo ścieżkę z końcowym „/”).", code)
 }
 
 // netReason: powód błędu sieci bez adresu i bez danych logowania z URL-a.
@@ -158,6 +161,8 @@ func checkKosync(ctx context.Context, server, user, key string) checkResult {
 		return passed("Serwer przyjął login i hasło.")
 	case resp.StatusCode == 401:
 		return fail("Serwer odrzucił login lub hasło.")
+	case isRedirect(resp.StatusCode):
+		return redirected(resp.StatusCode)
 	}
 	return fail("Serwer odpowiedział HTTP %d — to nie wygląda na serwer synchronizacji postępu.", resp.StatusCode)
 }
@@ -193,6 +198,8 @@ func checkWallabag(ctx context.Context, server, clientID, clientSecret, user, pa
 		return fail("Wallabag odrzucił login lub hasło.")
 	case out.Error != "":
 		return fail("Wallabag odmówił (%s).", out.Error)
+	case isRedirect(resp.StatusCode):
+		return redirected(resp.StatusCode)
 	}
 	return fail("Serwer odpowiedział HTTP %d — to nie wygląda na Wallabag.", resp.StatusCode)
 }
@@ -229,6 +236,9 @@ func checkDropbox(ctx context.Context, key, secret, refresh string) checkResult 
 		return fail("Dropbox nie zna tego App key lub secretu.")
 	case out.Error != "":
 		return fail("Dropbox odmówił (%s).", out.Error)
+	}
+	if isRedirect(resp.StatusCode) {
+		return redirected(resp.StatusCode)
 	}
 	return fail("Dropbox odpowiedział HTTP %d.", resp.StatusCode)
 }
@@ -273,6 +283,8 @@ func checkWebDAV(ctx context.Context, address, folder, user, pass string) checkR
 		return passed("Serwer WebDAV przyjął login.")
 	case code == 401 || code == 403:
 		return fail("Serwer odrzucił login lub hasło (HTTP %d).", code)
+	case isRedirect(code):
+		return redirected(code)
 	case code == 404 && folder != "":
 		// adres może być dobry, a brakować samego folderu — odróżniamy, żeby nie szukać winy w haśle
 		if c2, err := propfind(ctx, base, user, pass); err == nil && (c2 == 207 || c2 == 200) {

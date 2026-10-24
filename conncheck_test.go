@@ -260,3 +260,28 @@ func TestConnCheckUnreachable(t *testing.T) {
 		}
 	}
 }
+
+// Przekierowanie na obcy host nie dostaje haseł ani nagłówków: test się na nim zatrzymuje.
+func TestConnCheckDoesNotFollowRedirects(t *testing.T) {
+	hits := 0
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer evil.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, evil.URL+"/zbierz", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	hh := newHarness(t)
+	hh.call("PUT", "/api/admin/accounts/kosync", map[string]string{"server": srv.URL, "username": "jakub", "password": "tajne"})
+	hh.call("PUT", "/api/admin/accounts/wallabag", map[string]string{"server_url": srv.URL, "client_id": "id", "client_secret": "cs", "username": "u", "password": "pw"})
+	v := `{[1]={["address"]="` + srv.URL + `",["name"]="W",["password"]="p",["type"]="webdav",["url"]="/",["username"]="u"}}`
+	hh.s.st.SetFromPanel(map[string]*string{cloudID: &v})
+	for _, p := range []string{"/api/admin/accounts/kosync/test", "/api/admin/accounts/wallabag/test", "/api/admin/accounts/cloud/0/test"} {
+		if _, ok, msg := testResult(t, hh, p); ok || !strings.Contains(msg, "przekierował") {
+			t.Errorf("%s: ok=%v %q", p, ok, msg)
+		}
+	}
+	if hits != 0 {
+		t.Errorf("obcy host dostał %d żądań", hits)
+	}
+}
