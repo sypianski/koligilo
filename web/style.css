@@ -847,3 +847,10 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
   .acch { padding-inline: 14px; }
 }
 .tgl.off input[type="text"] { opacity: .55; }
+
+/* widok „Aplikacja” (TASK-35): bloki w zakładce to sekcje z linią, nie karty w karcie */
+.sub { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.sub:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.sub h4 { margin: 0; font-size: 15px; }
+.sub p { margin: 0; }
+.sub > button, .sub > a { align-self: flex-start; }

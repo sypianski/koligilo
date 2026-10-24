@@ -21,7 +21,8 @@ const S = {
   tab: "urzadzenia",
   error: null,
   wizardChoice: "local",
-  srvMsg: null,        // widok „Serwer”: {ok, text}
+  srvMsg: null,        // widok „Aplikacja”: {ok, text}
+  appTab: null,        // zakładka widoku „Aplikacja”: "serwer" | "dane" | "panel" (null = serwer, TASK-35)
   srvBusy: false,
   busy: false,
   usb: null,           // {readers, adb} — tylko tryb desktop
@@ -398,7 +399,7 @@ function renderConn() {
   // tryb desktop: cały wskaźnik prowadzi do Ustawień → Serwer (dawny osobny przycisk
   // „Zmień” zniknął, TASK-18); w trybie serve nie ma czego zmieniać — zostaje tekst.
   if (S.mode === "desktop") {
-    c.replaceChildren(h("button", { type: "button", onclick: () => showTab("ustawienia"), title: "Aplikacja → Serwer" }, dot, label));
+    c.replaceChildren(h("button", { type: "button", onclick: () => { S.appTab = "serwer"; showTab("ustawienia"); }, title: "Aplikacja → Serwer" }, dot, label));
   } else {
     c.replaceChildren(dot, label);
   }
@@ -517,24 +518,56 @@ async function setMode(mode) {
 // Wygląd (motyw) + Serwer (dawny osobny widok „Serwer”, TASK-15) + O aplikacji —
 // jeden wpis w stopce paska bocznego zamiast luźnego przełącznika motywu i przycisku trybu.
 
+// TASK-35: trzy zakładki wewnętrzne (jak „Dodaj czytnik”): Serwer (tryb i adres), Dane (przenosiny
+// i kopia — rzadkie akcje), Panel (motyw). W trybie serwera (VPS) nie ma „Dane”.
+function appTabList() {
+  return S.mode === "desktop" ? [["serwer", "Serwer"], ["dane", "Dane"], ["panel", "Panel"]]
+    : [["serwer", "Serwer"], ["panel", "Panel"]];
+}
+
+function showAppTab(id) { S.appTab = id; render(); document.getElementById("apptab-" + id)?.focus(); }
+
+function appTablist(list, cur) {
+  return h("div", { class: "tabs", role: "tablist", "aria-label": "Aplikacja" },
+    list.map(([id, label], i) => h("button", {
+      type: "button", role: "tab", id: "apptab-" + id, "aria-selected": String(cur === id),
+      "aria-controls": "apppanel", tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
+      onclick: () => showAppTab(id),
+      onkeydown: ev => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
+        if (d == null && !home && !end) return;
+        ev.preventDefault();
+        showAppTab(list[home ? 0 : end ? list.length - 1 : (i + d + list.length) % list.length][0]);
+      },
+    }, label)));
+}
+
 function ustawieniaTab() {
+  const list = appTabList(), cur = list.some(([id]) => id === S.appTab) ? S.appTab : "serwer";
+  const body = { serwer: serverPane, dane: dataPane, panel: panelPane }[cur];
   return h("div", {},
-    h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, "Wygląd"),
-      h("p", { class: "muted small", style: "margin-top:0" }, "Motyw panelu — zapamiętywany w tej przeglądarce."),
-      themeControl()),
-    h("section", { class: "card", style: "margin-top:16px" },
-      h("h3", { style: "margin-top:0" }, "Serwer"),
-      S.mode === "desktop" ? serverTab() : serverTabServe()),
-    h("section", { class: "card prose", style: "margin-top:16px" },
-      h("h3", { style: "margin-top:0" }, "O aplikacji"),
+    // komunikat po akcji (przenosiny, zmiana trybu) jest nad zakładkami, żeby nie zginął po zmianie zakładki
+    S.srvMsg && h("p", { class: S.srvMsg.ok ? "ok" : "err", role: "status" }, S.srvMsg.text),
+    appTablist(list, cur),
+    h("div", { id: "apppanel", role: "tabpanel", tabindex: "-1", "aria-labelledby": "apptab-" + cur },
+      h("section", { class: "card" }, h("h3", { style: "margin-top:0" }, list.find(([id]) => id === cur)[1]), body())));
+}
+
+function panelPane() {
+  return h("div", {},
+    h("p", { class: "muted small", style: "margin-top:0" }, "Motyw panelu — zapamiętywany w tej przeglądarce."),
+    themeControl(),
+    // tymczasowo: wersja i skróty zostają tu, dopóki nie dostaną miejsca w stopce (TASK-35, krok 4)
+    h("div", { class: "sub prose" },
+      h("h4", {}, "O aplikacji"),
       h("p", { style: "margin-top:0" }, "koligilo ", S.state ? S.state.version : "…"),
-      h("h4", {}, "Skróty klawiszowe"),
       shortcutsList()));
 }
 
 // Tryb serwera (VPS, koligilo serve): panel zarządza serwerem, na którym sam działa —
 // nie ma tu „zmiany serwera” jak w trybie komputera (S.local), sekcja jest okrojona.
+function serverPane() { return S.mode === "desktop" ? serverTab() : serverTabServe(); }
+
 function serverTabServe() {
   return explain(`Ten panel działa na serwerze pod adresem ${location.origin} i nim zarządza. Token administratora, który wpisano przy wejściu, jest zapamiętany tylko w tej przeglądarce.`);
 }
@@ -565,45 +598,53 @@ function serverTab() {
           class: "option" + (L.mode === id ? " selected" : ""), role: "radio", "aria-checked": String(L.mode === id),
           disabled: S.srvBusy, onclick: () => switchMode(id),
         }, h("h3", {}, name), h("p", { class: "for" }, desc)))),
-    S.srvMsg && h("p", { class: S.srvMsg.ok ? "ok" : "err" }, S.srvMsg.text),
-    local ? localCards() : remoteCards(),
-    h("section", { class: "card", style: "margin-top:16px" },
-      h("h3", { style: "margin-top:0" }, "Kopia danych tego komputera"),
+    local && addressCard());
+}
+
+// Zakładka „Dane” (tryb komputera): rzadkie akcje — przenosiny i kopia. Bloki to `.sub`, nie karty w karcie.
+function dataPane() {
+  const L = S.local;
+  return h("div", {},
+    L.mode === "local" ? moveOutForm() : remoteCards(),
+    h("section", { class: "sub" },
+      h("h4", {}, "Kopia danych tego komputera"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Urządzenia, ustawienia czytników, wtyczki i galeria w jednym pliku .tar.gz (", h("code", {}, L.data_dir), "). Na serwerze wczytasz ją poleceniem ", h("code", {}, "koligilo import --data KATALOG plik.tar.gz"), "."),
       h("button", { onclick: downloadExport }, "Pobierz kopię")));
 }
 
-function localCards() {
+function addressCard() {
   const L = S.local;
-  return [
-    h("section", { class: "card", style: "margin-top:16px" },
-      h("h3", { style: "margin-top:0" }, "Adres dla czytników"),
-      L.device_error ? h("p", { class: "err" }, L.device_error)
-        : h("p", { style: "margin-top:0" }, "Czytniki łączą się z ", h("code", {}, L.public_url || "(nie znam adresu tego komputera w sieci)"),
-          L.public_override ? " (wpisany ręcznie)." : " (wykryty automatycznie; Tailscale ma pierwszeństwo, a czytnik w tej samej sieci Wi-Fi dostaje adres z tej sieci)."),
-      h("form", { class: "row", onsubmit: savePublicURL },
-        h("input", { type: "text", name: "url", id: "f-puburl", placeholder: "http://192.168.1.10:" + (L.device_port || 7210), style: "max-width:320px" }),
-        h("button", { type: "submit", disabled: S.srvBusy }, "Zapisz adres"),
-        L.public_override && h("button", { type: "button", disabled: S.srvBusy, onclick: () => savePublicURL(null, "") }, "Wykrywaj sam"))),
-    h("form", { class: "card", style: "margin-top:16px", onsubmit: moveOut },
-      h("h3", { style: "margin-top:0" }, "Przenieś na mój serwer"),
-      h("p", { class: "muted small", style: "margin-top:0" }, "Urządzenia, ustawienia czytników i wtyczki trafią na serwer. Czytniki przy następnej synchronizacji same dostaną nowy adres — nie trzeba ich łączyć od nowa. Ten komputer zostanie panelem serwera."),
-      h("label", { class: "field" }, h("span", {}, "Adres serwera"),
-        h("input", { type: "text", id: "f-mvserver", name: "server", placeholder: "koligilo.twojadomena.pl", required: true, value: L.server || "" })),
-      h("label", { class: "field" }, h("span", {}, "Token administratora"),
-        h("input", { type: "password", id: "f-mvtoken", name: "token", placeholder: "kol-…", autocomplete: "off", required: true })),
-      h("button", { class: "primary", type: "submit", disabled: S.srvBusy }, S.srvBusy ? "Przenoszę…" : "Przenieś dane")),
-  ];
+  return h("section", { class: "card", style: "margin-top:16px" },
+    h("h3", { style: "margin-top:0" }, "Adres dla czytników"),
+    L.device_error ? h("p", { class: "err" }, L.device_error)
+      : h("p", { style: "margin-top:0" }, "Czytniki łączą się z ", h("code", {}, L.public_url || "(nie znam adresu tego komputera w sieci)"),
+        L.public_override ? " (wpisany ręcznie)." : " (wykryty automatycznie; Tailscale ma pierwszeństwo, a czytnik w tej samej sieci Wi-Fi dostaje adres z tej sieci)."),
+    h("form", { class: "row", onsubmit: savePublicURL },
+      h("input", { type: "text", name: "url", id: "f-puburl", placeholder: "http://192.168.1.10:" + (L.device_port || 7210), style: "max-width:320px" }),
+      h("button", { type: "submit", disabled: S.srvBusy }, "Zapisz adres"),
+      L.public_override && h("button", { type: "button", disabled: S.srvBusy, onclick: () => savePublicURL(null, "") }, "Wykrywaj sam")));
+}
+
+function moveOutForm() {
+  const L = S.local;
+  return h("form", { class: "sub", onsubmit: moveOut },
+    h("h4", {}, "Przenieś na mój serwer"),
+    h("p", { class: "muted small", style: "margin-top:0" }, "Urządzenia, ustawienia czytników i wtyczki trafią na serwer. Czytniki przy następnej synchronizacji same dostaną nowy adres — nie trzeba ich łączyć od nowa. Ten komputer zostanie panelem serwera."),
+    h("label", { class: "field" }, h("span", {}, "Adres serwera"),
+      h("input", { type: "text", id: "f-mvserver", name: "server", placeholder: "koligilo.twojadomena.pl", required: true, value: L.server || "" })),
+    h("label", { class: "field" }, h("span", {}, "Token administratora"),
+      h("input", { type: "password", id: "f-mvtoken", name: "token", placeholder: "kol-…", autocomplete: "off", required: true })),
+    h("button", { class: "primary", type: "submit", disabled: S.srvBusy }, S.srvBusy ? "Przenoszę…" : "Przenieś dane"));
 }
 
 function remoteCards() {
   return [
-    h("section", { class: "card", style: "margin-top:16px" },
-      h("h3", { style: "margin-top:0" }, "Przenieś dane na ten komputer"),
+    h("section", { class: "sub" },
+      h("h4", {}, "Przenieś dane na ten komputer"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Urządzenia, ustawienia i wtyczki z serwera trafią tutaj, a serwer zacznie kierować czytniki pod adres tego komputera. Potem czytniki synchronizują się tylko, gdy ten komputer jest włączony i widoczny."),
       h("button", { class: "primary", disabled: S.srvBusy, onclick: moveHere }, S.srvBusy ? "Przenoszę…" : "Przenieś na ten komputer")),
-    h("form", { class: "card", style: "margin-top:16px", onsubmit: saveServer },
-      h("h3", { style: "margin-top:0" }, "Inny serwer"),
+    h("form", { class: "sub", onsubmit: saveServer },
+      h("h4", {}, "Inny serwer"),
       h("label", { class: "field" }, h("span", {}, "Adres serwera"),
         h("input", { type: "text", id: "f-server", name: "server", required: true, value: S.local.server || "" })),
       h("label", { class: "field" }, h("span", {}, "Token administratora"),
@@ -623,7 +664,8 @@ async function srvDo(fn) {
 function switchMode(mode) {
   if (mode === S.local.mode) return;
   if (mode === "remote" && !S.local.server) {
-    S.srvMsg = { ok: false, text: "Podaj adres i token swojego serwera w formularzu „Przenieś na mój serwer” albo wybierz go w kreatorze." };
+    S.appTab = "dane";
+    S.srvMsg = { ok: false, text: "Podaj adres i token swojego serwera w zakładce „Dane” (formularz „Przenieś na mój serwer”) albo wybierz go w kreatorze." };
     return render();
   }
   const q = mode === "local"
