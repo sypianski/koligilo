@@ -4,7 +4,7 @@
 <dict>
 	<key>CFBundleName</key><string>koligilo</string>
 	<key>CFBundleDisplayName</key><string>koligilo</string>
-	<key>CFBundleIdentifier</key><string>ski.sypian.koligilo</string>
+	<key>CFBundleIdentifier</key><string>app.sypianski.koligilo</string>
 	<key>CFBundleExecutable</key><string>koligilo-app</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
