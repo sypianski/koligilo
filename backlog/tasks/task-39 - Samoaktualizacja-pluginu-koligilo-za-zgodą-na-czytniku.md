@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-24 19:30'
-updated_date: '2026-10-24 19:35'
+updated_date: '2026-10-24 19:39'
 labels:
   - plugin
 dependencies: []
@@ -32,4 +32,6 @@ Plugin koligilo.koplugin nie aktualizuje się sam (PC-004: instalator nigdy nie 
 
 <!-- SECTION:NOTES:BEGIN -->
 Zrobione lokalnie, niezacommitowane i niewdrożone: plugin (sync.lua: versionParse/versionNewer/selfUpdateInfo/selfParentDir; main.lua: menu «Pozwól aktualizować koligilo», applySelfUpdate, handleSelfUpdate, cleanupSelfUpdate, restart_pending), serwer (plugin_dl.go: zip budowany raz + selfUpdateInfo; server.go: ?self_update=1), decyzja PC-019 w libraro, CLAUDE.md i README. Testy: sync_test.lua 167 ok, installer_test.lua 89 ok, plugin_dl_test.go, make e2e (3 nowe kroki), make test zielony. UWAGA z pracy: pierwszy test nadpisał prawdziwy plugin/ atrapą (sandbox nie był ustawiony na poziomie klasy); odzyskane z .koligilo-old-koligilo, bezpiecznik dodany w installer_test.lua. DO SPRAWDZENIA NA CZYTNIKU: rename katalogu pluginu na Androidzie (/sdcard, FUSE) i na Decku (/opt/koreader-shared/plugins w Flatpaku — może być tylko do odczytu), czy ConfirmBox/askForRestart działają w menedżerze plików. Wersja nie podbita; pierwsza wersja z tą funkcją musi być wgrana na czytniki ręcznie.
+
+WDROŻONE 2026-10-24 jako koligilo 0.8.1 (commit d9089f7, PC-019 w libraro 01c0204): serwer VPS zrestartowany (origin = HEAD, zip z wersją 0.8.1; publiczny zip też 0.8.1), aplikacja na Macu przebudowana (stara: /Applications/koligilo.app.bak-0.8.0). CZYTNIKI NIEZAKTUALIZOWANE (tiket zostaje In Progress): Bigyo — Tailscale żyje, ale Termux:8022 odmawia (Android ubił Termux), SteamDeck — offline, Onyx NoteAir3C — offline, brak adb. Pierwsze wgranie 0.8.1 musi być ręczne (stary plugin nie zna samoaktualizacji); gotowy katalog na Macu: /Users/sypianski/tmp/koligilo-build-0.8.1/plugin/koligilo.koplugin. Cloudflare nie wyczyszczony (app.js, style.css, preview.js ~4 h).
 <!-- SECTION:NOTES:END -->
