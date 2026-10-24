@@ -7,21 +7,12 @@
 
 const app = document.getElementById("app");
 
-// Zakładki wewnętrzne widoku „Wtyczki” (TASK-19; TASK-26 dodał „Ustawienia wtyczek”).
-// Stałe stoją PRZED S, bo S.pluginTab czyta zapamiętany wybór już przy
-// inicjalizacji: `const` zadeklarowany niżej dawał tu ReferenceError (TDZ),
-// połknięty przez try/catch, więc zapamiętana zakładka nigdy nie wracała po
-// przeładowaniu strony.
-const PLUGSET = "ustawienia-wtyczek"; // id zakładki z ustawieniami samych wtyczek (nie koliduje z widokiem „ustawienia” = Aplikacja)
-const PLUGIN_TABS = [["zainstalowane", "Zainstalowane"], ["galeria", "Galeria"], [PLUGSET, "Ustawienia wtyczek"]];
-const PLUGTAB_KEY = "koligilo.pluginTab";
-function pluginTabGet() {
-  try {
-    const t = localStorage.getItem(PLUGTAB_KEY);
-    return PLUGIN_TABS.some(([id]) => id === t) ? t : "zainstalowane";
-  } catch { return "zainstalowane"; }
-}
-function pluginTabSet(id) { try { localStorage.setItem(PLUGTAB_KEY, id); } catch {} }
+// Widok „Wtyczki” (TASK-33): jedna strona z macierzą, kreator dodawania w arkuszu
+// (S.addSheet) i osobny ekran „Ustawienia wtyczek” (S.plugView === PLUGSET, TASK-26).
+const PLUGSET = "ustawienia-wtyczek"; // wartość S.plugView dla ekranu z ustawieniami samych wtyczek
+const STEPS_KEY = "koligilo.plugSteps"; // „Zrozumiano” przy kartce „Trzy kroki” (zapamiętane w tej przeglądarce)
+function stepsGet() { try { return localStorage.getItem(STEPS_KEY) !== "0"; } catch { return true; } }
+function stepsSet(on) { try { localStorage.setItem(STEPS_KEY, on ? "1" : "0"); } catch {} }
 
 const S = {
   mode: null,          // "desktop" | "serve"
@@ -57,10 +48,12 @@ const S = {
   ctl: {},             // szkice pól liczbowych/tekstowych kontrolek: id(+część) -> tekst
   pad: { layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
 
-  // wtyczki (TASK-10/11); TASK-19: jedna pozycja nawigacji z zakładkami
-  // wewnętrznymi (S.pluginTab), TASK-20: gwiazdki ulubionych.
+  // wtyczki (TASK-10/11); TASK-33: jedna strona + arkusz „Dodaj wtyczkę”,
+  // TASK-20: gwiazdki ulubionych.
   plugins: null,       // /api/admin/plugins → lista PluginVersion
-  pluginTab: pluginTabGet(), // id z PLUGIN_TABS: "zainstalowane" | "galeria" | "ustawienia-wtyczek" — zapamiętane lokalnie
+  plugView: "main",    // "main" | "ustawienia-wtyczek" (PLUGSET)
+  plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
+  addSheet: null,      // arkusz „Dodaj wtyczkę”: patrz newSheet()
   plugSel: null,       // zaznaczona wtyczka w macierzy „Zainstalowane”: {dir, dev|null} (TASK-33)
   plugMsg: null,       // komunikat po zapisie przypisań: {ok, text}
   favBusy: null,       // klucz ulubionej w trakcie zapisu
@@ -70,7 +63,6 @@ const S = {
   galSort: "stars",
   galPage: 1,
   galBusy: false,
-  galInstall: {},       // per repo full_name: {devices:Set, busy, msg, candidates, path}
   uploadBusy: false,
   uploadMsg: null,
   devPluginBusy: null,
@@ -118,8 +110,8 @@ function icon(name) {
 // Widoki: [id, etykieta, licznik?]. Kolejność = skróty Alt+1…7. „Aplikacja”
 // (dawne „Ustawienia” w stopce paska) to zwykła zakładka; „Ustawienia czytników”
 // to dawne „Wspólne ustawienia” — dwie różne rzeczy, więc dwie różne nazwy.
-// TASK-19: "Wtyczki" i dawna "Galeria wtyczek" to teraz jedna pozycja z
-// zakładkami wewnętrznymi (S.pluginTab, patrz pluginsTab()). TASK-26: „Ustawienia
+// TASK-33: „Wtyczki” to jedna strona (macierz + arkusz „Dodaj wtyczkę”, patrz
+// pluginsTab()). TASK-26: „Ustawienia
 // czytników” to ustawienia urządzenia/KOReadera; ustawienia samych wtyczek (np.
 // mapowanie przycisków KOPada) żyją w Wtyczki → „Ustawienia wtyczek”.
 const VIEWS = [
@@ -131,8 +123,6 @@ const VIEWS = [
   ["jak", "Jak to działa"],
   ["ustawienia", "Aplikacja"],
 ];
-
-// (Zakładka wewnętrzna „Wtyczek” zapamiętana w tej przeglądarce: PLUGTAB_KEY, na górze pliku.)
 
 // Motyw: "auto" (wg prefers-color-scheme) | "light" (papier) | "dark" (odwrócony e-ink).
 // Podpis pod nagłówkiem widoku (TASK-29): jedna linia zamiast karty ze wstępem. Widok bez wpisu go nie ma.
@@ -327,7 +317,7 @@ async function refresh() {
   try {
     S.state = await api("GET", "/api/admin/state");
     S.error = null;
-    const plugSet = S.tab === "wtyczki" && S.pluginTab === PLUGSET; // Wtyczki → Ustawienia wtyczek (TASK-26)
+    const plugSet = S.tab === "wtyczki" && S.plugView === PLUGSET; // Wtyczki → Ustawienia wtyczek (TASK-26)
     if (S.tab === "wspolne") await valLoadFull();
     if (plugSet) await padLoadFull(); // pełny padmap (565 znaków) przekracza podgląd 400 znaków
     if (S.tab === "konta") {
@@ -341,7 +331,7 @@ async function refresh() {
     if (S.tab === "wtyczki" && !plugSet && !S.galUpdates) {
       try { S.galUpdates = await api("GET", "/api/admin/gallery/updates"); } catch (e) { S.galUpdates = null; S.error = e.message; }
     }
-    if (S.tab === "wtyczki" && S.pluginTab === "galeria") {
+    if (S.tab === "wtyczki" && !plugSet && S.addSheet && S.addSheet.src === "galeria") {
       const qs = new URLSearchParams({ q: S.galQ, sort: S.galSort, page: String(S.galPage) });
       try { S.gallery = await api("GET", "/api/admin/gallery?" + qs); } catch (e) { S.gallery = null; S.error = e.message; }
     }
@@ -364,6 +354,7 @@ async function refresh() {
 function render() {
   const focused = document.activeElement && document.activeElement.id;
   const scroll = app.scrollTop;
+  const sheetBody = app.querySelector(".sheet-body"), sheetScroll = sheetBody ? sheetBody.scrollTop : 0;
   app.replaceChildren();
   renderConn();
   renderNav();
@@ -374,6 +365,8 @@ function render() {
   else app.append(main());
   document.getElementById("ver").textContent = "koligilo " + (S.state ? S.state.version : "");
   app.scrollTop = scroll;
+  const sheetBodyNew = app.querySelector(".sheet-body");
+  if (sheetBodyNew) sheetBodyNew.scrollTop = sheetScroll;
   if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
   // panel podglądu żyje poza #app (ramki nie przeładowują się co 3 s)
   if (typeof Preview !== "undefined") {
@@ -543,7 +536,7 @@ function serverTabServe() {
 function shortcutsList() {
   return h("dl", { class: "shortcuts" },
     h("dt", {}, h("kbd", {}, "Alt"), "+", h("kbd", {}, "1"), "…", h("kbd", {}, "7")), h("dd", {}, "przełącz zakładkę"),
-    h("dt", {}, h("kbd", {}, "/")), h("dd", {}, "szukaj w Galerii wtyczek"),
+    h("dt", {}, h("kbd", {}, "/")), h("dd", {}, "szukaj w galerii wtyczek (otwiera „Dodaj wtyczkę”)"),
     h("dt", {}, h("kbd", {}, "←"), " ", h("kbd", {}, "→"), " ", h("kbd", {}, "Home"), " ", h("kbd", {}, "End")), h("dd", {}, "po zakładkach, gdy jest na nich fokus"));
 }
 
@@ -2308,54 +2301,53 @@ function labelCells(table) {
   for (const tr of table.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => td.setAttribute("data-label", heads[i] || ""));
   return table;
 }
-// TASK-19: "Wtyczki" i dawna "Galeria wtyczek" żyją teraz pod jedną pozycją
-// nawigacji, jako zakładki wewnętrzne (PLUGIN_TABS; role=tablist/tab/tabpanel,
-// sterowanie strzałkami/Home/End — pluginTablist()). Wybór zapamiętany w tej
-// przeglądarce (S.pluginTab, localStorage). Panel tylko przypisuje/odpina
-// stan docelowy — instalację i tak zawsze potwierdza czytnik (PC-004).
+// TASK-33: „Wtyczki” to jedna strona — macierz „Zainstalowane”, kartka „Trzy kroki”
+// i przycisk „＋ Dodaj wtyczkę” (arkusz, patrz addSheet()). „Ustawienia wtyczek”
+// (TASK-26) to osobny ekran z przyciskiem powrotu. Panel tylko przypisuje stan
+// docelowy — instalację i tak zawsze potwierdza czytnik (PC-004).
 
-function showPluginTab(id) {
-  const changed = S.pluginTab !== id;
-  S.pluginTab = id;
-  pluginTabSet(id);
-  if (changed) app.scrollTop = 0;
+function showPlugView(v) {
+  S.plugView = v;
+  S.plugSel = null;
+  app.scrollTop = 0;
   return refresh();
 }
 
-function pluginTablist() {
-  const cur = S.pluginTab;
-  return h("div", { class: "tabs", role: "tablist", "aria-label": "Widok wtyczek" },
-    PLUGIN_TABS.map(([id, label], i) => h("button", {
-      type: "button", role: "tab", id: "ptab-" + id, "aria-selected": String(cur === id),
-      "aria-controls": "ptabpanel-" + id, tabindex: cur === id ? "0" : "-1",
-      class: "tab" + (cur === id ? " selected" : ""),
-      onclick: () => showPluginTab(id),
-      onkeydown: ev => {
-        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
-        const home = ev.key === "Home", end = ev.key === "End";
-        if (d == null && !home && !end) return;
-        ev.preventDefault();
-        const ni = home ? 0 : end ? PLUGIN_TABS.length - 1 : (i + d + PLUGIN_TABS.length) % PLUGIN_TABS.length;
-        const nid = PLUGIN_TABS[ni][0];
-        Promise.resolve(showPluginTab(nid)).then(() => document.getElementById("ptab-" + nid)?.focus());
-      },
-    }, label)));
+function setSteps(on) {
+  S.plugSteps = on;
+  stepsSet(on);
+  render();
+}
+
+function stepsCard() {
+  return h("section", { class: "card steps3", "aria-labelledby": "steps3-title" },
+    h("h3", { id: "steps3-title" }, "Jak dodać wtyczki na czytnik — trzy kroki"),
+    h("ol", { class: "steps" },
+      h("li", {}, h("b", {}, "Na czytniku pozwól na wtyczki. "),
+        `${MENU_PATH} → Pozwól instalować wtyczki. Raz na każdy czytnik — z panelu się tego nie da.`),
+      h("li", {}, h("b", {}, "W panelu wybierz wtyczki. "),
+        "„＋ Dodaj wtyczkę”: z galerii, z pliku ZIP albo z magazynu, a potem zaznacz czytniki. Panel tylko wskazuje, co ma być zainstalowane."),
+      h("li", {}, h("b", {}, "Na czytniku zatwierdź. "),
+        "Wybierz „Synchronizuj teraz” i potwierdź listę wtyczek — dopiero wtedy czytnik je instaluje.")),
+    h("p", { class: "muted small" }, "Wtyczka to kod Lua z pełnymi uprawnieniami na czytniku, dlatego koligilo nigdy nie instaluje jej samo."),
+    h("button", { type: "button", id: "b-steps-ok", onclick: () => setSteps(false) }, "Zrozumiano"));
 }
 
 function pluginsTab() {
-  const sub = PLUGIN_TABS.some(([id]) => id === S.pluginTab) ? S.pluginTab : "zainstalowane";
+  if (S.plugView === PLUGSET) {
+    return h("section", {},
+      h("div", { class: "row plughead" },
+        h("button", { type: "button", id: "b-plugback", onclick: () => showPlugView("main") }, "← Wtyczki")),
+      pluginSettingsPanel());
+  }
   return h("section", {},
-    // wstęp dotyczy instalowania wtyczek — nad ustawieniami wtyczek nie ma sensu;
-    // zwijany, bo powtarza się nad każdą zakładką i spychał treść pod linię zgięcia
-    sub !== PLUGSET && explainFold("wtyczki", "Panel tylko przypisuje wtyczki — instalację zawsze potwierdzasz na czytniku",
-      "Wtyczka KOReadera to kod Lua z pełnymi uprawnieniami na czytniku — koligilo nigdy nie instaluje jej samo: panel tylko przypisuje wersję, która ma być zainstalowana. Instalację, aktualizację i usunięcie zawsze potwierdza człowiek na czytniku (" + MENU_PATH + ").",
-      "Zgodę na instalowanie wtyczek („Pozwól instalować wtyczki”) włącza się wyłącznie na czytniku — panel nie może jej tu ustawić."),
-    pluginTablist(),
-    h("div", { id: "ptabpanel-" + sub, role: "tabpanel", "aria-labelledby": "ptab-" + sub, tabindex: "0", class: "tabpanel" },
-      sub === PLUGSET ? pluginSettingsPanel()
-        : sub === "galeria" ? galleryTab()
-        : !S.plugins ? h("p", { class: "loading" }, "Wczytuję wtyczki…")
-        : installedPanel()));
+    h("div", { class: "row plughead" },
+      h("button", { type: "button", id: "b-add", class: "primary", onclick: () => openAddSheet("galeria") }, "＋ Dodaj wtyczkę"),
+      h("button", { type: "button", id: "b-plugset", onclick: () => showPlugView(PLUGSET) }, "Ustawienia wtyczek"),
+      !S.plugSteps && h("button", { type: "button", id: "b-steps", class: "linkbtn", onclick: () => setSteps(true) }, "Jak to działa? Trzy kroki")),
+    S.plugSteps && stepsCard(),
+    !S.plugins ? h("p", { class: "loading" }, "Wczytuję wtyczki…") : installedPanel(),
+    S.addSheet && addSheet());
 }
 
 // ------------------------------------------------ zakładka: zainstalowane (TASK-33)
@@ -2464,7 +2456,7 @@ function installedPanel() {
       ? h("p", { class: "muted" }, "Brak połączonych urządzeń — dodaj czytnik w zakładce „Urządzenia”.")
       : rows.length === 0
         ? h("p", { class: "muted" }, S.favOnly ? "Brak ulubionych wtyczek w magazynie."
-            : "Panel nie ma jeszcze żadnej wtyczki — znajdź ją w zakładce „Galeria” albo wgraj ZIP.")
+            : "Panel nie ma jeszcze żadnej wtyczki — zacznij od „＋ Dodaj wtyczkę”.")
         : h("div", { class: "matrix-wrap" }, h("table", { class: "matrix pmx", "aria-label": "Wtyczki na czytnikach" },
             h("thead", {}, h("tr", {},
               h("th", { scope: "col" }, "Wtyczka"),
@@ -2485,7 +2477,7 @@ function installedPanel() {
       extraFav.map(full => h("div", { class: "row", style: "justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line)" },
         h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full),
           h("span", {}, h("span", { class: "pname" }, galleryTitle(full)), h("small", { class: "pdir" }, full))),
-        h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Otwórz w Galerii")))));
+        h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Znajdź w galerii")))));
 }
 
 function pluginMatrixRow(dir, devs) {
@@ -2572,12 +2564,10 @@ function pluginSettingsPanel() {
       pad || h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada."),
       acts));
 }
-// --- zakładka: wg wtyczek (TASK-19) ---
+// --- ulubione (TASK-20) ---
 //
-// Ten sam magazyn i te same urządzenia co „Wg urządzeń”, tylko odwrócone:
-// wiersz to wtyczka (katalog *.koplugin), nie urządzenie. Magazyn i wgrywanie
-// ZIP-a mieszkają tutaj (były w dawnej zakładce „Wtyczki”). Ulubione
-// (TASK-20) trzymają się na górze listy i mają filtr „Tylko ulubione”.
+// Gwiazdki trzymają się na górze macierzy „Zainstalowane” (filtr „Tylko ulubione”)
+// i w arkuszu „Dodaj wtyczkę”. Ulubione ≠ instalacja: to tylko zakładka.
 
 function isFav(key) { return !!(S.state && S.state.favorites && S.state.favorites.includes(key)); }
 
@@ -2633,8 +2623,7 @@ function favoriteReposNotInstalled(versions) {
 }
 
 function openGalleryFor(full) {
-  S.galQ = full; S.galPage = 1;
-  showPluginTab("galeria");
+  openAddSheet("galeria", full);
 }
 async function approvePlugin(v) {
   if (!confirm(
@@ -2695,32 +2684,28 @@ async function applyGalleryUpdate(u) {
   refresh();
 }
 
-function uploadCard() {
-  return h("section", { class: "card", style: "margin-bottom:16px" },
-    h("h3", { style: "margin-top:0" }, "Wgraj własny ZIP"),
-    h("p", { class: "muted small", style: "margin-top:0" },
-      "ZIP musi zawierać jeden katalog *.koplugin z plikami _meta.lua i main.lua — tak samo jak wtyczka z galerii (do 20 MB)."),
-    h("div", { class: "row" },
-      h("input", { type: "file", id: "f-plugin-zip", accept: ".zip" }),
-      h("button", { class: "primary", disabled: S.uploadBusy, onclick: uploadPlugin }, S.uploadBusy ? "Wgrywam…" : "Wgraj")),
-    S.uploadMsg && h("p", { class: S.uploadMsg.ok ? "ok" : "err" }, S.uploadMsg.text));
-}
-
 async function uploadPlugin() {
   const inp = document.getElementById("f-plugin-zip");
   const file = inp && inp.files && inp.files[0];
   if (!file) { S.uploadMsg = { ok: false, text: "Wybierz plik ZIP." }; return render(); }
   S.uploadBusy = true; S.uploadMsg = null; render();
+  let out = null;
   try {
     const fd = new FormData();
     fd.append("file", file);
-    const out = await apiUpload("/api/admin/plugins", fd);
-    S.uploadMsg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Przypisz ją czytnikom w zakładce „Zainstalowane”.` };
+    out = await apiUpload("/api/admin/plugins", fd);
   } catch (e) {
     S.uploadMsg = { ok: false, text: e.message };
   }
   S.uploadBusy = false;
-  refresh();
+  const sh = S.addSheet;
+  if (out && sh) {
+    // wgrana wersja jest od razu zaakceptowana — przechodzimy do wyboru czytników
+    Object.assign(sh, newSheet("magazyn"), { devices: sh.devices, sha: out.plugin.sha256 });
+    sh.msg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Zaznacz czytniki i przypisz.` };
+  }
+  await refresh();
+  document.getElementById(out ? "sh-go" : "f-plugin-zip")?.focus();
 }
 async function removeDevicePlugin(d, dir) {
   if (!confirm(`Usunąć wtyczkę „${pluginTitle(dir)}” z celu urządzenia „${d.name}”?\n\nPrzy najbliższej synchronizacji czytnik poprosi o potwierdzenie odinstalowania.`)) return;
@@ -2765,40 +2750,6 @@ function galleryUpdateAvailable(repo, versions) {
   return !versions.some(v => (v.version || "").replace(/^v/i, "").toLowerCase() === tag);
 }
 
-function galleryTab() {
-  if (!S.gallery) return h("p", { class: "loading" }, "Wczytuję galerię…");
-  const g = S.gallery;
-  return h("section", {},
-    h("div", { class: "card plugin-warn" },
-      h("h3", { style: "margin-top:0" }, "⚠ Zewnętrzny kod z pełnymi uprawnieniami"),
-      h("p", { style: "margin:0" },
-        "Wtyczki w galerii (poza sekcją „Od autora koligilo”) pisze społeczność, nie autorzy koligilo ani KOReadera. Na czytniku mają te same uprawnienia co reszta systemu — dostęp do plików, sieci, ustawień. Sprawdź repozytorium (opis, gwiazdki, aktywność), zanim wybierzesz „Zainstaluj”. Instalacja i tak wymaga osobnego potwierdzenia na czytniku.")),
-    h("form", { class: "row", style: "margin:16px 0", onsubmit: ev => { ev.preventDefault(); S.galPage = 1; refresh(); } },
-      h("input", { type: "search", id: "f-galq", "aria-label": "Szukaj wtyczek", "aria-keyshortcuts": "/", value: S.galQ,
-        placeholder: "szukaj po nazwie lub opisie  ( / )", style: "flex:1;min-width:200px",
-        oninput: ev => { S.galQ = ev.target.value; } }),
-      h("select", { "aria-label": "Sortowanie", onchange: ev => { S.galSort = ev.target.value; S.galPage = 1; refresh(); } },
-        h("option", { value: "stars", selected: S.galSort === "stars" || undefined }, "gwiazdki"),
-        h("option", { value: "updated", selected: S.galSort === "updated" || undefined }, "ostatnia aktualizacja")),
-      h("button", { type: "submit" }, "Szukaj"),
-      h("button", { type: "button", disabled: S.galBusy, onclick: refreshGallery }, S.galBusy ? "Odświeżam…" : "Odśwież z GitHuba")),
-    uploadCard(),
-    g.note && h("p", { class: "muted small" }, g.note),
-    g.stale && h("p", { class: "muted small" }, "Dane mogą być nieaktualne (starsze niż 24 h) — kliknij „Odśwież z GitHuba”."),
-    (g.promoted || []).length > 0 && g.page === 1 && h("section", { class: "gallery-promoted", style: "margin-bottom:20px" },
-      h("h3", {}, "Od autora koligilo"),
-      h("div", {}, g.promoted.map(repoCard))),
-    (g.promoted || []).length > 0 && g.page === 1 && h("h3", {}, "Społeczność"),
-    h("p", { class: "muted small" },
-      `Repozytoria: ${g.total}, strona ${g.page}` + (g.updated_at && !g.updated_at.startsWith("0001") ? ` · odświeżono ${ago(g.updated_at)}` : "")),
-    (g.repos || []).length === 0
-      ? h("p", { class: "muted" }, (g.promoted || []).length > 0 ? "Nic więcej nie znaleziono." : "Nic nie znaleziono.")
-      : h("div", {}, (g.repos || []).map(repoCard)),
-    h("div", { class: "row", style: "margin-top:12px" },
-      S.galPage > 1 && h("button", { onclick: () => { S.galPage--; refresh(); } }, "← Wstecz"),
-      g.total > g.page * 30 && h("button", { onclick: () => { S.galPage++; refresh(); } }, "Więcej wyników →")));
-}
-
 async function refreshGallery() {
   S.galBusy = true; render();
   try { await api("POST", "/api/admin/gallery/refresh"); }
@@ -2807,88 +2758,236 @@ async function refreshGallery() {
   refresh();
 }
 
-function repoCard(repo) {
-  const key = repo.full_name;
-  const versions = galleryVersionsFor(repo);
-  const installed = versions.length > 0;
-  const update = galleryUpdateAvailable(repo, versions);
-  const inst = S.galInstall[key];
-  return h("article", { class: "card gallery-repo", style: "margin-bottom:12px" },
-    h("div", { class: "row", style: "justify-content:space-between;align-items:flex-start;flex-wrap:wrap" },
-      h("div", { style: "flex:1;min-width:240px" },
-        h("h3", { style: "margin:0 0 2px;display:flex;align-items:center;gap:8px" }, favStar("gh:" + repo.full_name), galleryTitle(repo.full_name),
-          installed && h("span", { class: "badge" }, "w magazynie"),
-          update && h("span", { class: "badge warn" }, "dostępna aktualizacja")),
-        h("p", { class: "muted small", style: "margin:2px 0 6px" },
-          `${repo.full_name} · ★ ${repo.stars} · aktualizacja ${ago(repo.pushed_at)}` + (repo.latest_release ? ` · release ${repo.latest_release}` : "")),
-        h("p", { style: "margin:0 0 8px" }, repo.description || h("span", { class: "muted" }, "(brak opisu)"))),
-      h("a", { href: repo.html_url || `https://github.com/${repo.full_name}`, target: "_blank", rel: "noopener" }, "Repozytorium na GitHubie ↗")),
-    inst ? galleryInstallPanel(repo, inst)
-      : h("button", { class: "primary", onclick: () => { S.galInstall[key] = { devices: new Set(), busy: false, msg: null, candidates: null, path: "" }; render(); } },
-          "Zainstaluj na…"));
+// ------------------------------------------------ arkusz „Dodaj wtyczkę” (TASK-33)
+//
+// Jeden kreator zamiast trzech miejsc (Galeria, „Wgraj własny ZIP”, lista w karcie
+// czytnika): źródło (galeria / ZIP / magazyn) → wybór wtyczki → czytniki → „Dodaj i
+// przypisz”. To te same wywołania co wcześniej (gallery/install, plugins, devices/{id}/plugins),
+// więc PC-004 bez zmian: przypisanie to stan docelowy, potwierdza czytnik. Przed instalacją
+// wtyczki społeczności pod przyciskiem stoi pełne ostrzeżenie o zewnętrznym kodzie.
+// Arkusz mieszka w S.addSheet (przeżywa przerysowania; render() odtwarza przewinięcie i fokus).
+
+function newSheet(src) {
+  return { src, repo: null, promoted: false, sha: null, devices: null, busy: false, msg: null, candidates: null, path: "" };
 }
 
-function galleryInstallPanel(repo, inst) {
-  const devices = S.state.devices;
-  return h("div", { class: "subform" },
+function openAddSheet(src, q) {
+  S.addSheet = newSheet(src || "galeria");
+  if (q != null) { S.galQ = q; S.galPage = 1; }
+  return refresh().then(() => document.getElementById(S.addSheet && S.addSheet.src === "galeria" ? "f-galq" : "sh-close")?.focus());
+}
+
+function closeAddSheet() {
+  S.addSheet = null;
+  render();
+  document.getElementById("b-add")?.focus();
+}
+
+function sheetSrc(id) {
+  const sh = S.addSheet;
+  Object.assign(sh, newSheet(id), { devices: sh.devices });
+  S.uploadMsg = null;
+  return refresh().then(() => document.getElementById(id === "galeria" ? "f-galq" : "sh-src-" + id)?.focus());
+}
+
+// czytniki zaznaczone domyślnie: te, które już pozwoliły na wtyczki (reszta i tak czekałaby na zgodę)
+function sheetDevices(sh) {
+  if (!sh.devices) sh.devices = new Set(S.state.devices.filter(d => d.plugins_allowed).map(d => d.id));
+  return sh.devices;
+}
+
+function addSheet() {
+  const sh = S.addSheet;
+  const srcs = [["galeria", "Z galerii"], ["zip", "Z pliku ZIP"], ["magazyn", "Z magazynu"]];
+  return h("div", { class: "sheet-back", onmousedown: ev => { if (ev.target === ev.currentTarget && !sh.busy) closeAddSheet(); } },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-labelledby": "sheet-title" },
+      h("header", { class: "sheet-head" },
+        h("h2", { id: "sheet-title" }, "Dodaj wtyczkę"),
+        h("button", { type: "button", id: "sh-close", "aria-label": "Zamknij", disabled: sh.busy, onclick: closeAddSheet }, "×")),
+      h("div", { class: "row sheet-src", role: "group", "aria-label": "Skąd wziąć wtyczkę" },
+        srcs.map(([id, label]) => h("button", { type: "button", id: "sh-src-" + id, class: "chip" + (sh.src === id ? " on" : ""),
+          "aria-pressed": String(sh.src === id), disabled: sh.busy, onclick: () => sh.src !== id && sheetSrc(id) }, label))),
+      h("div", { class: "sheet-body" },
+        sh.src === "galeria" ? sheetGallery(sh) : sh.src === "zip" ? sheetZip(sh) : sheetStore(sh)),
+      sh.src !== "zip" && sheetFoot(sh)));
+}
+
+function sheetGallery(sh) {
+  const g = S.gallery;
+  return h("div", {},
+    h("form", { class: "row", onsubmit: ev => { ev.preventDefault(); S.galPage = 1; refresh().then(() => document.getElementById("f-galq")?.focus()); } },
+      h("input", { type: "search", id: "f-galq", "aria-label": "Szukaj wtyczek", "aria-keyshortcuts": "/", value: S.galQ,
+        placeholder: "szukaj po nazwie lub opisie  ( / )", style: "flex:1;min-width:180px",
+        oninput: ev => { S.galQ = ev.target.value; } }),
+      h("select", { "aria-label": "Sortowanie", onchange: ev => { S.galSort = ev.target.value; S.galPage = 1; refresh(); } },
+        h("option", { value: "stars", selected: S.galSort === "stars" || undefined }, "gwiazdki"),
+        h("option", { value: "updated", selected: S.galSort === "updated" || undefined }, "ostatnia aktualizacja")),
+      h("button", { type: "submit" }, "Szukaj")),
+    h("p", { class: "muted small", style: "margin:8px 0 0" },
+      "Wtyczki społeczności to cudzy kod z pełnymi uprawnieniami na czytniku. Pełne ostrzeżenie zobaczysz przed dodaniem."),
+    !g ? h("p", { class: "loading" }, "Wczytuję galerię…") : [
+      g.note && h("p", { class: "muted small" }, g.note),
+      g.stale && h("p", { class: "muted small" }, "Dane mogą być nieaktualne (starsze niż 24 h). ",
+        h("button", { type: "button", class: "linkbtn", disabled: S.galBusy, onclick: refreshGallery }, S.galBusy ? "Odświeżam…" : "Odśwież z GitHuba")),
+      (g.promoted || []).length > 0 && g.page === 1 && h("section", {},
+        h("h3", { class: "shhead" }, "Od autora koligilo"),
+        (g.promoted || []).map(r => sheetRepoRow(r, true))),
+      h("h3", { class: "shhead" }, (g.promoted || []).length > 0 && g.page === 1 ? "Społeczność" : "Wyniki"),
+      (g.repos || []).length === 0
+        ? h("p", { class: "muted" }, (g.promoted || []).length > 0 ? "Nic więcej nie znaleziono." : "Nic nie znaleziono.")
+        : (g.repos || []).map(r => sheetRepoRow(r, false)),
+      h("div", { class: "row", style: "margin-top:10px" },
+        h("span", { class: "muted small" }, `Repozytoria: ${g.total}, strona ${g.page}` + (g.updated_at && !g.updated_at.startsWith("0001") ? ` · odświeżono ${ago(g.updated_at)}` : "")),
+        S.galPage > 1 && h("button", { type: "button", onclick: () => { S.galPage--; refresh(); } }, "← Wstecz"),
+        g.total > g.page * 30 && h("button", { type: "button", onclick: () => { S.galPage++; refresh(); } }, "Więcej wyników →"))]);
+}
+
+function sheetRepoRow(repo, promoted) {
+  const sh = S.addSheet, on = !!sh.repo && sh.repo.full_name === repo.full_name;
+  const versions = galleryVersionsFor(repo), update = galleryUpdateAvailable(repo, versions);
+  const id = "sh-r-" + repo.full_name.replace(/\W/g, "_");
+  return h("div", { class: "shrow" + (on ? " on" : "") },
+    favStar("gh:" + repo.full_name),
+    h("div", { class: "grow" },
+      h("div", {}, h("b", {}, galleryTitle(repo.full_name)),
+        versions.length > 0 && h("span", { class: "badge" }, "w magazynie"),
+        update && h("span", { class: "badge warn" }, "nowsza wersja")),
+      h("div", { class: "muted small" },
+        `${repo.full_name} · ★ ${repo.stars} · aktualizacja ${ago(repo.pushed_at)}` + (repo.latest_release ? ` · release ${repo.latest_release}` : "")),
+      h("div", { class: "small shdesc" }, repo.description || h("span", { class: "muted" }, "(brak opisu)"))),
+    h("div", { class: "shact" },
+      h("a", { href: repo.html_url || `https://github.com/${repo.full_name}`, target: "_blank", rel: "noopener",
+        "aria-label": `Repozytorium ${repo.full_name} na GitHubie` }, "GitHub ↗"),
+      h("button", { type: "button", id, class: on ? "primary" : "", "aria-pressed": String(on), disabled: sh.busy,
+        onclick: () => sheetPickRepo(repo, promoted) }, on ? "Wybrano" : "Wybierz")));
+}
+
+function sheetPickRepo(repo, promoted) {
+  const sh = S.addSheet;
+  const same = sh.repo && sh.repo.full_name === repo.full_name;
+  sh.repo = same ? null : repo;
+  sh.promoted = !same && promoted;
+  sh.candidates = null; sh.path = ""; sh.msg = null;
+  render();
+}
+
+function sheetZip(sh) {
+  return h("div", {},
     h("p", { class: "muted small", style: "margin-top:0" },
-      "Wybierz urządzenia. Instalacja wymaga potwierdzenia na czytniku przy najbliższej synchronizacji."),
-    devices.length === 0
-      ? h("p", { class: "muted" }, "Brak połączonych urządzeń.")
-      : h("div", { class: "devpick" }, devices.map(d => h("label", {
-          class: "row" + (d.plugins_allowed ? "" : " disabled"),
-          title: d.plugins_allowed ? "" : "Włącz na czytniku: menu koligilo → Pozwól instalować wtyczki",
-        },
-          h("input", { type: "checkbox", disabled: !d.plugins_allowed, checked: inst.devices.has(d.id),
-            onchange: ev => { if (ev.target.checked) inst.devices.add(d.id); else inst.devices.delete(d.id); render(); } }),
-          d.name,
-          !d.plugins_allowed && h("span", { class: "muted small" }, " (" + CONSENT_SHORT + ")")))),
-    inst.candidates && h("div", { class: "field" },
-      h("span", {}, "Wiele katalogów *.koplugin w repozytorium — wybierz jeden:"),
-      h("select", { onchange: ev => { inst.path = ev.target.value; } },
-        inst.candidates.map(c => h("option", { value: c === "." ? "" : c, selected: (inst.path === (c === "." ? "" : c)) || undefined }, c)))),
-    h("div", { class: "row", style: "margin-top:10px" },
-      h("button", { class: "primary", disabled: inst.busy || inst.devices.size === 0, onclick: () => installFromGallery(repo, inst) },
-        inst.busy ? "Instaluję…" : "Zainstaluj"),
-      h("button", { type: "button", onclick: () => { delete S.galInstall[repo.full_name]; render(); } }, "Anuluj")),
-    inst.msg && h("p", { class: inst.msg.ok ? "ok" : "err" }, inst.msg.text));
+      "ZIP musi zawierać jeden katalog *.koplugin z plikami _meta.lua i main.lua — tak samo jak wtyczka z galerii (do 20 MB). Po wgraniu wybierzesz czytniki."),
+    h("div", { class: "row" },
+      h("input", { type: "file", id: "f-plugin-zip", accept: ".zip", "aria-label": "Plik ZIP wtyczki" }),
+      h("button", { type: "button", class: "primary", disabled: S.uploadBusy, onclick: uploadPlugin }, S.uploadBusy ? "Wgrywam…" : "Wgraj")),
+    S.uploadMsg && h("p", { class: S.uploadMsg.ok ? "ok" : "err", role: "status" }, S.uploadMsg.text));
 }
 
-async function installFromGallery(repo, inst) {
-  inst.busy = true; inst.msg = null; render();
-  const body = { repo: repo.full_name };
-  if (repo.latest_release) body.ref = repo.latest_release;
-  if (inst.path) body.path = inst.path;
-  const res = await apiRaw("POST", "/api/admin/gallery/install", body);
-  if (!res.ok) {
-    if (res.status === 400 && res.data && res.data.candidates) {
-      inst.candidates = res.data.candidates;
-      if (!inst.path) inst.path = inst.candidates[0] === "." ? "" : inst.candidates[0];
-      inst.msg = { ok: false, text: res.data.error };
-    } else {
-      inst.msg = { ok: false, text: (res.data && res.data.error) || `HTTP ${res.status}` };
-    }
-    inst.busy = false; render();
-    return;
+// magazyn: wtyczki, które panel już ma i może przypisać (tylko zaakceptowane wersje)
+const SRC_LABEL = { upload: "wgrany plik ZIP", galeria: "z galerii", "urządzenie": "z czytnika" };
+function sheetStoreDirs() {
+  const by = new Map();
+  for (const v of (S.plugins || []).filter(x => x.approved)) {
+    if (!by.has(v.dir)) by.set(v.dir, []);
+    by.get(v.dir).push(v);
   }
-  const plugin = res.data.plugin;
-  const errs = [];
-  for (const devId of inst.devices) {
+  for (const vs of by.values()) vs.sort((a, b) => String(b.added).localeCompare(String(a.added)));
+  return [...by].sort((a, b) => pluginTitle(a[0]).localeCompare(pluginTitle(b[0]), "pl"));
+}
+
+function sheetStore(sh) {
+  const dirs = sheetStoreDirs();
+  if (!S.plugins) return h("p", { class: "loading" }, "Wczytuję magazyn…");
+  if (dirs.length === 0) return h("p", { class: "muted" }, "Magazyn jest pusty — dodaj wtyczkę z galerii albo wgraj ZIP.");
+  return h("div", {},
+    h("p", { class: "muted small", style: "margin-top:0" }, "Wtyczki, które panel już ma. Wybierz jedną i zaznacz czytniki."),
+    dirs.map(([dir, vs]) => {
+      const cur = vs.find(v => v.sha256 === sh.sha), on = !!cur, id = "sh-s-" + dir.replace(/\W/g, "_");
+      return h("div", { class: "shrow" + (on ? " on" : "") },
+        h("div", { class: "grow" },
+          h("b", {}, pluginLabel(dir)),
+          h("div", { class: "muted small" }, `${vs[0].version || vs[0].sha256.slice(0, 12)} · ${SRC_LABEL[vs[0].source] || vs[0].source}` + (vs.length > 1 ? ` · ${vs.length} wersje` : "")),
+          on && vs.length > 1 && h("select", { "aria-label": "Wersja", onchange: ev => { sh.sha = ev.target.value; render(); } },
+            vs.map(v => h("option", { value: v.sha256, selected: v.sha256 === sh.sha || undefined },
+              `${v.version || v.sha256.slice(0, 12)} · ${SRC_LABEL[v.source] || v.source}${v.source_ref ? " · " + v.source_ref : ""}`)))),
+        h("div", { class: "shact" },
+          h("button", { type: "button", id, class: on ? "primary" : "", "aria-pressed": String(on), disabled: sh.busy,
+            onclick: () => { sh.sha = on ? null : vs[0].sha256; sh.msg = null; render(); } }, on ? "Wybrano" : "Wybierz")));
+    }));
+}
+
+function sheetFoot(sh) {
+  const devs = S.state.devices, picked = sh.src === "galeria" ? sh.repo : sh.sha;
+  if (!picked) return h("footer", { class: "sheet-foot" },
+    h("p", { class: "muted small", style: "margin:0" }, sh.src === "galeria" ? "Wybierz wtyczkę z listy." : "Wybierz wtyczkę z magazynu."),
+    sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
+  const chosen = sheetDevices(sh), n = devs.filter(d => chosen.has(d.id)).length;
+  const label = sh.src === "galeria" ? (n > 0 ? `Dodaj i przypisz (${n})` : "Dodaj do magazynu") : `Przypisz (${n})`;
+  return h("footer", { class: "sheet-foot" },
+    sh.src === "galeria" && !sh.promoted && h("div", { class: "plugin-warn", role: "note", style: "padding:10px 12px;border-radius:8px" },
+      h("b", {}, "⚠ Zewnętrzny kod z pełnymi uprawnieniami. "),
+      "Tę wtyczkę pisze społeczność, nie autorzy koligilo ani KOReadera. Na czytniku ma te same uprawnienia co reszta systemu — dostęp do plików, sieci, ustawień. Sprawdź repozytorium (opis, gwiazdki, aktywność), zanim klikniesz „Dodaj”. Instalacja i tak wymaga osobnego potwierdzenia na czytniku."),
+    h("fieldset", { class: "shdev" },
+      h("legend", {}, "Na które czytniki?"),
+      devs.length === 0 ? h("p", { class: "muted small", style: "margin:0" }, "Brak połączonych czytników — wtyczka trafi tylko do magazynu.")
+        : h("div", { class: "devpick" }, devs.map(d => h("label", { class: "row" },
+          h("input", { type: "checkbox", checked: chosen.has(d.id), disabled: sh.busy,
+            onchange: ev => { if (ev.target.checked) chosen.add(d.id); else chosen.delete(d.id); render(); } }),
+          d.name,
+          !d.plugins_allowed && h("span", { class: "muted small", title: PLUG_STATE.consent.hint }, " (" + CONSENT_SHORT + " — przypisanie poczeka)"))))),
+    sh.candidates && h("label", { class: "field" },
+      h("span", {}, "Wiele katalogów *.koplugin w repozytorium — wybierz jeden:"),
+      h("select", { onchange: ev => { sh.path = ev.target.value; } },
+        sh.candidates.map(c => h("option", { value: c === "." ? "" : c, selected: (sh.path === (c === "." ? "" : c)) || undefined }, c)))),
+    h("div", { class: "row" },
+      h("button", { type: "button", id: "sh-go", class: "primary", disabled: sh.busy || (sh.src !== "galeria" && n === 0), onclick: sheetSubmit },
+        sh.busy ? "Pracuję…" : label),
+      h("button", { type: "button", disabled: sh.busy, onclick: closeAddSheet }, "Anuluj")),
+    sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
+}
+
+async function sheetSubmit() {
+  const sh = S.addSheet;
+  sh.busy = true; sh.msg = null; render();
+  let plugin;
+  if (sh.src === "galeria") {
+    const body = { repo: sh.repo.full_name };
+    if (sh.repo.latest_release) body.ref = sh.repo.latest_release;
+    if (sh.path) body.path = sh.path;
+    const res = await apiRaw("POST", "/api/admin/gallery/install", body);
+    if (!res.ok) {
+      if (res.status === 400 && res.data && res.data.candidates) {
+        sh.candidates = res.data.candidates;
+        if (!sh.path) sh.path = sh.candidates[0] === "." ? "" : sh.candidates[0];
+      }
+      sh.msg = { ok: false, text: (res.data && res.data.error) || `HTTP ${res.status}` };
+      sh.busy = false; render();
+      return;
+    }
+    plugin = res.data.plugin;
+  } else {
+    plugin = (S.plugins || []).find(v => v.sha256 === sh.sha);
+  }
+  const names = [], errs = [];
+  for (const devId of sheetDevices(sh)) {
     const d = S.state.devices.find(x => x.id === devId);
     if (!d) continue;
-    const next = { ...(d.plugins || {}), [plugin.dir]: plugin.sha256 };
-    const r2 = await apiRaw("POST", `/api/admin/devices/${devId}/plugins`, { plugins: next });
-    if (!r2.ok) errs.push(`${d.name}: ${(r2.data && r2.data.error) || r2.status}`);
+    const r = await apiRaw("POST", `/api/admin/devices/${devId}/plugins`, { plugins: { ...(d.plugins || {}), [plugin.dir]: plugin.sha256 } });
+    if (r.ok) names.push(d.name); else errs.push(`${d.name}: ${(r.data && r.data.error) || r.status}`);
   }
-  inst.busy = false;
+  sh.busy = false;
+  const what = `„${pluginVerName(plugin)}” (${plugin.version || plugin.sha256.slice(0, 12)})`;
   if (errs.length) {
-    inst.msg = { ok: false, text: "Wtyczka trafiła do magazynu, ale nie udało się przypisać do: " + errs.join("; ") };
-  } else {
-    inst.msg = { ok: true, text: `Zainstalowano „${pluginVerName(plugin)}” (${plugin.version || plugin.sha256.slice(0, 12)}) na wybranych urządzeniach. Potwierdź na czytniku przy najbliższej synchronizacji.` };
-    delete S.galInstall[repo.full_name];
+    sh.msg = { ok: false, text: `${what} jest w magazynie, ale nie udało się przypisać do: ${errs.join("; ")}` };
+    render();
+    refresh();
+    return;
   }
-  render();
-  refresh();
+  S.addSheet = null;
+  S.plugSel = null;
+  S.plugMsg = { ok: true, text: names.length
+    ? `Dodano ${what} i przypisano do: ${names.join(", ")}. ${SYNC_HINT}`
+    : `Dodano ${what} do magazynu. Przypisz ją czytnikom w tabeli (znak ＋).` };
+  await refresh();
+  document.getElementById("b-add")?.focus();
 }
 
 // ---------------------------------------------------------------- start
@@ -2899,17 +2998,17 @@ function showTab(id) {
   const changed = S.tab !== id;
   S.tab = id;
   history.replaceState(null, "", "#" + id);
-  if (changed) { app.scrollTop = 0; S.devEdit = null; }
+  if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; }
   if (id === "konta" || id === "wtyczki") return refresh();
   render();
 }
 
-// Stary hash #galeria (dawna osobna pozycja nawigacji) → zakładka „Wtyczki”,
-// wewnętrzna zakładka „Galeria” (TASK-19).
-if (location.hash === "#galeria") { S.tab = "wtyczki"; S.pluginTab = "galeria"; }
+// Stary hash #galeria (dawna osobna pozycja nawigacji) → „Wtyczki” z otwartym
+// arkuszem „Dodaj wtyczkę” na galerii (TASK-19, TASK-33).
+if (location.hash === "#galeria") { S.tab = "wtyczki"; S.addSheet = newSheet("galeria"); }
 else if (TABS.includes(location.hash.slice(1)) || location.hash === "#ustawienia") S.tab = location.hash.slice(1);
 
-// Skróty: Alt+1…7 — widoki; „/” — wyszukiwarka galerii; strzałki/Home/End w pasku zakładek.
+// Skróty: Alt+1…7 — widoki; „/” — wyszukiwarka galerii (arkusz „Dodaj wtyczkę”); Esc — zamyka arkusz; Tab krąży w arkuszu.
 document.addEventListener("keydown", ev => {
   const inNav = document.getElementById("nav").contains(ev.target);
   const navReady = !document.getElementById("shell").classList.contains("bare");
@@ -2919,16 +3018,29 @@ document.addEventListener("keydown", ev => {
     showTab(TABS[digit[1] - 1]);
     return;
   }
+  if (S.addSheet && S.tab === "wtyczki") {
+    if (ev.key === "Escape" && !S.addSheet.busy) { ev.preventDefault(); closeAddSheet(); return; }
+    if (ev.key === "Tab") {
+      const sheet = document.querySelector(".sheet");
+      const f = sheet ? [...sheet.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]')] : [];
+      if (f.length) {
+        const first = f[0], last = f[f.length - 1], at = document.activeElement;
+        if (!sheet.contains(at) || (ev.shiftKey && at === first)) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
+        else if (!ev.shiftKey && at === last) { ev.preventDefault(); first.focus(); }
+      }
+      return;
+    }
+  }
   const t = ev.target, editing = t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
   if (navReady && ev.key === "/" && !editing && !ev.altKey && !ev.ctrlKey && !ev.metaKey) {
     ev.preventDefault();
-    // Zakładka „Wtyczki” → wewnętrzna zakładka „Galeria”; refresh() zwraca
+    // „Wtyczki” → arkusz „Dodaj wtyczkę” na galerii; refresh() zwraca
     // obietnicę — pole wyszukiwania jest w DOM dopiero po niej.
-    const need = S.tab !== "wtyczki" || S.pluginTab !== "galeria";
+    const need = S.tab !== "wtyczki" || S.plugView !== "main" || !S.addSheet || S.addSheet.src !== "galeria";
     S.tab = "wtyczki";
     history.replaceState(null, "", "#wtyczki");
-    S.pluginTab = "galeria";
-    pluginTabSet("galeria");
+    S.plugView = "main";
+    if (need) S.addSheet = newSheet("galeria");
     Promise.resolve(need ? refresh() : null)
       .then(() => document.getElementById("f-galq")?.focus());
     return;
@@ -2945,6 +3057,7 @@ document.addEventListener("keydown", ev => {
 (async () => {
   await detectMode();
   await refresh();
+  if (S.addSheet) document.getElementById("f-galq")?.focus();
   // prośby o parowanie pojawiają się same — odpytujemy co 3 s, ale nie
   // przerysowujemy, gdy użytkownik pisze w formularzu
   setInterval(() => {
@@ -2955,7 +3068,7 @@ document.addEventListener("keydown", ev => {
     // „Ustawienia wtyczek” (jak „Ustawienia czytników”) odświeżają się: cały stan edycji
     // jest w S (S.pad.drafts), a wartość może się zmienić z innego czytnika.
     // W „Ustawieniach czytników” i „Ustawieniach wtyczek” nie zabieramy fokusu kontrolce (klawiatura)
-    const plugSet = S.tab === "wtyczki" && S.pluginTab === PLUGSET;
+    const plugSet = S.tab === "wtyczki" && S.plugView === PLUGSET;
     const focusedCtl = (S.tab === "wspolne" || plugSet) && document.activeElement !== app && app.contains(document.activeElement);
     if (!typing && !focusedCtl && !S.busy && !S.srvBusy && !S.pad.busy
       && (plugSet || (S.tab !== "konta" && S.tab !== "wtyczki"))) refresh();
