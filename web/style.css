@@ -855,3 +855,6 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .sub p { margin: 0; }
 .addrline { display: flex; flex-direction: column; gap: 10px; }
 .sub > button, .sub > a { align-self: flex-start; }
+.statline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 2px solid var(--border-strong); border-radius: 10px; padding: 9px 13px; }
+.statline .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ctp-green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctp-green) 25%, transparent); flex: none; }
+.statline .grow { flex: 1; min-width: 12em; }

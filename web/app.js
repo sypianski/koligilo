@@ -570,7 +570,25 @@ function panelPane() {
 function serverPane() { return S.mode === "desktop" ? serverTab() : serverTabServe(); }
 
 function serverTabServe() {
-  return explain(`Ten panel działa na serwerze pod adresem ${location.origin} i nim zarządza. Token administratora, który wpisano przy wejściu, jest zapamiętany tylko w tej przeglądarce.`);
+  return h("div", {},
+    h("div", { class: "statline" },
+      h("span", { class: "dot" }),
+      h("span", { class: "grow" }, h("b", {}, "Połączono z " + location.origin),
+        h("span", { class: "muted" }, " · token administratora jest zapamiętany tylko w tej przeglądarce")),
+      h("button", { type: "button", onclick: forgetToken }, "Zapomnij token")),
+    h("section", { class: "sub" },
+      h("h4", {}, "Kopia danych serwera"),
+      h("p", { class: "muted small" }, "Urządzenia, ustawienia czytników, wtyczki i galeria w jednym pliku .tar.gz. Wczytasz ją na innym serwerze poleceniem ", h("code", {}, "koligilo import --data KATALOG plik.tar.gz"), "."),
+      h("button", { onclick: downloadServerExport }, "Pobierz kopię serwera")));
+}
+
+// „Zapomnij token” (TASK-35): usuwa token z tej przeglądarki i wraca do ekranu logowania. Serwer niczego nie zmienia.
+// Token pokazuje się tylko przy pierwszym uruchomieniu serwera, więc ostrzegamy, że nie da się go odzyskać z panelu.
+function forgetToken() {
+  if (!confirm("Zapomnieć token administratora w tej przeglądarce? Żeby wrócić do panelu, trzeba będzie wkleić go ponownie — serwer pokazał go tylko przy pierwszym uruchomieniu, a ten panel nie potrafi go odtworzyć.")) return;
+  try { localStorage.removeItem("koligilo.admin"); } catch {}
+  S.state = null; S.error = null; S.srvMsg = null;
+  refresh();
 }
 
 function shortcutsList() {
@@ -722,14 +740,19 @@ function stopRedirect() {
   srvDo(async () => { await api("POST", "/api/admin/moved", { moved_to: "" }); return { ok: true, text: "Przekierowanie wyłączone." }; });
 }
 
-async function downloadExport() {
+async function downloadArchive(path, name, headers) {
   try {
-    const r = await fetch("/api/local/export", { headers: { [HDR]: "1" } });
+    const r = await fetch(path, { headers: { [HDR]: "1", ...headers } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `koligilo-komputer-${new Date().toISOString().slice(0, 10)}.tar.gz` });
+    const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `${name}-${new Date().toISOString().slice(0, 10)}.tar.gz` });
     document.body.append(a); a.click(); a.remove();
   } catch (e) { S.srvMsg = { ok: false, text: "Nie udało się pobrać kopii: " + e.message }; render(); }
 }
+
+function downloadExport() { return downloadArchive("/api/local/export", "koligilo-komputer"); }
+
+// tryb serwera: ten sam plik co `GET /api/admin/export`, z tokenem w nagłówku (zwykły link nie mógłby go wysłać)
+function downloadServerExport() { return downloadArchive("/api/admin/export", "koligilo-serwer", { Authorization: "Bearer " + adminToken() }); }
 
 // ------------------------------------------------ logowanie (tryb serwer)
 
