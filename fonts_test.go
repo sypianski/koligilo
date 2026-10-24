@@ -1,0 +1,252 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+)
+
+// fakeFont: nagłówek sfnt + wypełnienie (serwer sprawdza tylko nagłówek i rozmiar).
+func fakeFont(magic string, tag byte) []byte {
+	return append([]byte(magic+"\x00\x00\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{tag}, 64)...)
+}
+
+func (e *pluginEnv) fontUpload(name string, b []byte) (int, map[string]any) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", name)
+	fw.Write(b)
+	mw.Close()
+	rec := e.do(e.admin, "POST", "/api/admin/fonts", &buf, mw.FormDataContentType())
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func (e *pluginEnv) fontOK(name string, b []byte) string {
+	c, out := e.fontUpload(name, b)
+	if c != 200 {
+		e.t.Fatalf("upload czcionki %s: %d %v", name, c, out)
+	}
+	return out["font"].(map[string]any)["sha256"].(string)
+}
+
+func (e *pluginEnv) syncFonts(tok string, allowed bool) map[string]any {
+	path := "/api/v1/sync"
+	if allowed {
+		path += "?fonts_allowed=1"
+	}
+	rec := e.do(tok, "GET", path, bytes.NewReader(nil), "")
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	return out
+}
+
+func TestFontUploadRejects(t *testing.T) {
+	e := newPluginEnv(t)
+	ttf := fakeFont("\x00\x01\x00\x00", 1)
+	for name, tc := range map[string]struct {
+		file string
+		b    []byte
+	}{
+		"zły nagłówek":            {"A.ttf", []byte("MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\x00")},
+		"za krótki":               {"A.ttf", []byte("OTTO")},
+		"zły sufiks":              {"A.exe", ttf},
+		"kolekcja jako ttf":       {"A.ttf", fakeFont("ttcf", 1)},
+		"pojedyncza jako ttc":     {"A.ttc", ttf},
+		"kropki w nazwie":         {"A..ttf", ttf},
+		"nazwa z kropką z przodu": {".A.ttf", ttf},
+	} {
+		if c, _ := e.fontUpload(tc.file, tc.b); c != 400 {
+			t.Errorf("%s: %d, chcę 400", name, c)
+		}
+	}
+	// ścieżka w nagłówku części jest obcinana do nazwy pliku
+	if c, out := e.fontUpload("../../Evil.ttf", ttf); c != 200 || out["font"].(map[string]any)["file"] != "Evil.ttf" {
+		t.Errorf("basename: %d %v", c, out)
+	}
+	if c, _ := e.fontUpload("Big.ttf", append(ttf, make([]byte, fontMaxSize)...)); c != 400 {
+		t.Errorf("za duży plik: %d", c)
+	}
+	if c, _ := e.fontUpload("Coll.ttc", fakeFont("ttcf", 2)); c != 200 {
+		t.Errorf("kolekcja ttc: %d", c)
+	}
+	if rec := e.do("zly", "POST", "/api/admin/fonts", bytes.NewReader(nil), ""); rec.Code != 401 {
+		t.Errorf("zły token admina: %d", rec.Code)
+	}
+}
+
+// Zgoda tylko z czytnika; pobranie tylko za zgodą; nowsza wersja tej samej nazwy wypiera starą.
+func TestFontSyncConsentAndSupersede(t *testing.T) {
+	e := newPluginEnv(t)
+	d, tok, _ := e.s.st.Provision("Kobo", "", "", "")
+	v1 := e.fontOK("Charis.ttf", fakeFont("\x00\x01\x00\x00", 1))
+
+	out := e.syncFonts(tok, false)
+	if _, ok := out["fonts"]; ok {
+		t.Fatalf("lista czcionek bez zgody czytnika: %v", out["fonts"])
+	}
+	if rec := e.do(tok, "GET", "/api/v1/fonts/"+v1, nil, ""); rec.Code != 403 {
+		t.Errorf("pobranie bez zgody: %d", rec.Code)
+	}
+	out = e.syncFonts(tok, true)
+	fs, _ := out["fonts"].([]any)
+	if len(fs) != 1 || fs[0].(map[string]any)["sha256"] != v1 || fs[0].(map[string]any)["url"] != "/api/v1/fonts/"+v1 {
+		t.Fatalf("cel: %v", out["fonts"])
+	}
+	if !e.s.st.S.Devices[d.ID].FontsAllowed {
+		t.Error("zgoda nie zapamiętana")
+	}
+	rec := e.do(tok, "GET", "/api/v1/fonts/"+v1, nil, "")
+	if rec.Code != 200 || rec.Header().Get("X-Koligilo-Sha256") != v1 || !bytes.HasPrefix(rec.Body.Bytes(), []byte("\x00\x01\x00\x00")) {
+		t.Fatalf("pobranie: %d", rec.Code)
+	}
+	if rec := e.do(tok, "GET", "/api/v1/fonts/"+strings.Repeat("0", 64), nil, ""); rec.Code != 404 {
+		t.Errorf("nieznana: %d", rec.Code)
+	}
+	if rec := e.do("zly", "GET", "/api/v1/fonts/"+v1, nil, ""); rec.Code != 401 {
+		t.Errorf("zły token urządzenia: %d", rec.Code)
+	}
+	// Cofnięcie zgody znika z zapamiętanego stanu.
+	e.syncFonts(tok, false)
+	if e.s.st.S.Devices[d.ID].FontsAllowed {
+		t.Error("zgoda nie cofnięta")
+	}
+
+	// Nowa wersja tej samej nazwy: tylko ona w celu; panel pokazuje, która jest aktywna.
+	v2 := e.fontOK("Charis.ttf", fakeFont("\x00\x01\x00\x00", 2))
+	fs, _ = e.syncFonts(tok, true)["fonts"].([]any)
+	if len(fs) != 1 || fs[0].(map[string]any)["sha256"] != v2 {
+		t.Fatalf("po nowej wersji: %v", fs)
+	}
+	active := map[string]bool{}
+	for _, f := range e.s.st.ListFonts() {
+		active[f.SHA256] = f.Active
+	}
+	if active[v1] || !active[v2] {
+		t.Errorf("active: %v", active)
+	}
+	// Ten sam plik drugi raz — ta sama wersja, bez duplikatu.
+	if again := e.fontOK("Inna.ttf", fakeFont("\x00\x01\x00\x00", 2)); again != v2 || len(e.s.st.ListFonts()) != 2 {
+		t.Errorf("duplikat: %s, %d", again, len(e.s.st.ListFonts()))
+	}
+	// Usunięcie: znika z celu i z dysku.
+	if rec := e.do(e.admin, "DELETE", "/api/admin/fonts/"+v2, nil, ""); rec.Code != 200 {
+		t.Fatalf("usunięcie: %d", rec.Code)
+	}
+	if _, err := os.Stat(e.s.st.fontPath(v2)); err == nil {
+		t.Error("plik został w magazynie")
+	}
+	fs, _ = e.syncFonts(tok, true)["fonts"].([]any)
+	if len(fs) != 1 || fs[0].(map[string]any)["sha256"] != v1 {
+		t.Errorf("po usunięciu v2 wraca v1: %v", fs)
+	}
+	if rec := e.do(e.admin, "DELETE", "/api/admin/fonts/"+v2, nil, ""); rec.Code != 404 {
+		t.Errorf("ponowne usunięcie: %d", rec.Code)
+	}
+}
+
+// Czcionka z czytnika czeka na akceptację w panelu; do tego czasu nikt jej nie dostaje.
+func TestDeviceFontUploadNeedsApproval(t *testing.T) {
+	e := newPluginEnv(t)
+	_, tok1, _ := e.s.st.Provision("Kobo", "", "", "")
+	_, tok2, _ := e.s.st.Provision("Kindle", "", "", "")
+	post := func(tok, name string, b []byte) (int, map[string]any) {
+		rec := e.do(tok, "POST", "/api/v1/fonts?file="+name, bytes.NewReader(b), "application/octet-stream")
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	if c, _ := post(tok1, "Zly.ttf", []byte("not a font at all")); c != 400 {
+		t.Errorf("zły plik z czytnika: %d", c)
+	}
+	if c, _ := post(tok1, "..%2FEvil.ttf", fakeFont("OTTO", 3)); c != 400 {
+		t.Errorf("ścieżka w ?file=: %d", c)
+	}
+	c, out := post(tok1, "Moja.otf", fakeFont("OTTO", 3))
+	if c != 200 {
+		t.Fatalf("wysyłka: %d %v", c, out)
+	}
+	f := out["font"].(map[string]any)
+	sha := f["sha256"].(string)
+	if f["approved"] != false || f["source"] != SrcDevice {
+		t.Fatalf("wersja z czytnika: %v", f)
+	}
+	if fs, _ := e.syncFonts(tok2, true)["fonts"].([]any); len(fs) != 0 {
+		t.Fatalf("niezaakceptowana trafiła do celu: %v", fs)
+	}
+	if rec := e.do(tok2, "GET", "/api/v1/fonts/"+sha, nil, ""); rec.Code != 403 {
+		t.Errorf("pobranie niezaakceptowanej: %d", rec.Code)
+	}
+	if rec := e.do(e.admin, "POST", "/api/admin/fonts/"+sha+"/approve", nil, ""); rec.Code != 200 {
+		t.Fatalf("akceptacja: %d", rec.Code)
+	}
+	if fs, _ := e.syncFonts(tok2, true)["fonts"].([]any); len(fs) != 1 {
+		t.Errorf("po akceptacji: %v", fs)
+	}
+}
+
+// Inwentarz od czytnika trafia do stanu (bez śmieci), a panel go widzi.
+func TestFontReport(t *testing.T) {
+	e := newPluginEnv(t)
+	d, tok, _ := e.s.st.Provision("Kobo", "", "", "")
+	v := e.fontOK("A.ttf", fakeFont("true", 1))
+	body := map[string]any{"received": 0, "fonts": map[string]any{"installed": []map[string]string{
+		{"file": "A.ttf", "sha256": v}, {"file": "../x.ttf", "sha256": v}, {"file": "B.ttf", "sha256": "zly"},
+	}}}
+	b, _ := json.Marshal(body)
+	if rec := e.do(tok, "POST", "/api/v1/sync", bytes.NewReader(b), "application/json"); rec.Code != http.StatusOK {
+		t.Fatalf("sync POST: %d %s", rec.Code, rec.Body)
+	}
+	inv := e.s.st.S.Devices[d.ID].FontInventory
+	if len(inv) != 1 || inv[0].File != "A.ttf" || inv[0].SHA256 != v {
+		t.Errorf("inwentarz: %v", inv)
+	}
+	rec := e.do(e.admin, "GET", "/api/admin/state", nil, "")
+	var st struct {
+		Fonts   []FontFile `json:"fonts"`
+		Devices []Device   `json:"devices"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &st)
+	if len(st.Fonts) != 1 || len(st.Devices) != 1 || len(st.Devices[0].FontInventory) != 1 {
+		t.Errorf("stan panelu: %+v", st)
+	}
+}
+
+// Przenosiny komputer ↔ serwer (TASK-15) zabierają czcionki, a zmanipulowane archiwum odpada.
+func TestFontsExportImport(t *testing.T) {
+	src, _, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := src.AddFont(fakeFont("\x00\x01\x00\x00", 7), "Moja.ttf", SrcUpload, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := ExportArchive(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	raw := buf.Bytes()
+	dst, _, _ := OpenStore(t.TempDir())
+	if _, err := ImportArchive(dst, nil, bytes.NewReader(raw), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := dst.ListFonts(); len(got) != 1 || got[0].SHA256 != f.SHA256 || got[0].File != "Moja.ttf" {
+		t.Fatalf("po imporcie: %+v", got)
+	}
+	if b, err := os.ReadFile(dst.fontPath(f.SHA256)); err != nil || !bytes.Equal(b, fakeFont("\x00\x01\x00\x00", 7)) {
+		t.Errorf("plik po imporcie: %v", err)
+	}
+	// stan z czcionką, której pliku brak w archiwum
+	var bad bytes.Buffer
+	src2, _, _ := OpenStore(t.TempDir())
+	src2.S.Fonts = map[string]*FontFile{f.SHA256: f}
+	if err := ExportArchive(src2, &bad); err == nil {
+		t.Error("eksport bez pliku czcionki powinien się nie udać")
+	}
+}

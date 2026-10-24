@@ -45,4 +45,13 @@ ok "panel widzi prośbę bez tokenu admina" '[[ $(curl -s "${H[@]}" "http://127.
 curl -s -X POST "${H[@]}" --data '{"approve":true}' "http://127.0.0.1:$PP/api/admin/pair/$PID_" >/dev/null
 DTOK=$(curl -s "http://127.0.0.1:$DP/api/v1/pair/$PID_" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 ok "czytnik dostaje token i synchronizuje się z komputerem" '[ "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync")" = 200 ]'
+# czcionki w trybie komputera (TASK-36): wgranie przez panel (multipart przez guard), pobranie przez API czytników
+printf '\000\001\000\000%0300d' 0 > "$TMP/Moja.ttf"
+FUP=$(curl -s "${H[@]:0:4}" -F "file=@$TMP/Moja.ttf" "http://127.0.0.1:$PP/api/admin/fonts")
+FSHA=$(echo "$FUP" | grep -o '"sha256":"[0-9a-f]*"' | head -1 | cut -d'"' -f4)
+ok "czcionki (komputer): panel przyjmuje wgranie" '[ ${#FSHA} = 64 ]'
+ok "czcionki (komputer): bez zgody czytnika brak listy" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync") != *"\"fonts\""* ]]'
+ok "czcionki (komputer): za zgodą czytnik dostaje listę" '[[ $(curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/sync?fonts_allowed=1") == *"/api/v1/fonts/$FSHA"* ]]'
+ok "czcionki (komputer): pobranie identyczne z wgranym" 'curl -s -H "Authorization: Bearer $DTOK" "http://127.0.0.1:$DP/api/v1/fonts/$FSHA" | cmp -s - "$TMP/Moja.ttf"'
+ok "czcionki (komputer): nasłuch czytników nie wystawia panelu czcionek" '[ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$DP/api/admin/fonts")" = 404 ]'
 exit $fail

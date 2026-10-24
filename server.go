@@ -62,6 +62,7 @@ func (s *Server) Routes() *http.ServeMux {
 	s.accountRoutes(m)
 	s.connRoutes(m)
 	s.pluginRoutes(m)
+	s.fontRoutes(m)
 	s.galleryRoutes(m)
 	s.transferRoutes(m)
 	m.HandleFunc("GET /koligilo.koplugin.zip", servePluginZip)
@@ -179,6 +180,11 @@ func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
 	if vs := s.st.DevicePluginTarget(d, allowed); allowed {
 		out["plugins"] = pluginsWire(vs)
 	}
+	// Czcionki — tak samo: tylko dla czytnika, który sam zgłosił zgodę (PC-018).
+	fontsAllowed := r.URL.Query().Get("fonts_allowed") == "1"
+	if fs := s.st.FontTarget(d, fontsAllowed); fontsAllowed {
+		out["fonts"] = fontsWire(fs)
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -189,6 +195,7 @@ func (s *Server) syncPost(w http.ResponseWriter, r *http.Request, d *Device) {
 		Received int               `json:"received"`
 		Note     string            `json:"note"`
 		Plugins  *PluginReport     `json:"plugins"`
+		Fonts    *FontReport       `json:"fonts"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "zły JSON"})
@@ -204,6 +211,9 @@ func (s *Server) syncPost(w http.ResponseWriter, r *http.Request, d *Device) {
 	rej, err := s.st.Apply(d, set, in.Received, in.Note)
 	if err == nil && in.Plugins != nil {
 		err = s.st.ReportPlugins(d, in.Plugins)
+	}
+	if err == nil && in.Fonts != nil {
+		err = s.st.ReportFonts(d, in.Fonts)
 	}
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -270,6 +280,7 @@ func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 		"values":         vals,
 		"favorites":      s.st.Favorites(),
 		"shared_plugins": s.st.SharedPluginList(),
+		"fonts":          s.st.ListFonts(),
 	})
 }
 

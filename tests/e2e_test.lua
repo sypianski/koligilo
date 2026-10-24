@@ -324,6 +324,37 @@ local bfound = false
 for _i, p in ipairs(bplan.plugins or {}) do if p.dir == "kopad.koplugin" and p.sha256 == dsha then bfound = true end end
 check("wtyczki z urządzenia: drugi czytnik ją widzi w sync po akceptacji", bfound, bplan and J.encode(bplan))
 
+-- czcionki (TASK-36): panel → magazyn → dwa czytniki; plan z prawdziwego sync.lua
+local ftmp = run("mktemp -d"):gsub("%s+$", "")
+local fh = io.open(ftmp .. "/Charis.ttf", "wb"); fh:write("\0\1\0\0" .. ("x"):rep(300)); fh:close()
+local fup = J.decode(run("curl -s -H " .. sh_quote("Authorization: Bearer " .. ADMIN) .. " -F file=@"
+    .. sh_quote(ftmp .. "/Charis.ttf") .. " " .. sh_quote(SERVER .. "/api/admin/fonts")))
+local fsha = fup and fup.font and fup.font.sha256
+check("czcionki: upload z panelu", fsha and #fsha == 64 and fup.font.approved == true, fup and fup.error)
+local _, fnone = http("GET", "/api/v1/sync", kobo.token)
+check("czcionki: bez zgody brak pola fonts", fnone.fonts == nil)
+local _, fcons = http("GET", "/api/v1/sync?fonts_allowed=1", kobo.token)
+local fplan = Sync.fontPlan(fcons.fonts, {}, {})
+check("czcionki: plan install z odpowiedzi serwera", #fplan.install == 1 and fplan.install[1].file == "Charis.ttf" and #fplan.invalid == 0)
+local fcode = tonumber(run("curl -s -o " .. sh_quote(ftmp .. "/dl.ttf") .. " -w '%{http_code}' -H "
+    .. sh_quote("Authorization: Bearer " .. kobo.token) .. " " .. sh_quote(SERVER .. fplan.install[1].url)))
+check("czcionki: pobranie 200 i zgodne sha256", fcode == 200
+    and run("sha256sum " .. sh_quote(ftmp .. "/dl.ttf")):match("^(%x+)") == fplan.install[1].sha256)
+check("czcionki: Bigme bez zgody dostaje 403", tonumber(run("curl -s -o /dev/null -w '%{http_code}' -H "
+    .. sh_quote("Authorization: Bearer " .. bigme.token) .. " " .. sh_quote(SERVER .. fplan.install[1].url))) == 403)
+local _, bf = http("GET", "/api/v1/sync?fonts_allowed=1", bigme.token)
+check("czcionki: drugi czytnik za zgodą dostaje tę samą", #Sync.fontPlan(bf.fonts, {}, {}).install == 1)
+check("czcionki: raport inwentarza przyjęty", (http("POST", "/api/v1/sync", kobo.token, { received = 0, note = "e2e",
+    fonts = { reported = true, installed = { { file = "Charis.ttf", sha256 = fsha } } } })) == 200)
+local _, fst = http("GET", "/api/admin/state", ADMIN)
+local seen
+for _i, d in ipairs(fst.devices) do if d.id == kobo.id and d.font_inventory then seen = d.font_inventory[1] end end
+check("czcionki: panel widzi zainstalowaną na Kobo i zgodę", seen and seen.file == "Charis.ttf" and #fst.fonts == 1)
+check("czcionki: usunięcie w panelu", (http("DELETE", "/api/admin/fonts/" .. fsha, ADMIN)) == 200)
+local _, fgone = http("GET", "/api/v1/sync?fonts_allowed=1", kobo.token)
+check("czcionki: po usunięciu plan zdejmuje zarządzaną", #Sync.fontPlan(fgone.fonts, { ["Charis.ttf"] = fsha }, { ["Charis.ttf"] = 301 }).remove == 1)
+os.execute("rm -rf " .. sh_quote(ftmp))
+
 os.execute("rm -rf " .. sh_quote(ptmp))
 
 print(string.format("%d ok, %d fail", passed, failed))

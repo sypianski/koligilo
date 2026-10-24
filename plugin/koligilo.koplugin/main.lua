@@ -210,6 +210,40 @@ function Koligilo:addToMainMenu(menu_items)
                         })
                     end,
                 })
+                -- Czcionki (TASK-36, PC-018): to dane, nie kod, więc zgoda jest jedna,
+                -- a pliki instalują się bez pytania o każdy — ale też tylko stąd.
+                table.insert(items, {
+                    text = _("Synchronizuj czcionki"),
+                    checked_func = function() return self.settings:isTrue("fonts_allowed") end,
+                    keep_menu_open = true,
+                    callback = function(touchmenu_instance)
+                        local function tell_server()
+                            if NetworkMgr:isOnline() then
+                                UIManager:nextTick(function() self:sync(true) end)
+                            end
+                        end
+                        if self.settings:isTrue("fonts_allowed") then
+                            self.settings:delSetting("fonts_allowed")
+                            self.settings:flush()
+                            tell_server()
+                            return
+                        end
+                        UIManager:show(ConfirmBox:new{
+                            text = _("Pozwolić koligilo pobierać czcionki z serwera do katalogu fonts/koligilo i usuwać stamtąd te, które zniknęły z panelu?\n\nCzcionki instalują się bez pytania o każdą. Pliki są sprawdzane sumą sha256, a koligilo nigdy nie rusza czcionek dodanych ręcznie."),
+                            ok_text = _("Pozwól"),
+                            ok_callback = function()
+                                self.settings:makeTrue("fonts_allowed")
+                                self.settings:flush()
+                                if touchmenu_instance then touchmenu_instance:updateItems() end
+                                tell_server()
+                            end,
+                        })
+                    end,
+                })
+                table.insert(items, {
+                    text = _("Wyślij czcionkę na serwer…"),
+                    sub_item_table_func = function() return self:sendFontMenu() end,
+                })
                 -- TASK-13: przeniesienie wtyczki spoza galerii z czytnika na
                 -- serwer, żeby dało się ją zainstalować na innym bez kabla.
                 table.insert(items, {
@@ -245,7 +279,9 @@ Nigdy nie są przenoszone: rozdzielczość ekranu, podświetlenie, ścieżki fol
 
 Po pobraniu nowych ustawień KOReader poprosi o ponowne uruchomienie.
 
-Wtyczki: gdy włączysz „Pozwól instalować wtyczki”, koligilo zainstaluje wtyczki przypisane w panelu — zawsze dopiero po Twoim potwierdzeniu na czytniku.]]) })
+Wtyczki: gdy włączysz „Pozwól instalować wtyczki”, koligilo zainstaluje wtyczki przypisane w panelu — zawsze dopiero po Twoim potwierdzeniu na czytniku.
+
+Czcionki: gdy włączysz „Synchronizuj czcionki”, koligilo pobierze czcionki z panelu do katalogu fonts/koligilo (bez pytania o każdą). Pojawią się w menu czcionek po ponownym uruchomieniu KOReadera.]]) })
                 end,
             })
             return items
@@ -555,24 +591,25 @@ local function inventory_list(inv)
 end
 
 -- Pobiera ZIP do pamięci (limit rozmiaru); zwraca treść albo nil, błąd.
-local function download(url, token)
+local function download(url, token, limit, accept)
+    limit = limit or PLUGIN_MAX_ZIP
     local chunks, size = {}, 0
     local sink = function(chunk)
         if chunk == nil then return 1 end
         size = size + #chunk
-        if size > PLUGIN_MAX_ZIP then return nil, "za duży plik" end
+        if size > limit then return nil, "za duży plik" end
         chunks[#chunks + 1] = chunk
         return 1
     end
     socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
     local code, headers, status = socket.skip(1, http.request{
         url = url, method = "GET", sink = sink,
-        headers = { ["Authorization"] = "Bearer " .. token, ["Accept"] = "application/zip" },
+        headers = { ["Authorization"] = "Bearer " .. token, ["Accept"] = accept or "application/zip" },
     })
     socketutil:reset_timeout()
     if headers == nil then return nil, T(_("brak połączenia (%1)"), tostring(status or code)) end
     if code ~= 200 then
-        if code == 403 then return nil, _("serwer odmówił (brak zgody albo wtyczka nieprzypisana)") end
+        if code == 403 then return nil, _("serwer odmówił (brak zgody albo plik nieprzypisany)") end
         return nil, T(_("serwer odpowiedział błędem HTTP %1"), code)
     end
     return table.concat(chunks)
@@ -779,13 +816,13 @@ function Koligilo:packPlugin(Archiver, dir)
 end
 
 -- Wysyła surowy ZIP w ciele żądania (nie multipart) — POST /api/v1/plugins.
-local function upload_zip(url, token, body)
+local function upload_zip(url, token, body, ctype)
     local sink = {}
     socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
     local code, headers, status = socket.skip(1, http.request{
         url = url, method = "POST", source = ltn12.source.string(body), sink = ltn12.sink.table(sink),
         headers = {
-            ["Authorization"] = "Bearer " .. token, ["Content-Type"] = "application/zip",
+            ["Authorization"] = "Bearer " .. token, ["Content-Type"] = ctype or "application/zip",
             ["Content-Length"] = tostring(#body), ["Accept"] = "application/json",
         },
     })
@@ -973,6 +1010,170 @@ function Koligilo:handlePlugins(target, inventory, silent, changed)
     return true
 end
 
+---------------------------------------------------------------- czcionki (TASK-36, PC-018)
+-- Katalog fonts/koligilo w danych KOReadera (KOReader skanuje fonts/ rekurencyjnie).
+-- Ruszamy wyłącznie pliki z manifestu .koligilo-fonts.
+
+function Koligilo:fontRoot() return DataStorage:getDataDir() .. "/fonts" end
+function Koligilo:fontDir() return DataStorage:getDataDir() .. "/" .. Sync.FONT_DIR end
+
+--- Manifest (plik → sha256) i to, co faktycznie leży w katalogu (plik → rozmiar).
+function Koligilo:fontState()
+    local dir = self:fontDir()
+    local managed = Sync.fontManifestDecode(read_file(dir .. "/" .. Sync.FONT_MANIFEST, 1048576))
+    local present = {}
+    if is_dir(dir) then
+        for entry in lfs.dir(dir) do
+            if entry:sub(1, 1) ~= "." and Sync.fontNameOK(entry) and is_file(dir .. "/" .. entry) then
+                present[entry] = lfs.attributes(dir .. "/" .. entry, "size")
+            end
+        end
+    end
+    return managed, present
+end
+
+--- Inwentarz dla serwera: zarządzane pliki, które naprawdę leżą na dysku.
+function Koligilo:fontInventory()
+    local managed, present = self:fontState()
+    local list = {}
+    for file, sha in pairs(managed) do
+        if present[file] then list[#list + 1] = { file = file, sha256 = sha } end
+    end
+    table.sort(list, function(a, b) return a.file < b.file end)
+    return list
+end
+
+function Koligilo:saveFontManifest(managed)
+    local dir = self:fontDir()
+    util.makePath(dir)
+    return write_file(dir .. "/" .. Sync.FONT_MANIFEST, Sync.fontManifestEncode(managed))
+end
+
+-- Jedna operacja planu. Zwraca true albo nil, komunikat; manifest zapisuje wołający.
+function Koligilo:applyFontOp(action, f, managed)
+    local dir = self:fontDir()
+    if not Sync.fontNameOK(f.file) then return nil, _("niedozwolona nazwa pliku") end
+    local target = dir .. "/" .. f.file
+    if action == "remove" then
+        if managed[f.file] == nil then return nil, _("pliku nie ma w manifeście koligilo — nie ruszam czcionki dodanej ręcznie") end
+        if is_file(target) then
+            local ok, err = os.remove(target)
+            if not ok then return nil, T(_("nie udało się usunąć (%1)"), tostring(err)) end
+        end
+        managed[f.file] = nil
+        return true
+    end
+    local server, token = self.settings:readSetting("server"), self.settings:readSetting("token")
+    local body, derr = download(server .. f.url, token, Sync.FONT_MAX_SIZE, "application/octet-stream")
+    if not body then return nil, derr end
+    local got = require("ffi/sha2").sha256(body):lower()
+    if got ~= f.sha256 then
+        return nil, T(_("zła suma sha256 pobranego pliku (%1…) — instalacja przerwana"), got:sub(1, 12))
+    end
+    if not Sync.fontMagicOK(f.file, body:sub(1, 4)) then return nil, _("to nie jest plik czcionki") end
+    util.makePath(dir)
+    local tmp = dir .. "/." .. f.file .. ".new"
+    local ok, err = write_file(tmp, body)
+    body = nil -- luacheck: ignore
+    if not ok then purge(tmp); return nil, T(_("nie udało się zapisać pliku (%1)"), tostring(err)) end
+    if action == "update" then os.remove(target) end -- rename na istniejący plik nie zawsze działa (FAT/Android)
+    ok, err = os.rename(tmp, target)
+    if not ok then purge(tmp); return nil, T(_("nie udało się zapisać czcionki (%1)"), tostring(err)) end
+    managed[f.file] = f.sha256
+    return true
+end
+
+--- Etap czcionek po synchronizacji ustawień. Bez pytania (zgoda jest w menu).
+-- Zwraca { n = ile zmieniono, failures = { … }, deferred = ile czeka na następny raz }.
+function Koligilo:handleFonts(target)
+    local managed, present = self:fontState()
+    local plan = Sync.fontPlan(target, managed, present)
+    for _i, p in ipairs(plan.conflict) do logger.warn("koligilo: czcionka", p.file, p.error) end
+    for _i, p in ipairs(plan.invalid) do logger.warn("koligilo: czcionka", p.file, p.error) end
+    local res = { n = 0, failures = {}, deferred = #plan.deferred }
+    if Sync.fontPlanEmpty(plan) then return res end
+    for _i, action in ipairs({ "remove", "update", "install" }) do
+        for _j, f in ipairs(plan[action]) do
+            local okc, ok, err = pcall(self.applyFontOp, self, action, f, managed)
+            if not okc then ok, err = nil, tostring(ok) end
+            if ok then
+                res.n = res.n + 1
+            else
+                res.failures[#res.failures + 1] = f.file .. ": " .. tostring(err)
+                logger.warn("koligilo: czcionka", action, f.file, err)
+            end
+        end
+    end
+    local ok, err = self:saveFontManifest(managed)
+    if not ok then
+        res.failures[#res.failures + 1] = T(_("manifest: %1"), tostring(err))
+        logger.warn("koligilo: manifest czcionek", err)
+    end
+    return res
+end
+
+---------------------------------------------------------------- wysyłka czcionki na serwer
+
+--- Czcionki leżące bezpośrednio w fonts/ (nie nasze, nie z podkatalogów), które wolno wysłać.
+function Koligilo:sendableFonts()
+    local root = self:fontRoot()
+    local out = {}
+    if not is_dir(root) then return out end
+    for entry in lfs.dir(root) do
+        local p = root .. "/" .. entry
+        local size = is_file(p) and lfs.attributes(p, "size") or 0
+        if Sync.fontNameOK(entry) and size >= 12 and size <= Sync.FONT_MAX_SIZE then
+            out[#out + 1] = { file = entry, size = size }
+        end
+    end
+    table.sort(out, function(a, b) return a.file:lower() < b.file:lower() end)
+    return out
+end
+
+function Koligilo:sendFontToServer(file)
+    local msg = InfoMessage:new{ text = _("Wysyłam…") }
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+    local body = read_file(self:fontRoot() .. "/" .. file)
+    if not body or not Sync.fontMagicOK(file, body:sub(1, 4)) then
+        UIManager:close(msg)
+        UIManager:show(InfoMessage:new{ text = _("To nie wygląda na plik czcionki — nie wysyłam.") })
+        return
+    end
+    local server, token = self.settings:readSetting("server"), self.settings:readSetting("token")
+    local code, data, neterr = upload_zip(server .. "/api/v1/fonts?file=" .. file:gsub("[^%w%.%-_]", function(c)
+        return string.format("%%%02X", c:byte())
+    end), token, body, "application/octet-stream")
+    UIManager:close(msg)
+    if code == 200 and data and data.font then
+        UIManager:show(InfoMessage:new{ text = _("Wysłano. Zaakceptuj w panelu koligilo, zanim trafi na inne czytniki.") })
+    else
+        UIManager:show(InfoMessage:new{ text = T(_("Nie udało się wysłać czcionki: %1"), error_text(code, data, neterr)) })
+    end
+end
+
+function Koligilo:sendFontMenu()
+    local list = self:sendableFonts()
+    if #list == 0 then
+        return { { text = _("Brak czcionek do wysłania w katalogu fonts"), enabled_func = function() return false end } }
+    end
+    local items = {}
+    for _i, f in ipairs(list) do
+        items[#items + 1] = {
+            text = T(_("%1 (%2 KB)"), f.file, math.floor(f.size / 1024)),
+            keep_menu_open = true,
+            callback = function()
+                UIManager:show(ConfirmBox:new{
+                    text = T(_("Wysłać czcionkę „%1” na serwer koligilo?\n\nBędzie widoczna w panelu i wymaga akceptacji administratora, zanim trafi na inne czytniki."), f.file),
+                    ok_text = _("Wyślij"),
+                    ok_callback = function() self:sendFontToServer(f.file) end,
+                })
+            end,
+        }
+    end
+    return items
+end
+
 ---------------------------------------------------------------- synchronizacja
 
 function Koligilo:sync(silent, after_move)
@@ -985,8 +1186,12 @@ function Koligilo:sync(silent, after_move)
 
     -- zgoda na wtyczki idzie wyłącznie z czytnika; bez parametru = zgoda cofnięta
     local plugins_allowed = self.settings:isTrue("plugins_allowed")
+    local fonts_allowed = self.settings:isTrue("fonts_allowed") -- jak wyżej: zgoda tylko z czytnika
+    local query = {}
+    if plugins_allowed then query[#query + 1] = "plugins_allowed=1" end
+    if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
     local code, remote, neterr = request("GET", server .. "/api/v1/sync"
-        .. (plugins_allowed and "?plugins_allowed=1" or ""), token)
+        .. (#query > 0 and ("?" .. table.concat(query, "&")) or ""), token)
     -- TASK-15: dane przeniesiono na inny serwer — ten sam token, nowy adres.
     -- Stary serwer jest zaufany (zna nasz token), więc przyjmujemy jego
     -- wskazanie, ale tylko w bezpiecznej postaci (Sync.movedURL) i raz na sync.
@@ -1045,6 +1250,17 @@ function Koligilo:sync(silent, after_move)
             if #sent_results > 0 then body.plugins.results = sent_results end
         end
     end
+    if fonts_allowed then
+        -- `reported` zawsze: pusta lista Lua zakodowałaby się jako {} (serwer czeka listy),
+        -- a bez raportu panel nie dowiedziałby się, że ostatnia czcionka zniknęła
+        local fok, installed = pcall(self.fontInventory, self)
+        if fok then
+            body.fonts = { reported = true }
+            if #installed > 0 then body.fonts.installed = installed end
+        else
+            logger.warn("koligilo: inwentarz czcionek", installed)
+        end
+    end
     local c2, resp, neterr2 = request("POST", server .. "/api/v1/sync", token, body)
     if c2 ~= 200 then
         return fail(T(_("Wysyłanie ustawień nie powiodło się: %1"), error_text(c2, resp, neterr2)))
@@ -1070,6 +1286,18 @@ function Koligilo:sync(silent, after_move)
     if next(plan.skipped) then logger.warn("koligilo: pominięte", plan.skipped) end
     if next(plan.masked) then logger.warn("koligilo: nie wysłano kont z krótkotrwałym tokenem Dropbox", plan.masked) end
 
+    -- Czcionki: po ustawieniach, przed wtyczkami (te mogą pokazać okno i zakończyć sync).
+    local font_res
+    if fonts_allowed and type(remote.fonts) == "table" then
+        local okf, res = pcall(self.handleFonts, self, remote.fonts)
+        if okf then
+            font_res = res
+        else
+            logger.warn("koligilo: czcionki", res)
+            font_res = { n = 0, failures = { tostring(res):sub(1, 200) }, deferred = 0 }
+        end
+    end
+
     -- Etap wtyczek dopiero po ustawieniach i tylko ze stanem od serwera,
     -- o który czytnik sam poprosił. Wyjątek nie psuje synchronizacji.
     if plugins_allowed and inventory and type(remote.plugins) == "table" then
@@ -1082,8 +1310,17 @@ function Koligilo:sync(silent, after_move)
         end
     end
 
+    local font_text
+    if font_res and (font_res.n > 0 or #font_res.failures > 0) then
+        font_text = T(_("Zmieniono czcionki: %1. Pojawią się w menu czcionek po ponownym uruchomieniu KOReadera."), font_res.n)
+        if font_res.deferred > 0 then font_text = font_text .. " " .. T(_("Kolejne (%1) pobiorą się przy następnej synchronizacji."), font_res.deferred) end
+        if #font_res.failures > 0 then font_text = font_text .. "\n\n" .. _("Nie udało się:") .. "\n" .. table.concat(font_res.failures, "\n") end
+    end
     if changed > 0 then
-        UIManager:askForRestart(T(_("koligilo pobrał %1 zmienionych ustawień z innych urządzeń. KOReader musi się uruchomić ponownie, aby je zastosować."), changed))
+        UIManager:askForRestart(T(_("koligilo pobrał %1 zmienionych ustawień z innych urządzeń. KOReader musi się uruchomić ponownie, aby je zastosować."), changed)
+            .. (font_text and ("\n\n" .. font_text) or ""))
+    elseif font_text and not silent then
+        UIManager:show(InfoMessage:new{ text = font_text })
     elseif not silent then
         local text = n_up > 0 and T(_("Wysłano %1 ustawień do innych urządzeń. Tu wszystko jest aktualne."), n_up)
             or _("Wszystko aktualne — nic do wysłania ani pobrania.")

@@ -35,6 +35,11 @@ type Device struct {
 	PluginInventory []InstalledPlugin `json:"plugin_inventory,omitempty"`
 	PluginResults   []PluginResult    `json:"plugin_results,omitempty"`
 	PluginReportAt  *time.Time        `json:"plugin_report_at,omitempty"`
+
+	// Czcionki (fonts.go, PC-018). FontsAllowed ustawia wyłącznie czytnik.
+	FontsAllowed  bool            `json:"fonts_allowed"`
+	FontInventory []InstalledFont `json:"font_inventory,omitempty"`
+	FontReportAt  *time.Time      `json:"font_report_at,omitempty"`
 }
 
 type SyncReport struct {
@@ -67,7 +72,8 @@ type State struct {
 	AdminHash string                    `json:"admin_hash"`
 	Devices   map[string]*Device        `json:"devices"`
 	Values    map[string]*Value         `json:"values"`
-	Plugins   map[string]*PluginVersion `json:"plugins"` // sha256 → wersja
+	Plugins   map[string]*PluginVersion `json:"plugins"`         // sha256 → wersja
+	Fonts     map[string]*FontFile      `json:"fonts,omitempty"` // sha256 → plik czcionki (fonts.go)
 	// Favorites (TASK-20): ulubione wtyczki, wspólne dla panelu na komputerze i
 	// na serwerze — "gh:owner/repo" (galeria) albo "dir:nazwa.koplugin"
 	// (magazyn); prefiks rozróżnia obie przestrzenie nazw. Nie oznacza
@@ -116,6 +122,9 @@ func OpenStore(dir string) (*Store, string, error) {
 	}
 	if st.S.Plugins == nil {
 		st.S.Plugins = map[string]*PluginVersion{}
+	}
+	if st.S.Fonts == nil {
+		st.S.Fonts = map[string]*FontFile{}
 	}
 	st.S.pending = map[string]*PairRequest{}
 	// Pierwsze uruchomienie: generujemy token administratora i zwracamy go

@@ -24,6 +24,7 @@ import (
 //   manifest.json          {"format":1,"koligilo":"0.4.0","created":"…"}
 //   state.json             urządzenia (z hashami tokenów), wartości, wtyczki
 //   plugins/<sha256>.zip   magazyn wtyczek (nazwa = suma bajtów, sprawdzana przy imporcie)
+//   fonts/<sha256>         magazyn czcionek (TASK-36; to samo, bez rozszerzenia)
 //   gallery.json, gallery-updates.json   cache galerii (opcjonalne)
 //
 // Tokeny urządzeń leżą w state.json jako hashe, więc przechodzą bez zmian:
@@ -73,6 +74,10 @@ func ExportArchive(st *Store, w io.Writer) error {
 	for sha := range st.S.Plugins {
 		shas = append(shas, sha)
 	}
+	fshas := make([]string, 0, len(st.S.Fonts))
+	for sha := range st.S.Fonts {
+		fshas = append(fshas, sha)
+	}
 	st.mu.Unlock()
 	if err != nil {
 		return err
@@ -102,6 +107,15 @@ func ExportArchive(st *Store, w io.Writer) error {
 			return err
 		}
 	}
+	for _, sha := range fshas {
+		b, err := os.ReadFile(st.fontPath(sha))
+		if err != nil {
+			return fmt.Errorf("brak pliku czcionki %s w magazynie: %w", sha[:12], err)
+		}
+		if err := add("fonts/"+sha, b); err != nil {
+			return err
+		}
+	}
 	for _, n := range galleryFiles {
 		if b, err := os.ReadFile(filepath.Join(st.Dir(), n)); err == nil {
 			if err := add(n, b); err != nil {
@@ -117,10 +131,10 @@ func ExportArchive(st *Store, w io.Writer) error {
 
 // readArchive rozpakowuje archiwum do pamięci i sprawdza jego spójność,
 // zanim cokolwiek dotknie dysku.
-func readArchive(r io.Reader) (*State, map[string][]byte, map[string][]byte, error) {
+func readArchive(r io.Reader) (*State, map[string][]byte, map[string][]byte, map[string][]byte, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, nil, nil, errors.New("to nie jest archiwum koligilo (tar.gz)")
+		return nil, nil, nil, nil, errors.New("to nie jest archiwum koligilo (tar.gz)")
 	}
 	tr := tar.NewReader(gz)
 	files := map[string][]byte{}
@@ -131,31 +145,31 @@ func readArchive(r io.Reader) (*State, map[string][]byte, map[string][]byte, err
 			break
 		}
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("uszkodzone archiwum: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("uszkodzone archiwum: %w", err)
 		}
 		if h.Typeflag != tar.TypeReg {
 			continue
 		}
 		total += h.Size
 		if total > transferMaxSize {
-			return nil, nil, nil, errors.New("archiwum za duże")
+			return nil, nil, nil, nil, errors.New("archiwum za duże")
 		}
 		b, err := io.ReadAll(io.LimitReader(tr, h.Size))
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		files[h.Name] = b
 	}
 	var man transferManifest
 	if err := json.Unmarshal(files["manifest.json"], &man); err != nil || man.Format == 0 {
-		return nil, nil, nil, errors.New("brak manifest.json — to nie jest eksport koligilo")
+		return nil, nil, nil, nil, errors.New("brak manifest.json — to nie jest eksport koligilo")
 	}
 	if man.Format > transferFormat {
-		return nil, nil, nil, fmt.Errorf("archiwum w nowszym formacie (%d) — zaktualizuj koligilo na tym serwerze", man.Format)
+		return nil, nil, nil, nil, fmt.Errorf("archiwum w nowszym formacie (%d) — zaktualizuj koligilo na tym serwerze", man.Format)
 	}
 	var s State
 	if err := json.Unmarshal(files["state.json"], &s); err != nil {
-		return nil, nil, nil, errors.New("state.json w archiwum uszkodzony")
+		return nil, nil, nil, nil, errors.New("state.json w archiwum uszkodzony")
 	}
 	if s.Devices == nil {
 		s.Devices = map[string]*Device{}
@@ -174,13 +188,36 @@ func readArchive(r io.Reader) (*State, map[string][]byte, map[string][]byte, err
 		sha := strings.TrimSuffix(strings.TrimPrefix(name, "plugins/"), ".zip")
 		sum := sha256.Sum256(b)
 		if !shaRe.MatchString(sha) || !strings.HasSuffix(name, ".zip") || hex.EncodeToString(sum[:]) != sha {
-			return nil, nil, nil, fmt.Errorf("plik %s w archiwum nie zgadza się z sumą sha256", name)
+			return nil, nil, nil, nil, fmt.Errorf("plik %s w archiwum nie zgadza się z sumą sha256", name)
 		}
 		plugins[sha] = b
 	}
 	for sha := range s.Plugins {
 		if plugins[sha] == nil {
-			return nil, nil, nil, fmt.Errorf("w archiwum brak pliku wtyczki %s", sha)
+			return nil, nil, nil, nil, fmt.Errorf("w archiwum brak pliku wtyczki %s", sha)
+		}
+	}
+	if s.Fonts == nil {
+		s.Fonts = map[string]*FontFile{}
+	}
+	fonts := map[string][]byte{}
+	for name, b := range files {
+		if !strings.HasPrefix(name, "fonts/") {
+			continue
+		}
+		sha := strings.TrimPrefix(name, "fonts/")
+		sum := sha256.Sum256(b)
+		if !shaRe.MatchString(sha) || hex.EncodeToString(sum[:]) != sha {
+			return nil, nil, nil, nil, fmt.Errorf("plik %s w archiwum nie zgadza się z sumą sha256", name)
+		}
+		fonts[sha] = b
+	}
+	for sha, f := range s.Fonts {
+		if fonts[sha] == nil {
+			return nil, nil, nil, nil, fmt.Errorf("w archiwum brak pliku czcionki %s", sha)
+		}
+		if checkFontName(f.File) != nil || checkFontData(f.File, fonts[sha]) != nil {
+			return nil, nil, nil, nil, fmt.Errorf("czcionka %s w archiwum jest nieprawidłowa", sha)
 		}
 	}
 	gal := map[string][]byte{}
@@ -189,7 +226,7 @@ func readArchive(r io.Reader) (*State, map[string][]byte, map[string][]byte, err
 			gal[n] = b
 		}
 	}
-	return &s, plugins, gal, nil
+	return &s, plugins, fonts, gal, nil
 }
 
 func writeAtomic(p string, b []byte) error {
@@ -210,7 +247,7 @@ func writeAtomic(p string, b []byte) error {
 // zapisem robi kopię <dane>/.pre-import-<czas>/. Hash tokenu administratora
 // celu zostaje; MovedTo jest czyszczone (to teraz jest serwer właściwy).
 func ImportArchive(st *Store, gal *Gallery, r io.Reader, replace bool) (ImportSummary, error) {
-	s, plugins, galFiles, err := readArchive(r)
+	s, plugins, fonts, galFiles, err := readArchive(r)
 	if err != nil {
 		return ImportSummary{}, err
 	}
@@ -241,6 +278,19 @@ func ImportArchive(st *Store, gal *Gallery, r io.Reader, replace bool) (ImportSu
 			return ImportSummary{}, err
 		}
 	}
+	if len(fonts) > 0 {
+		if err := os.MkdirAll(st.fontDir(), 0o700); err != nil {
+			return ImportSummary{}, err
+		}
+	}
+	for sha, b := range fonts {
+		if _, err := os.Stat(st.fontPath(sha)); err == nil {
+			continue
+		}
+		if err := writeAtomic(st.fontPath(sha), b); err != nil {
+			return ImportSummary{}, err
+		}
+	}
 	for n, b := range galFiles {
 		if err := writeAtomic(filepath.Join(dir, n), b); err != nil {
 			return ImportSummary{}, err
@@ -248,6 +298,7 @@ func ImportArchive(st *Store, gal *Gallery, r io.Reader, replace bool) (ImportSu
 	}
 	st.mu.Lock()
 	st.S.Devices, st.S.Values, st.S.Plugins = s.Devices, s.Values, s.Plugins
+	st.S.Fonts = s.Fonts
 	st.S.Favorites = s.Favorites
 	st.S.MovedTo = ""
 	st.S.pending = map[string]*PairRequest{}

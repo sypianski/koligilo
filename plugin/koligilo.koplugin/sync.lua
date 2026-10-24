@@ -581,6 +581,119 @@ function Sync.markerDecode(s)
     return t
 end
 
+---------------------------------------------------------------- czcionki (PC-018, TASK-36)
+--
+-- Czcionki to dane, nie kod: po jednorazowej zgodzie w menu instalujemy je bez
+-- pytania o każdą, ale wyłącznie do <dane>/fonts/koligilo/ i tylko tak, że
+-- ruszamy pliki wpisane do manifestu ".koligilo-fonts" (ręcznie dodanych
+-- czcionek, także w tym katalogu, nigdy nie nadpisujemy ani nie kasujemy).
+
+Sync.FONT_DIR = "fonts/koligilo"           -- względem katalogu danych KOReadera
+Sync.FONT_MANIFEST = ".koligilo-fonts"
+Sync.FONT_MAX_SIZE = 40 * 1024 * 1024      -- jak fontMaxSize w Go
+Sync.FONT_MAX_BATCH = 150 * 1024 * 1024    -- ile bajtów pobieramy w jednej synchronizacji
+
+--- Nazwa pliku czcionki (tak jak fontNameRe w Go): bez ścieżki, bez „..”, rozszerzenie sfnt.
+function Sync.fontNameOK(name)
+    if type(name) ~= "string" or #name > 100 or name:find("..", 1, true) then return false end
+    if not name:match("^[%w][%w ._+()%-]*$") then return false end
+    local ext = name:match("%.(%w+)$")
+    ext = ext and ext:lower()
+    return ext == "ttf" or ext == "otf" or ext == "ttc" or ext == "otc"
+end
+
+--- Nagłówek pliku: TrueType, OpenType/CFF, „true” albo kolekcja; kolekcje tylko jako .ttc/.otc.
+function Sync.fontMagicOK(name, head)
+    if type(head) ~= "string" or #head < 4 then return false end
+    local m = head:sub(1, 4)
+    local coll = m == "ttcf"
+    if not (coll or m == "\0\1\0\0" or m == "OTTO" or m == "true") then return false end
+    local ext = (name:match("%.(%w+)$") or ""):lower()
+    return coll == (ext == "ttc" or ext == "otc")
+end
+
+--- Manifest: linie plik=sha256 (bez load).
+function Sync.fontManifestEncode(m)
+    local files = {}
+    for f in pairs(m) do files[#files + 1] = f end
+    table.sort(files)
+    local lines = { "# koligilo: czcionki z tej listy są zarządzane przez koligilo (PC-018)" }
+    for _, f in ipairs(files) do lines[#lines + 1] = f .. "=" .. m[f] end
+    return table.concat(lines, "\n") .. "\n"
+end
+
+function Sync.fontManifestDecode(s)
+    local m = {}
+    for line in (s or ""):gmatch("[^\n]+") do
+        local f, sha = line:match("^(.-)=(%x+)$")
+        if f and Sync.fontNameOK(f) and sha_ok(sha) then m[f] = sha end
+    end
+    return m
+end
+
+--- Plan synchronizacji czcionek.
+-- target: lista z GET /api/v1/sync (pole "fonts") — PEŁNY stan docelowy;
+--   nil = serwer nie podał stanu (brak zgody / stary serwer) → nic nie robimy.
+-- managed: plik → sha256 z manifestu; present: plik → rozmiar (co faktycznie leży w katalogu).
+-- Zwraca { install, update, remove, conflict, invalid, deferred }:
+--   install/update to wpisy z target (+ old_sha256), remove ma plik i sha256,
+--   conflict: plik o tej nazwie leży w naszym katalogu poza manifestem (nie nadpisujemy),
+--   deferred: przekroczono budżet pobierania na jedną synchronizację (reszta przy następnej).
+function Sync.fontPlan(target, managed, present)
+    local plan = { install = {}, update = {}, remove = {}, conflict = {}, invalid = {}, deferred = {} }
+    if type(target) ~= "table" then return plan end
+    managed, present = managed or {}, present or {}
+    local wanted, budget = {}, Sync.FONT_MAX_BATCH
+    local function take(list, t)
+        local size = tonumber(t.size) or 0
+        if size > budget then
+            plan.deferred[#plan.deferred + 1] = t
+        else
+            budget = budget - size
+            list[#list + 1] = t
+        end
+    end
+    for _, t in ipairs(target) do
+        local file = type(t) == "table" and t.file or nil
+        local size = type(t) == "table" and tonumber(t.size) or nil
+        if type(t) ~= "table" or not Sync.fontNameOK(file) or not sha_ok(t.sha256) or not rel_url_ok(t.url)
+            or not size or size < 12 or size > Sync.FONT_MAX_SIZE then
+            plan.invalid[#plan.invalid + 1] = { file = tostring(file), sha256 = type(t) == "table" and t.sha256 or nil,
+                error = "nieprawidłowy wpis czcionki od serwera" }
+        elseif wanted[file] then
+            plan.invalid[#plan.invalid + 1] = { file = file, sha256 = t.sha256, error = "czcionka podana dwa razy" }
+        else
+            wanted[file] = true
+            if managed[file] == nil then
+                if present[file] ~= nil then
+                    plan.conflict[#plan.conflict + 1] = { file = file, sha256 = t.sha256,
+                        error = "w katalogu czcionek koligilo leży już plik o tej nazwie, którego koligilo nie dodało — nie nadpisuję" }
+                else
+                    take(plan.install, t)
+                end
+            elseif present[file] == nil then
+                take(plan.install, t) -- plik zniknął z dysku, manifest został
+            elseif managed[file] ~= t.sha256 or present[file] ~= size then
+                local u = {}
+                for k, v in pairs(t) do u[k] = v end
+                u.old_sha256 = managed[file]
+                take(plan.update, u)
+            end
+        end
+    end
+    local files = {}
+    for f in pairs(managed) do files[#files + 1] = f end
+    table.sort(files)
+    for _, f in ipairs(files) do
+        if not wanted[f] then plan.remove[#plan.remove + 1] = { file = f, sha256 = managed[f] } end
+    end
+    return plan
+end
+
+function Sync.fontPlanEmpty(plan)
+    return #plan.install == 0 and #plan.update == 0 and #plan.remove == 0
+end
+
 ---------------------------------------------------------------- przenosiny serwera
 
 -- Host w sieci prywatnej / Tailscale / mDNS — tam http jest dopuszczalne

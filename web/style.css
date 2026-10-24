@@ -972,3 +972,9 @@ button.grp-more { border: 1px solid var(--border); border-radius: 5px; padding: 
   .grp-table { display: none; }
   .grp-cards { display: flex; }
 }
+
+/* Czcionki (TASK-36) */
+ul.plain { list-style: none; margin: 0; padding: 0; }
+ul.plain li { padding: 6px 0; }
+ul.plain li + li { border-top: 1px solid var(--border); }
+ul.plain li.row .grow { flex: 1 1 14em; }

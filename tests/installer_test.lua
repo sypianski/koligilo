@@ -53,6 +53,10 @@ P["logger"] = function() return { warn = function() end } end
 P["gettext"] = function() return function(s) return s end end
 P["libs/libkoreader-lfs"] = function() return {
     attributes = function(p, what)
+        if what == "size" then
+            local n = tonumber(out("stat -c %s " .. q(p) .. " 2>/dev/null"))
+            return n
+        end
         if sh("test -L " .. q(p)) then return "link" end
         if sh("test -d " .. q(p)) then return "directory" end
         if sh("test -f " .. q(p)) then return "file" end
@@ -278,6 +282,76 @@ if body then
     check("packPlugin: ZIP nie zawiera symlinku ani znacznika", not names:find("lib/link", 1, true)
         and not names:find("kopad.koplugin/.koligilo", 1, true), names)
 end
+
+---------------------------------------------------------------- czcionki (TASK-36, PC-018)
+local FDIR = DATA .. "/fonts/koligilo"
+local function sha_of(body) local f = TMP .. "/fsha.in"; spit(f, body); return out("sha256sum " .. q(f)):match("^(%x+)") end
+local function serve_font(file, body)
+    local sha = sha_of(body)
+    served["http://srv/api/v1/fonts/" .. sha] = body
+    return { file = file, sha256 = sha, size = #body, url = "/api/v1/fonts/" .. sha }
+end
+local TTF = "\0\1\0\0" .. ("x"):rep(200)
+local ftA = serve_font("Charis.ttf", TTF .. "A")
+local ftB = serve_font("Gentium Book.otf", "OTTO" .. ("y"):rep(200))
+sh("mkdir -p " .. q(DATA .. "/fonts"))
+spit(DATA .. "/fonts/Reczna.ttf", TTF .. "R")           -- ręcznie dodana, w katalogu głównym
+spit(DATA .. "/fonts/Za-mala.ttf", "short")             -- za mała, by ją wysłać
+sh("mkdir -p " .. q(FDIR))
+spit(FDIR .. "/Obca.ttf", TTF .. "O")                   -- w naszym katalogu, ale nie z manifestu
+
+local r = K:handleFonts({ ftA, ftB })
+check("font: instalacja dwóch", r.n == 2 and #r.failures == 0, table.concat(r.failures, "; "))
+check("font: pliki na miejscu", slurp(FDIR .. "/Charis.ttf") == TTF .. "A" and slurp(FDIR .. "/Gentium Book.otf") ~= nil)
+local mfont = Sync.fontManifestDecode(slurp(FDIR .. "/" .. Sync.FONT_MANIFEST))
+check("font: manifest zawiera tylko zainstalowane", mfont["Charis.ttf"] == ftA.sha256 and mfont["Gentium Book.otf"] == ftB.sha256 and mfont["Obca.ttf"] == nil)
+check("font: brak plików roboczych", out("ls -a " .. q(FDIR) .. " | grep '\\.new$' || true") == "")
+local inv = K:fontInventory()
+check("font: inwentarz", #inv == 2 and inv[1].file == "Charis.ttf" and inv[2].file == "Gentium Book.otf")
+
+-- ponowna synchronizacja bez zmian nic nie robi
+check("font: bez zmian", K:handleFonts({ ftA, ftB }).n == 0)
+
+-- konflikt z plikiem obcym w naszym katalogu
+local ftObca = serve_font("Obca.ttf", TTF .. "N")
+r = K:handleFonts({ ftA, ftB, ftObca })
+check("font: konflikt nie nadpisuje", r.n == 0 and slurp(FDIR .. "/Obca.ttf") == TTF .. "O")
+
+-- zła suma: nic nie zapisane, stary plik nietknięty
+local ftA2 = serve_font("Charis.ttf", TTF .. "A2")
+local badf = {}; for k, v in pairs(ftA2) do badf[k] = v end
+badf.sha256 = ("0"):rep(64)
+r = K:handleFonts({ badf, ftB })
+check("font: zła suma — błąd", r.n == 0 and #r.failures == 1 and r.failures[1]:find("sha256"), r.failures[1])
+check("font: zła suma — stary plik nietknięty", slurp(FDIR .. "/Charis.ttf") == TTF .. "A")
+check("font: zła suma — brak śmieci", out("ls -a " .. q(FDIR) .. " | grep '\\.new$' || true") == "")
+
+-- poprawna suma, ale to nie czcionka (np. strona HTML z proxy)
+local html = "<html>" .. ("z"):rep(200)
+local ftH = serve_font("Html.ttf", html)
+r = K:handleFonts({ ftA, ftB, ftH })
+check("font: nie-czcionka odrzucona", r.n == 0 and #r.failures == 1 and slurp(FDIR .. "/Html.ttf") == nil)
+
+-- aktualizacja
+r = K:handleFonts({ ftA2, ftB })
+check("font: update", r.n == 1 and slurp(FDIR .. "/Charis.ttf") == TTF .. "A2"
+    and Sync.fontManifestDecode(slurp(FDIR .. "/" .. Sync.FONT_MANIFEST))["Charis.ttf"] == ftA2.sha256)
+
+-- usunięcie: tylko to, co w manifeście
+r = K:handleFonts({ ftB })
+check("font: usunięcie zarządzanej", r.n == 1 and slurp(FDIR .. "/Charis.ttf") == nil)
+r = K:handleFonts({})
+check("font: pusty cel czyści manifest", r.n == 1 and slurp(FDIR .. "/Gentium Book.otf") == nil
+    and next(Sync.fontManifestDecode(slurp(FDIR .. "/" .. Sync.FONT_MANIFEST))) == nil)
+check("font: ręcznych nie ruszamy", slurp(FDIR .. "/Obca.ttf") == TTF .. "O" and slurp(DATA .. "/fonts/Reczna.ttf") == TTF .. "R")
+check("font: pusty inwentarz", #K:fontInventory() == 0)
+
+-- niedozwolona nazwa i wysyłka
+ok, err = K:applyFontOp("install", { file = "../x.ttf", sha256 = ftA.sha256, url = ftA.url }, {})
+check("font: ścieżka w nazwie odrzucona", not ok)
+local sf = K:sendableFonts()
+check("font: do wysłania tylko Reczna.ttf", #sf == 1 and sf[1].file == "Reczna.ttf", #sf)
+
 
 sh("rm -rf " .. q(TMP))
 print(string.format("%d ok, %d fail", passed, failed))

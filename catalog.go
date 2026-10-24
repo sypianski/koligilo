@@ -83,7 +83,7 @@ var Catalog = []Group{
 	{
 		ID: "fonty", Category: "wyglad", Name: "Wybór czcionek",
 		Description: "Domyślna czcionka, czcionki rodzin i czcionka zapasowa.",
-		Warning:     "Działa tylko, jeśli te same pliki czcionek są zainstalowane na urządzeniu docelowym — inaczej KOReader wróci do czcionki domyślnej.",
+		Warning:     "Synchronizuje tylko wybór czcionki, nie same pliki. Działa, jeśli te same czcionki są na urządzeniu docelowym — inaczej KOReader wróci do domyślnej. Pliki dostarczysz w zakładce „Czcionki”.",
 		Entries:     keys(readerFile, "cre_font", "cre_font_family_fonts", "fallback_font"),
 	},
 	{

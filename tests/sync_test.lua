@@ -297,6 +297,43 @@ check("znacznik: wstrzyknięta linia nie podmienia sha", md.sha256 == SHA_A)
 check("znacznik: zła sha ignorowana", Sync.markerDecode("sha256=zzz\n").sha256 == nil)
 check("znacznik: pusty plik", next(Sync.markerDecode("")) == nil)
 
+-- czcionki (TASK-36, PC-018) ----------------------------------------------------
+local SHA1, SHA2 = string.rep("a", 64), string.rep("b", 64)
+local function font(file, sha, size) return { file = file, sha256 = sha, size = size or 1000, url = "/api/v1/fonts/" .. sha } end
+check("font: nazwy ok", Sync.fontNameOK("Charis SIL-Regular.ttf") and Sync.fontNameOK("A (1).OTF") and Sync.fontNameOK("x.ttc"))
+for _, bad in ipairs({ "../a.ttf", "a/b.ttf", "a\\b.ttf", ".a.ttf", "a.exe", "a..ttf", "a.ttf.txt", "", "a\n.ttf", string.rep("x", 100) .. ".ttf" }) do
+    check("font: zła nazwa " .. bad:gsub("%c", "?"), not Sync.fontNameOK(bad))
+end
+check("font: nie-napis", not Sync.fontNameOK(nil) and not Sync.fontNameOK(5))
+check("font: magic ttf/otf", Sync.fontMagicOK("a.ttf", "\0\1\0\0xxxx") and Sync.fontMagicOK("a.otf", "OTTOxxxx") and Sync.fontMagicOK("a.ttf", "truexxxx"))
+check("font: magic kolekcja tylko jako ttc/otc", Sync.fontMagicOK("a.ttc", "ttcfxxxx") and not Sync.fontMagicOK("a.ttf", "ttcfxxxx") and not Sync.fontMagicOK("a.ttc", "OTTOxxxx"))
+check("font: magic śmieci", not Sync.fontMagicOK("a.ttf", "<html>") and not Sync.fontMagicOK("a.ttf", "") and not Sync.fontMagicOK("a.ttf", nil))
+local man = Sync.fontManifestDecode(Sync.fontManifestEncode({ ["A B.ttf"] = SHA1, ["c.otf"] = SHA2 }))
+check("font: manifest roundtrip", deep_eq(man, { ["A B.ttf"] = SHA1, ["c.otf"] = SHA2 }))
+check("font: manifest odrzuca śmieci", next(Sync.fontManifestDecode("../x.ttf=" .. SHA1 .. "\na.ttf=zly\n# kom\nb.ttf=" .. SHA1)) == "b.ttf")
+check("font: plan bez stanu serwera nic nie robi", Sync.fontPlanEmpty(Sync.fontPlan(nil, { ["a.ttf"] = SHA1 }, { ["a.ttf"] = 1000 })))
+
+local p = Sync.fontPlan({ font("N.ttf", SHA1), font("U.ttf", SHA2), font("Same.ttf", SHA1), font("Gone.ttf", SHA1), font("Man.ttf", SHA1) },
+    { ["U.ttf"] = SHA1, ["Same.ttf"] = SHA1, ["Gone.ttf"] = SHA1, ["Old.ttf"] = SHA2 },
+    { ["U.ttf"] = 1000, ["Same.ttf"] = 1000, ["Man.ttf"] = 5, ["Old.ttf"] = 9 })
+check("font plan: install nowej i zniknietej z dysku", #p.install == 2 and p.install[1].file == "N.ttf" and p.install[2].file == "Gone.ttf")
+check("font plan: update zmienionego sha", #p.update == 1 and p.update[1].file == "U.ttf" and p.update[1].old_sha256 == SHA1)
+check("font plan: ten sam sha i rozmiar bez zmian", #p.install + #p.update == 3)
+check("font plan: plik obcy w naszym katalogu to konflikt", #p.conflict == 1 and p.conflict[1].file == "Man.ttf")
+check("font plan: usunięcie tylko z manifestu", #p.remove == 1 and p.remove[1].file == "Old.ttf")
+local ps = Sync.fontPlan({ font("S.ttf", SHA1, 999) }, { ["S.ttf"] = SHA1 }, { ["S.ttf"] = 1 })
+check("font plan: zły rozmiar na dysku = update", #ps.update == 1)
+check("font plan: pusty cel usuwa wszystko z manifestu", #Sync.fontPlan({}, { ["a.ttf"] = SHA1, ["b.ttf"] = SHA2 }, {}).remove == 2)
+local pi = Sync.fontPlan({ font("../x.ttf", SHA1), font("a.ttf", "zly"), { file = "b.ttf", sha256 = SHA1, size = 10, url = "http://evil/x" },
+    font("c.ttf", SHA1, Sync.FONT_MAX_SIZE + 1), font("d.ttf", SHA1), font("d.ttf", SHA2), "x" }, {}, {})
+check("font plan: wpisy nieprawidłowe", #pi.invalid == 6 and #pi.install == 1, #pi.invalid)
+local batch = Sync.FONT_MAX_BATCH
+Sync.FONT_MAX_BATCH = 1500
+local big = 800
+local pb = Sync.fontPlan({ font("a.ttf", SHA1, big), font("b.ttf", SHA2, big), font("c.ttf", SHA1, 20) }, {}, {})
+Sync.FONT_MAX_BATCH = batch
+check("font plan: budżet na synchronizację", #pb.install == 2 and #pb.deferred == 1 and pb.deferred[1].file == "b.ttf")
+
 -- przenosiny serwera (TASK-15) ------------------------------------------------
 local M = Sync.movedURL
 check("moved: https → https", M("https://a.example", "https://b.example") == "https://b.example")
