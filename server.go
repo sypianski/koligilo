@@ -60,6 +60,7 @@ func (s *Server) Routes() *http.ServeMux {
 	m.HandleFunc("POST /api/admin/devices/{id}/rename", s.admin(s.adminRename))
 	m.HandleFunc("DELETE /api/admin/devices/{id}", s.admin(s.adminForget))
 	s.accountRoutes(m)
+	s.connRoutes(m)
 	s.pluginRoutes(m)
 	s.galleryRoutes(m)
 	s.transferRoutes(m)

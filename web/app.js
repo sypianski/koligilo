@@ -38,6 +38,7 @@ const S = {
   accOpen: null,       // rozwinięty wiersz widoku „Konta”: "kosync" | "wallabag" | "cloud" | "targets" | "rosetta" (TASK-31)
   accMsg: {},          // komunikaty per formularz: {ok, text}
   accBusy: null,       // który formularz się zapisuje
+  accTesting: null,    // ścieżka trwającego „Sprawdź połączenie” (TASK-31)
   valDrafts: {},       // edytory wartości: id -> {type, text, bool, error, isNew}
   valMsg: {},          // komunikaty per wartość: {ok, text}
   valBusy: null,       // id wartości w trakcie zapisu/wczytywania
@@ -1196,11 +1197,34 @@ async function accSave(name, method, path, body, after) {
   refresh();
 }
 
+// „Sprawdź połączenie” (TASK-31): serwer loguje się na ZAPISANE konto (nie na to, co jest w formularzu),
+// więc przy niezapisanych zmianach komunikat to mówi. Wynik nigdy nie zawiera haseł.
+async function accTest(msgKey, path, label, dirty) {
+  S.accTesting = path; S.accMsg[msgKey] = null; render();
+  try {
+    const r = await api("POST", path);
+    let text = (label ? label + ": " : "") + r.message;
+    if (dirty) text += " Sprawdzono zapisane dane — zmian z formularza jeszcze nie zapisano.";
+    S.accMsg[msgKey] = { ok: !!r.ok, text };
+  } catch (e) {
+    S.accMsg[msgKey] = { ok: false, text: (label ? label + ": " : "") + e.message };
+  }
+  S.accTesting = null;
+  render();
+}
+
+function testBtn(msgKey, path, label, dirty) {
+  const busy = S.accTesting === path;
+  return h("button", { type: "button", id: "test" + path.replace(/[^a-z0-9]+/gi, "-"), disabled: !!S.accTesting || S.accBusy === msgKey,
+    onclick: () => accTest(msgKey, path, label, typeof dirty === "function" ? dirty() : dirty) }, busy ? "Sprawdzam…" : "Sprawdź połączenie");
+}
+
 // Zapis na górze, „Usuń konto z czytników” jako link po prawej pod kreską. Usunięcia nie da się cofnąć
 // (wartości lecą jako nagrobki, a sekretów przeglądarka nie ma), więc potwierdzenie zostaje.
 function accActions(name, o) {
   return h("div", { class: "row endrow" },
     h("button", { class: "primary", type: "submit", disabled: S.accBusy === name }, "Zapisz"),
+    o.cur && o.test && testBtn(name, o.test, "", o.dirty),
     h("span", { class: "grow" }),
     o.cur && h("button", { type: "button", class: "linkbtn danger", onclick: () => {
       if (confirm(o.confirm)) accSave(name, "DELETE", o.path);
@@ -1284,7 +1308,9 @@ function kosyncForm() {
       selectField(d, "sync_forward", "Przeskok do nowszej pozycji (na innym czytniku przeczytano dalej)", SYNC_STRATEGY_OPTS),
       selectField(d, "sync_backward", "Przeskok do starszej pozycji (na innym czytniku jest wcześniej)", SYNC_STRATEGY_OPTS),
       selectField(d, "checksum_method", "Metoda sumy kontrolnej", CHECKSUM_METHOD_OPTS)),
-    accActions("kosync", { cur, path: "/api/admin/accounts/kosync", confirm: "Usunąć konto kosync ze wszystkich czytników?" }),
+    accActions("kosync", { cur, test: "/api/admin/accounts/kosync/test",
+      dirty: () => !!(d.password || d.username !== (cur?.username || "") || d.server !== (cur?.server || "")),
+      path: "/api/admin/accounts/kosync", confirm: "Usunąć konto kosync ze wszystkich czytników?" }),
     accMsg("kosync"));
 }
 
@@ -1319,7 +1345,10 @@ function wallabagForm() {
       checkboxField(d, "is_delete_read", "Usuwaj przeczytane"),
       checkboxField(d, "is_auto_delete", "Automatyczne usuwanie"),
       checkboxField(d, "send_review_as_tags", "Wysyłaj ocenę jako tagi")),
-    accActions("wallabag", { cur, path: "/api/admin/accounts/wallabag", confirm: "Usunąć konto Wallabag ze wszystkich czytników?" }),
+    accActions("wallabag", { cur, test: "/api/admin/accounts/wallabag/test",
+      dirty: () => !!(d.password || d.client_secret || d.username !== (cur?.username || "") || d.client_id !== (cur?.client_id || "")
+        || d.server_url !== (cur?.server_url || "")),
+      path: "/api/admin/accounts/wallabag", confirm: "Usunąć konto Wallabag ze wszystkich czytników?" }),
     accMsg("wallabag"));
 }
 
@@ -1339,6 +1368,7 @@ function cloudBody() {
           c.folder && ` · folder ${c.folder}`),
         c.broken && h("div", { class: "err small" }, "⚠ Ten czytnik zapisał tylko krótkotrwały token Dropboxa — połącz konto ponownie (Edytuj).")),
       !d && h("div", { class: "row" },
+        testBtn("cloud", `/api/admin/accounts/cloud/${i}/test`, c.name, false),
         h("button", { onclick: () => { S.dr.cloud = cloudDraft(c, i); S.accMsg.cloud = null; render(); } }, "Edytuj"),
         h("button", { class: "danger", onclick: () => {
           if (confirm(`Usunąć konto „${c.name}” ze wszystkich czytników?`)) accSave("cloud", "DELETE", `/api/admin/accounts/cloud/${i}`);
