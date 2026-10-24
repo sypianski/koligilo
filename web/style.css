@@ -853,4 +853,5 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .sub:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .sub h4 { margin: 0; font-size: 15px; }
 .sub p { margin: 0; }
+.addrline { display: flex; flex-direction: column; gap: 10px; }
 .sub > button, .sub > a { align-self: flex-start; }

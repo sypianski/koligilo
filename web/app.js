@@ -22,6 +22,7 @@ const S = {
   error: null,
   wizardChoice: "local",
   srvMsg: null,        // widok „Aplikacja”: {ok, text}
+  addrEdit: false,     // widok „Aplikacja” → Serwer: rozwinięte pole „zmień adres”
   appTab: null,        // zakładka widoku „Aplikacja”: "serwer" | "dane" | "panel" (null = serwer, TASK-35)
   srvBusy: false,
   busy: false,
@@ -598,7 +599,7 @@ function serverTab() {
           class: "option" + (L.mode === id ? " selected" : ""), role: "radio", "aria-checked": String(L.mode === id),
           disabled: S.srvBusy, onclick: () => switchMode(id),
         }, h("h3", {}, name), h("p", { class: "for" }, desc)))),
-    local && addressCard());
+    local && addressLine());
 }
 
 // Zakładka „Dane” (tryb komputera): rzadkie akcje — przenosiny i kopia. Bloki to `.sub`, nie karty w karcie.
@@ -612,17 +613,23 @@ function dataPane() {
       h("button", { onclick: downloadExport }, "Pobierz kopię")));
 }
 
-function addressCard() {
-  const L = S.local;
-  return h("section", { class: "card", style: "margin-top:16px" },
-    h("h3", { style: "margin-top:0" }, "Adres dla czytników"),
-    L.device_error ? h("p", { class: "err" }, L.device_error)
-      : h("p", { style: "margin-top:0" }, "Czytniki łączą się z ", h("code", {}, L.public_url || "(nie znam adresu tego komputera w sieci)"),
-        L.public_override ? " (wpisany ręcznie)." : " (wykryty automatycznie; Tailscale ma pierwszeństwo, a czytnik w tej samej sieci Wi-Fi dostaje adres z tej sieci)."),
-    h("form", { class: "row", onsubmit: savePublicURL },
-      h("input", { type: "text", name: "url", id: "f-puburl", placeholder: "http://192.168.1.10:" + (L.device_port || 7210), style: "max-width:320px" }),
-      h("button", { type: "submit", disabled: S.srvBusy }, "Zapisz adres"),
-      L.public_override && h("button", { type: "button", disabled: S.srvBusy, onclick: () => savePublicURL(null, "") }, "Wykrywaj sam")));
+// Adres dla czytników (TASK-35): jedna linia pod wyborem trybu; pole zapisu i „Wykrywaj sam” rozwijają się po „zmień adres”.
+function addressLine() {
+  const L = S.local, edit = !!S.addrEdit;
+  if (L.device_error) return h("p", { class: "err", style: "margin:0" }, L.device_error);
+  return h("div", { class: "addrline" },
+    h("p", { style: "margin:0" }, "Czytniki łączą się z ", h("code", {}, L.public_url || "(nie znam adresu tego komputera w sieci)"),
+      L.public_override ? " (wpisany ręcznie) · " : " · ",
+      h("button", {
+        type: "button", class: "linkbtn", "aria-expanded": String(edit), "aria-controls": "addr-form",
+        onclick: () => { S.addrEdit = !edit; render(); if (S.addrEdit) document.getElementById("f-puburl")?.focus(); },
+      }, "zmień adres")),
+    edit && h("form", { id: "addr-form", class: "sub", onsubmit: savePublicURL },
+      !L.public_override && h("p", { class: "muted small" }, "Adres wykryty automatycznie; Tailscale ma pierwszeństwo, a czytnik w tej samej sieci Wi-Fi dostaje adres z tej sieci."),
+      h("div", { class: "row" },
+        h("input", { type: "text", name: "url", id: "f-puburl", "aria-label": "Adres dla czytników", placeholder: "http://192.168.1.10:" + (L.device_port || 7210), style: "max-width:320px" }),
+        h("button", { type: "submit", disabled: S.srvBusy }, "Zapisz adres"),
+        L.public_override && h("button", { type: "button", disabled: S.srvBusy, onclick: () => savePublicURL(null, "") }, "Wykrywaj sam"))));
 }
 
 function moveOutForm() {
@@ -678,6 +685,7 @@ function switchMode(mode) {
 function savePublicURL(ev, value) {
   if (ev) ev.preventDefault();
   const url = value ?? ev.target.url.value;
+  S.addrEdit = false;
   srvDo(async () => { await api("POST", "/api/local/public-url", { url }); return { ok: true, text: "Zapisano adres dla czytników." }; });
 }
 
