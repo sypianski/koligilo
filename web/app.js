@@ -53,6 +53,7 @@ const S = {
   valOpen: {},         // rozwinięte kategorie/opisy w widoku ustawień: klucz -> true
   valEx: null,         // rozwinięty wiersz ustawienia (id) — jeden naraz (TASK-32)
   valDev: null,        // czytnik wybrany na pasku „Pokaż dla” (id) albo null = wszystkie (TASK-32)
+  grp: { cats: { wyglad: true }, rows: {}, menu: null, snack: null, never: false, busy: false }, // widok „Co synchronizować” (TASK-30): rozwinięte sekcje i wiersze, otwarte menu „⋯”, pasek „Cofnij”
   ctl: {},             // szkice pól liczbowych/tekstowych kontrolek: id(+część) -> tekst
   pad: { layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
 
@@ -1077,55 +1078,227 @@ async function devForget(d) {
   refresh();
 }
 
-// ------------------------------------------------ zakładka: grupy
+// ------------------------------------------------ zakładka: grupy (TASK-30)
+//
+// Tabela grup × urządzenia z sekcjami zwijanymi (kategorie z catalog.go; zwinięta sekcja pokazuje „k/n”
+// włączonych), wierszem zwiniętym do nazwy i znaczników (opis i ostrzeżenie po kliknięciu), licznikiem „na 2 z 3”,
+// kolumną „Wszystkie” oraz menu „⋯” w nagłówku kolumny („Ustaw jak…”, „Przywróć domyślne”). Każda zmiana
+// kończy się paskiem z „Cofnij” (S.grp.snack). Poniżej 760 px tabelę zastępują karty grup (tylko CSS).
+// Zmiany kilku komórek to kolejne żądania (nie atomowe), więc „Cofnij” odtwarza poprzednie wartości.
 
-function groupsTab() {
-  const { catalog, devices, never } = S.state;
-  return h("section", {},
-    explain(
-      "Wybierz, które rodzaje ustawień mają być wspólne — osobno dla każdego urządzenia. Włączona grupa działa w obie strony: urządzenie wysyła swoje zmiany i przyjmuje zmiany innych.",
-      "Gdy włączasz grupę na urządzeniu, które już ma swoje wartości, przy najbliższej synchronizacji przyjmie wersję wspólną. Jeśli dwa urządzenia zmienią to samo ustawienie w międzyczasie, wygrywa zmiana, która pierwsza dotrze na serwer."),
-    devices.length === 0
-      ? h("p", { class: "muted" }, "Na razie nie ma połączonych urządzeń — tabela pokaże się po sparowaniu pierwszego czytnika.")
-      : h("div", { class: "card matrix-wrap" }, groupMatrix(catalog, devices)),
-    h("div", { class: "card never" },
-      h("h3", {}, "Zostaje na każdym urządzeniu osobno"),
-      h("p", { class: "muted small", style: "margin-top:0" }, "Tych ustawień koligilo nigdy nie przenosi — nawet gdyby ktoś próbował:"),
-      h("ul", {}, never.map(n => h("li", {}, h("b", {}, n.name), " — ", n.reason)))));
+let grpSnackTimer = null;
+
+function grpCount(g, devices) {
+  return { n: devices.filter(d => d.groups[g.id]).length, t: devices.length };
 }
 
-function groupMatrix(catalog, devices) {
-  const head = h("thead", {}, h("tr", {},
-    h("th", {}, "Ustawienia"),
-    devices.map(d => h("th", { scope: "col" }, d.name))));
-  const body = h("tbody", {}, catalog.map(g => h("tr", {},
-    groupLabel(g),
-    devices.map(d => h("td", { class: "cell" }, groupSwitch(g, d))))));
-  return h("table", { class: "matrix" }, head, body);
+function grpChip(g, devices) {
+  const { n, t } = grpCount(g, devices);
+  if (n === 0) return h("span", { class: "cn zero" }, "wyłączona wszędzie");
+  if (n === 1 && t > 1) return h("span", { class: "cn one" }, `tylko 1 z ${t} — nic się nie dzieli`);
+  return h("span", { class: "cn" }, `na ${n} z ${t}`);
 }
 
-function groupLabel(g) {
+function grpMarks(g) {
+  return [
+    g.secret && h("span", { class: "badge key", title: "Zawiera hasła lub tokeny" }, "🔑 dane logowania"),
+    g.warning && h("span", { class: "badge warn", title: "Rozwiń wiersz, by przeczytać ostrzeżenie" }, "⚠ uwaga"),
+  ];
+}
+
+function grpDetail(g) {
+  return [h("div", { class: "gdesc" }, g.description), g.warning && h("div", { class: "gwarn" }, "⚠ ", g.warning)];
+}
+
+function grpNameCell(g, devices) {
+  const open = !!S.grp.rows[g.id], id = "grp-row-" + g.id;
   return h("th", { scope: "row", style: "text-align:left;font-weight:400" },
-    h("div", { class: "gname" }, g.name,
-      g.secret && h("span", { class: "badge key", title: "Zawiera hasła lub tokeny" }, "🔑 dane logowania")),
-    h("div", { class: "gdesc" }, g.description),
-    g.warning && h("div", { class: "gwarn" }, "⚠ ", g.warning));
+    h("div", { class: "gname" },
+      h("button", {
+        type: "button", class: "grp-tog", id, "aria-expanded": String(open), "aria-controls": id + "-more",
+        onclick: () => { S.grp.rows[g.id] = !open; render(); },
+      }, h("span", { class: "car", "aria-hidden": "true" }, open ? "▾" : "▸"), g.name),
+      grpMarks(g), grpChip(g, devices)),
+    open && h("div", { id: id + "-more" }, grpDetail(g)));
 }
 
-function groupSwitch(g, d) {
+function grpSwitch(g, d) {
   return h("label", { class: "switch", title: `${g.name} — ${d.name}` },
     h("input", {
-      type: "checkbox", checked: d.groups[g.id],
+      type: "checkbox", checked: d.groups[g.id], disabled: S.grp.busy,
       "aria-label": `${g.name} na ${d.name}`,
-      onchange: ev => setGroup(d.id, g.id, ev.target.checked),
+      onchange: ev => grpToggle(g, d, ev.target.checked),
     }),
     h("span", {}));
 }
 
-async function setGroup(dev, group, on) {
-  try { await api("POST", `/api/admin/devices/${dev}/groups`, { group, on }); }
-  catch (e) { S.error = e.message; }
+// Kolumna „Wszystkie”: trzy stany (wszędzie / częściowo / nigdzie). Kliknięcie ustawia wszędzie albo nigdzie.
+function grpAllSwitch(g, devices) {
+  const { n, t } = grpCount(g, devices);
+  const input = h("input", {
+    type: "checkbox", checked: t > 0 && n === t, disabled: S.grp.busy,
+    "aria-label": `${g.name} na wszystkich urządzeniach`,
+    onchange: ev => {
+      const on = ev.target.checked;
+      grpApply(devices.filter(d => !!d.groups[g.id] !== on).map(d => grpChange(g, d, on)),
+        `${on ? "Włączono" : "Wyłączono"} „${g.name}” na wszystkich urządzeniach.`);
+    },
+  });
+  input.indeterminate = n > 0 && n < t;
+  return h("label", { class: "switch" + (input.indeterminate ? " part" : ""), title: "Wszystkie urządzenia" }, input, h("span", {}));
+}
+
+function grpChange(g, d, on) {
+  return { dev: d.id, devName: d.name, group: g.id, groupName: g.name, on, was: !on };
+}
+
+function grpToggle(g, d, on) {
+  grpApply([grpChange(g, d, on)], on
+    ? `Włączono „${g.name}” na ${d.name}. Przyjmie wersję wspólną przy najbliższej synchronizacji.`
+    : `Wyłączono „${g.name}” na ${d.name}. Ustawienia z tej grupy zostają na urządzeniu, ale przestają się synchronizować.`);
+}
+
+// Wykonuje zmiany po kolei; po sukcesie pokazuje pasek z „Cofnij” (odwrócone zmiany). undo=true: bez paska.
+async function grpApply(changes, text, undo) {
+  clearTimeout(grpSnackTimer);
+  if (!changes.length) {
+    S.grp.snack = { text: "Bez zmian — wszystko już jest tak ustawione." };
+    return grpSnackShow();
+  }
+  S.grp.busy = true; S.grp.snack = null; render();
+  try {
+    for (const c of changes) await api("POST", `/api/admin/devices/${c.dev}/groups`, { group: c.group, on: c.on });
+    S.grp.snack = undo ? { text: "Cofnięto." } : { text, undo: changes.map(c => ({ ...c, on: c.was, was: c.on })) };
+  } catch (e) {
+    S.error = e.message;
+  }
+  S.grp.busy = false;
+  grpSnackShow();
   refresh();
+}
+
+function grpSnackShow() {
+  clearTimeout(grpSnackTimer);
+  grpSnackTimer = setTimeout(() => { S.grp.snack = null; if (S.tab === "grupy") render(); }, 12000);
+  if (S.tab === "grupy") render();
+}
+
+function grpSnack() {
+  const sn = S.grp.snack;
+  if (!sn) return null;
+  return h("div", { class: "snack", role: "status", "aria-live": "polite" },
+    h("span", { class: "grow" }, sn.text),
+    sn.undo && h("button", { type: "button", id: "grp-undo", onclick: () => grpApply(sn.undo, "", true) }, "Cofnij"),
+    h("button", { type: "button", class: "snack-x", "aria-label": "Zamknij", onclick: () => { S.grp.snack = null; render(); } }, "×"));
+}
+
+// Menu „⋯” w nagłówku kolumny: kopiuje układ z innego urządzenia albo przywraca domyślne grupy z katalogu.
+function grpMenu(d, devices, catalog) {
+  const open = S.grp.menu === d.id, id = "grp-more-" + d.id;
+  const items = [];
+  const others = devices.filter(x => x.id !== d.id);
+  if (others.length) {
+    items.push(h("span", { class: "cmenu-h" }, "Ustaw jak…"));
+    for (const o of others) items.push(h("button", {
+      type: "button", role: "menuitem", class: "s",
+      onclick: () => {
+        S.grp.menu = null;
+        const ch = catalog.filter(g => !!d.groups[g.id] !== !!o.groups[g.id]).map(g => grpChange(g, d, !!o.groups[g.id]));
+        grpApply(ch, `Ustawiono „${d.name}” jak „${o.name}”: ${ch.length} ${plPl(ch.length, "zmiana", "zmiany", "zmian")}.`);
+      },
+    }, o.name));
+  }
+  items.push(h("button", {
+    type: "button", role: "menuitem",
+    onclick: () => {
+      S.grp.menu = null;
+      const ch = catalog.filter(g => !!d.groups[g.id] !== !!g.default).map(g => grpChange(g, d, !!g.default));
+      grpApply(ch, `Przywrócono domyślne grupy na „${d.name}”: ${ch.length} ${plPl(ch.length, "zmiana", "zmiany", "zmian")}.`);
+    },
+  }, "Przywróć domyślne"));
+  return [
+    h("button", {
+      type: "button", class: "grp-more", id, "aria-haspopup": "menu", "aria-expanded": String(open),
+      "aria-label": `Operacje na urządzeniu ${d.name}`, title: "Operacje na urządzeniu",
+      onclick: ev => { ev.stopPropagation(); S.grp.menu = open ? null : d.id; render(); },
+    }, "⋯"),
+    open && h("div", { class: "cmenu", role: "menu", "aria-label": `Operacje na urządzeniu ${d.name}` }, items),
+  ];
+}
+document.addEventListener("click", ev => {
+  if (S.grp.menu && !ev.target.closest(".cmenu")) { S.grp.menu = null; if (S.tab === "grupy") render(); }
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && S.grp.menu) {
+    const id = "grp-more-" + S.grp.menu;
+    S.grp.menu = null; render(); document.getElementById(id)?.focus();
+  }
+});
+
+function grpSections(catalog) {
+  const cats = (S.state.categories || []).map(c => ({ ...c, groups: catalog.filter(g => g.category === c.id) }))
+    .filter(c => c.groups.length);
+  const known = new Set(cats.flatMap(c => c.groups.map(g => g.id)));
+  const rest = catalog.filter(g => !known.has(g.id));
+  if (rest.length) cats.push({ id: "_inne", name: "Inne", groups: rest });
+  return cats;
+}
+
+function groupsTab() {
+  const { catalog, devices, never } = S.state;
+  const nGroups = n => `${n} ${plPl(n, "grupa", "grupy", "grup")}`;
+  return h("section", { class: "grp" },
+    explainFold("grupy", "Włączona grupa działa w obie strony: urządzenie wysyła swoje zmiany i przyjmuje cudze.",
+      "Gdy włączasz grupę na urządzeniu, które już ma swoje wartości, przy najbliższej synchronizacji przyjmie wersję wspólną. Jeśli dwa urządzenia zmienią to samo ustawienie w międzyczasie, wygrywa zmiana, która pierwsza dotrze na serwer."),
+    h("details", {
+      class: "explain fold grp-never", open: S.grp.never,
+      ontoggle: ev => { S.grp.never = ev.target.open; },
+    },
+      h("summary", {}, `${never.length} ${plPl(never.length, "ustawienie zostaje", "ustawienia zostają", "ustawień zostaje")} na każdym urządzeniu osobno`),
+      h("p", { class: "muted small" }, "Tych ustawień koligilo nigdy nie przenosi — nawet gdyby ktoś próbował:"),
+      h("ul", {}, never.map(n => h("li", {}, h("b", {}, n.name), " — ", n.reason)))),
+    devices.length === 0
+      ? h("p", { class: "muted" }, "Na razie nie ma połączonych urządzeń — tabela pokaże się po sparowaniu pierwszego czytnika.")
+      : [groupMatrix(catalog, devices, grpSections(catalog), nGroups), groupCards(devices, grpSections(catalog), nGroups)],
+    grpSnack());
+}
+
+function groupMatrix(catalog, devices, sections, nGroups) {
+  const head = h("thead", {}, h("tr", {},
+    h("th", { scope: "col" }, "Ustawienia"),
+    h("th", { scope: "col" }, "Wszystkie"),
+    devices.map(d => h("th", { scope: "col", class: "hc" }, d.name, grpMenu(d, devices, catalog)))));
+  const body = h("tbody", {}, sections.map(c => {
+    const open = !!S.grp.cats[c.id], id = "grp-cat-" + c.id;
+    return [
+      h("tr", { class: "sh" },
+        h("th", { scope: "rowgroup", style: "text-align:left" },
+          h("button", {
+            type: "button", class: "grp-tog", id, "aria-expanded": String(open),
+            onclick: () => { S.grp.cats[c.id] = !open; render(); },
+          }, h("span", { class: "car", "aria-hidden": "true" }, open ? "▾" : "▸"), c.name),
+          h("span", { class: "muted small" }, " · ", nGroups(c.groups.length))),
+        h("td", {}),
+        devices.map(d => h("td", { class: "cell small", "aria-label": `${c.name} na ${d.name}: włączone ${c.groups.filter(g => d.groups[g.id]).length} z ${c.groups.length}` },
+          `${c.groups.filter(g => d.groups[g.id]).length}/${c.groups.length}`))),
+      open && c.groups.map(g => h("tr", { class: "gr" },
+        grpNameCell(g, devices),
+        h("td", { class: "cell" }, grpAllSwitch(g, devices)),
+        devices.map(d => h("td", { class: "cell" }, grpSwitch(g, d))))),
+    ];
+  }));
+  return h("div", { class: "card grp-wrap grp-table" }, h("table", { class: "matrix grp-matrix" }, head, body));
+}
+
+// Wąskie okno: każda grupa to karta z listą urządzeń (opis i ostrzeżenie zawsze widoczne).
+function groupCards(devices, sections, nGroups) {
+  return h("div", { class: "grp-cards" }, sections.map(c => [
+    h("div", { class: "sech" }, c.name, h("span", { class: "muted small" }, " · ", nGroups(c.groups.length))),
+    c.groups.map(g => h("div", { class: "gcard" },
+      h("div", { class: "gname" }, g.name, grpMarks(g), grpChip(g, devices)),
+      grpDetail(g),
+      h("div", { class: "dl" }, devices.map(d => h("div", { class: "dr" }, h("span", {}, d.name), grpSwitch(g, d)))))),
+  ]));
 }
 
 // ------------------------------------------------ zakładka: konta (TASK-31)
@@ -2114,14 +2287,30 @@ function tweaksCtl(o, id, cur, disabled) {
     h("input", { type: "checkbox", checked: on.get(t) === true, disabled, "data-fk": id + "~" + t,
       onchange: ev => set(t, ev.target.checked) }),
     h("span", {}, label, sub && h("span", { class: "muted small" }, " · " + sub)));
+  // TASK-32: włączone poprawki na wierzchu (z „×”), wszystkie 120 w zwiniętej liście kategorii
+  const known = new Map(KO.tweaks.map(t => [t.id, t]));
+  const enabled = [...on.keys()].filter(k => on.get(k) === true);
+  const enabledRow = tid => {
+    const t = known.get(tid);
+    const title = t ? t.title : tid, sub = t && t.cat ? t.cat.split(" › ").join(" › ") : "spoza KOReadera " + KO.version;
+    return h("div", { class: "twr", ...pvHover(id, toggled(tid)) },
+      h("span", { class: "grow" }, title, h("span", { class: "muted small" }, " · " + sub)),
+      h("button", { type: "button", class: "twx", disabled, "aria-label": "Wyłącz: " + title, title: "Wyłącz", "data-fk": id + "~" + tid, onclick: () => set(tid, false) }, "×"));
+  };
+  const allOpen = !!S.valOpen["tw:all"];
   return h("div", { class: "tweaks" },
-    [...cats].map(([cat, list]) => {
-      const n = list.filter(t => on.get(t.id) === true).length;
-      const ok = "tw:" + cat;
-      return h("details", { open: !!S.valOpen[ok] || null, ontoggle: ev => { S.valOpen[ok] = ev.target.open; } },
-        h("summary", {}, cat, n > 0 && h("span", { class: "cnt" }, String(n))),
-        list.map(t => item(t.id, t.title, t.desc, t.cat.includes(" › ") ? t.cat.split(" › ").slice(1).join(" › ") : null)));
-    }),
+    h("div", { class: "twon" },
+      h("p", { class: "muted small", style: "margin:2px 0 4px" }, enabled.length ? `Włączone wspólnie (${enabled.length})` : "Żadna poprawka nie jest włączona wspólnie."),
+      enabled.map(enabledRow)),
+    h("details", { class: "twall", open: allOpen || null, ontoggle: ev => { S.valOpen["tw:all"] = ev.target.open; } },
+      h("summary", {}, `Wszystkie poprawki (${KO.tweaks.length})`),
+      [...cats].map(([cat, list]) => {
+        const n = list.filter(t => on.get(t.id) === true).length;
+        const ok = "tw:" + cat;
+        return h("details", { open: !!S.valOpen[ok] || null, ontoggle: ev => { S.valOpen[ok] = ev.target.open; } },
+          h("summary", {}, cat, n > 0 && h("span", { class: "cnt" }, String(n))),
+          list.map(t => item(t.id, t.title, t.desc, t.cat.includes(" › ") ? t.cat.split(" › ").slice(1).join(" › ") : null)));
+      })),
     extra.length > 0 && h("details", { open: !!S.valOpen["tw:?"] || null, ontoggle: ev => { S.valOpen["tw:?"] = ev.target.open; } },
       h("summary", {}, `Spoza KOReadera ${KO.version}`, h("span", { class: "cnt" }, String(extra.length))),
       extra.map(t => item(t, t, "Poprawka użytkownika albo z innej wersji KOReadera"))));
