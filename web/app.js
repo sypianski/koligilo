@@ -45,6 +45,7 @@ const S = {
   valMsg: {},          // komunikaty per wartość: {ok, text}
   valBusy: null,       // id wartości w trakcie zapisu/wczytywania
   valNew: {},          // szkice nowych wartości (klucz spoza katalogu): groupId -> {key, type, text, bool, error}
+  valQ: "",           // pole „Szukaj ustawienia” w widoku „Ustawienia czytników” (TASK-32)
   valSel: null,        // zaznaczone ustawienie (id) — otwiera panel podglądu strony (TASK-23, web/preview.js)
   valFull: {},         // pełne literały przyciętych podglądów: id -> {t, lit}
   valAdv: false,       // sekcja „Zaawansowane” rozwinięta?
@@ -2283,6 +2284,84 @@ function deviceBar(mapped, byId) {
     h("span", { class: "small " + (k > 0 ? "lack" : "muted") }, note));
 }
 
+// ---- szukanie (TASK-32): nazwy i opisy ustawień, poprawki stylu (tytuł, opis, kategoria), flagi paska stanu.
+// Porównanie bez wielkości liter i bez znaków diakrytycznych; każde słowo zapytania musi trafić.
+const searchNorm = s => String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l");
+const SEARCH_MAX_TWEAKS = 30;
+
+function searchHits(q) {
+  const words = searchNorm(q).split(/\s+/).filter(Boolean);
+  if (!words.length || typeof KO === "undefined") return null;
+  const all = hay => { const h = searchNorm(hay); return words.every(w => h.includes(w)); };
+  const hits = [];
+  const byName = x => all(x.kind === "tweak" ? x.t.title : x.kind === "flag" ? x.f.label : x.o.label) ? 0 : 1; // trafienia w nazwie przed trafieniami w opisie
+  for (const sec of KO.sections) {
+    for (const o of KO.opts.filter(x => x.section === sec.id)) {
+      const id = idFor(o.file, o.key);
+      if (!id) continue;
+      if (o.kind === "tweaks") {
+        for (const t of KO.tweaks) if (all(`${t.title} ${t.desc || ""} ${t.cat || ""}`)) hits.push({ kind: "tweak", o, id, t, sec });
+      } else if (o.kind === "flags") {
+        for (const f of o.flags) if (all(f.label)) hits.push({ kind: "flag", o, id, f, sec });
+      } else if (all(`${o.label} ${(o.help || []).flat().join(" ")}`)) hits.push({ kind: "opt", o, id, sec });
+    }
+  }
+  return hits.map((x, i) => [byName(x), i, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(a => a[2]);
+}
+
+// Poprawka stylu jako wynik szukania: przełącznik działa tak jak w tabeli poprawek (ctlSave na całej tabeli).
+function tweakHit(h_, byId) {
+  const { o, id, t } = h_, cv = currentValue(byId.get(id));
+  const editable = cv.state === "ok" && cv.value instanceof Map;
+  const on = editable ? cv.value : new Map();
+  const sub = t.cat ? t.cat.split(" › ").join(" › ") : null;
+  const next = () => { const m = new Map(on); if (on.get(t.id) === true) m.delete(t.id); else m.set(t.id, true); return m; };
+  return h("label", { class: "tweak", title: t.desc || null, ...pvHover(id, next()) },
+    h("input", { type: "checkbox", checked: on.get(t.id) === true, disabled: !editable || S.valBusy === id, "data-fk": id + "~" + t.id,
+      onchange: ev => ctlSave(id, (() => { const m = new Map(on); if (ev.target.checked) m.set(t.id, true); else m.delete(t.id); return m; })(), id + "~" + t.id) }),
+    h("span", {}, t.title, sub && h("span", { class: "muted small" }, " · " + sub),
+      !editable && h("span", { class: "muted small" }, " · brak wspólnej wartości")));
+}
+
+function flagHit(h_, byId) {
+  const { o, id, f } = h_, cv = currentValue(byId.get(id));
+  const t = cv.state === "ok" && cv.value instanceof Map ? cv.value : null;
+  if (!t || !t.has(f.k)) return h("div", { class: "flag muted" }, h("span", {}, f.label, " · brak wspólnej wartości"));
+  const val = t.get(f.k) === true;
+  return h("div", { class: "flag", ...pvHover(id, new Map(t).set(f.k, !val)) },
+    switchCtl(f.label, f.invert ? !val : val, c => ctlSave(id, new Map(t).set(f.k, f.invert ? !c : c), id + "~" + f.k), id + "~" + f.k, S.valBusy === id),
+    h("span", {}, f.label));
+}
+
+function findBar() {
+  return h("div", { class: "vfind" },
+    h("input", { type: "search", id: "f-valq", "aria-label": "Szukaj ustawienia", placeholder: "Szukaj ustawienia…", value: S.valQ,
+      oninput: ev => {
+        const pos = ev.target.selectionStart;
+        S.valQ = ev.target.value; render();
+        const el = document.getElementById("f-valq");
+        if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+      } }),
+    S.valQ && h("button", { type: "button", onclick: () => { S.valQ = ""; render(); document.getElementById("f-valq")?.focus(); } }, "Wyczyść"));
+}
+
+// Wyniki zastępują sekcje (te same wiersze nie mogą stać dwa razy z tym samym id rozwinięcia).
+function searchResults(hits, byId) {
+  const shown = [], tw = hits.filter(x => x.kind === "tweak");
+  let skipped = 0;
+  for (const x of hits) {
+    if (x.kind === "tweak" && tw.indexOf(x) >= SEARCH_MAX_TWEAKS) { skipped++; continue; }
+    shown.push(x);
+  }
+  return h("section", { class: "card sgroup", "aria-label": "Wyniki szukania" },
+    h("h3", {}, `Trafienia (${hits.length})`),
+    hits.length === 0 && h("p", { class: "muted" }, `Nic nie pasuje do „${S.valQ.trim()}”.`),
+    shown.map(x => h("div", { class: "hit" },
+      h("span", { class: "hitsec muted small" }, x.sec.label),
+      x.kind === "opt" ? settingRow(x.o, x.id, byId.get(x.id), null) : x.kind === "tweak" ? tweakHit(x, byId) : flagHit(x, byId))),
+    skipped > 0 && h("p", { class: "muted small" }, `… i ${skipped} ${plPl(skipped, "poprawka więcej", "poprawki więcej", "poprawek więcej")} — zawęź szukanie.`));
+}
+
 function valuesTab() {
   // Grupy Secret (konta/poświadczenia) żyją wyłącznie w zakładce „Konta” (TASK-21 AC1).
   const catalog = S.state.catalog.filter(g => !g.secret);
@@ -2304,9 +2383,11 @@ function valuesTab() {
   // zostaje tylko jako surowa wartość w „Zaawansowane”, ale nie liczy się do znaczka
   if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
   const unmapped = values.filter(v => !v.deleted && !mapped.has(v.id)).length;
+  const hits = searchHits(S.valQ);
   return h("section", {},
+    hasKO && findBar(),
     deviceBar(mapped, byId),
-    sections,
+    hits ? searchResults(hits, byId) : sections,
     h("details", { class: "card adv", open: S.valAdv || null, ontoggle: ev => { S.valAdv = ev.target.open; } },
       h("summary", {}, "Zaawansowane — surowe wartości (literały Lua)",
         unmapped > 0 && h("span", { class: "cnt", title: "wartości spoza mapy KOReadera" }, String(unmapped))),
