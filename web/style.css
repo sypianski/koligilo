@@ -410,6 +410,39 @@ table.matrix.plugins td.warn { color: var(--warn); }
 .chip:hover { color: var(--text); border-color: var(--border-strong); }
 .chip.on, .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 
+/* macierz „Zainstalowane” (TASK-33): wiersz = wtyczka, kolumna = czytnik, komórka = znak stanu + wersja.
+   Znak niesie stan kształtem (✓ ↑ … ! ▫), kolor tylko go wzmacnia — czytelne także na e-ink. */
+.plugbar { margin: 0 0 12px; gap: 10px; }
+table.pmx { font-size: 14px; }
+.pmx th, .pmx td { padding: 9px 10px; vertical-align: middle; }
+.pmx thead th { text-align: center; white-space: normal; }
+.pmx thead th:first-child { text-align: left; }
+.pmx thead th .badge { display: block; margin: 4px 0 0; white-space: normal; }
+.pmx tbody th { text-align: left; font-weight: 400; }
+.pmx tr:last-child > th { border-bottom: 0; }
+.pmx td.cell { text-align: center; width: 128px; }
+.pmx tr.sel > * { background: var(--accent-soft); }
+.pmname { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+button.pmopen { text-decoration: none; text-align: left; font-weight: 400; }
+button.pmopen:hover { text-decoration: underline; }
+.pcell { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; border: 0; background: none; padding: 4px 8px; border-radius: 8px; color: inherit; }
+.pcell:hover, .pcell.on { background: var(--accent-soft); }
+.pcell .vv { font: 12px/1.2 var(--mono); color: var(--subtext); white-space: nowrap; }
+.pg { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--ink); font-size: 12px; font-weight: 700; line-height: 1; background: var(--field); flex: none; }
+.pg.ok { background: var(--st-ok); border-color: var(--st-ok); color: var(--paper); }
+.pg.upd { border-color: var(--st-warn); color: var(--st-warn); }
+.pg.wait, .pg.consent, .pg.rm { border-style: dashed; border-color: var(--st-warn); color: var(--st-warn); }
+.pg.rejected, .pg.err { border-color: var(--err); color: var(--err); }
+.pg.manual { border-radius: 4px; border-color: var(--ink-2); color: var(--ink-2); }
+.pg.none { border: 1px dashed var(--hair); color: var(--ink-2); font-weight: 400; }
+.pdstate { margin: 10px 0; }
+.plugdetail { margin-top: 14px; }
+.plugdetail > * + * { margin-top: 10px; }
+.legend { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 12px 0 0; }
+.legend .pg { width: 16px; height: 16px; font-size: 10px; margin-right: 5px; vertical-align: -3px; }
+.otherplug { margin-top: 16px; }
+.otherplug summary { cursor: pointer; font-weight: 600; }
+
 /* ------------------------------------------------------------ podgląd strony (TASK-23) */
 /* Panel boczny poza #app: kolumna siatki na szerokim oknie, nakładka na węższym. */
 .shell.pv-open {

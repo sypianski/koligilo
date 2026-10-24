@@ -13,13 +13,13 @@ const app = document.getElementById("app");
 // połknięty przez try/catch, więc zapamiętana zakładka nigdy nie wracała po
 // przeładowaniu strony.
 const PLUGSET = "ustawienia-wtyczek"; // id zakładki z ustawieniami samych wtyczek (nie koliduje z widokiem „ustawienia” = Aplikacja)
-const PLUGIN_TABS = [["urzadzenia", "Wg urządzeń"], ["wtyczki", "Wg wtyczek"], ["galeria", "Galeria"], [PLUGSET, "Ustawienia wtyczek"]];
+const PLUGIN_TABS = [["zainstalowane", "Zainstalowane"], ["galeria", "Galeria"], [PLUGSET, "Ustawienia wtyczek"]];
 const PLUGTAB_KEY = "koligilo.pluginTab";
 function pluginTabGet() {
   try {
     const t = localStorage.getItem(PLUGTAB_KEY);
-    return PLUGIN_TABS.some(([id]) => id === t) ? t : "urzadzenia";
-  } catch { return "urzadzenia"; }
+    return PLUGIN_TABS.some(([id]) => id === t) ? t : "zainstalowane";
+  } catch { return "zainstalowane"; }
 }
 function pluginTabSet(id) { try { localStorage.setItem(PLUGTAB_KEY, id); } catch {} }
 
@@ -60,9 +60,11 @@ const S = {
   // wtyczki (TASK-10/11); TASK-19: jedna pozycja nawigacji z zakładkami
   // wewnętrznymi (S.pluginTab), TASK-20: gwiazdki ulubionych.
   plugins: null,       // /api/admin/plugins → lista PluginVersion
-  pluginTab: pluginTabGet(), // id z PLUGIN_TABS: "urzadzenia" | "wtyczki" | "galeria" | "ustawienia-wtyczek" — zapamiętane lokalnie
+  pluginTab: pluginTabGet(), // id z PLUGIN_TABS: "zainstalowane" | "galeria" | "ustawienia-wtyczek" — zapamiętane lokalnie
+  plugSel: null,       // zaznaczona wtyczka w macierzy „Zainstalowane”: {dir, dev|null} (TASK-33)
+  plugMsg: null,       // komunikat po zapisie przypisań: {ok, text}
   favBusy: null,       // klucz ulubionej w trakcie zapisu
-  favOnly: false,      // filtr „Tylko ulubione” w zakładce „Wg wtyczek” (TASK-20 AC2)
+  favOnly: false,      // filtr „Tylko ulubione” w macierzy „Zainstalowane” (TASK-20 AC2)
   gallery: null,       // /api/admin/gallery → {repos, total, page, updated_at, note, stale}
   galQ: "",
   galSort: "stars",
@@ -71,9 +73,7 @@ const S = {
   galInstall: {},       // per repo full_name: {devices:Set, busy, msg, candidates, path}
   uploadBusy: false,
   uploadMsg: null,
-  devPluginDraft: {},   // per device id: {sha}
   devPluginBusy: null,
-  devPluginMsg: {},
   approveBusy: null,    // sha wersji z czytnika w trakcie akceptacji (TASK-12 dodatek)
 
   // aktualizacje wtyczek z galerii (TASK-12)
@@ -2308,13 +2308,6 @@ function labelCells(table) {
   for (const tr of table.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => td.setAttribute("data-label", heads[i] || ""));
   return table;
 }
-// „Pod opieką koligilo”: wtyczka ma znacznik .koligilo, więc koligilo może ją aktualizować
-// i usuwać (PC-004). Wtyczki ręczne i wbudowane są nietykalne.
-const managedTh = () => h("th", { title: "koligilo może aktualizować i usuwać tylko wtyczki, które samo zainstalowało. Ręczne i wbudowane są nietykalne." }, "Pod opieką koligilo");
-function managedText(inv, targetSha) {
-  return inv ? (inv.managed ? "tak" : "nie — ręczna lub wbudowana") : (targetSha ? "po instalacji" : "—");
-}
-
 // TASK-19: "Wtyczki" i dawna "Galeria wtyczek" żyją teraz pod jedną pozycją
 // nawigacji, jako zakładki wewnętrzne (PLUGIN_TABS; role=tablist/tab/tabpanel,
 // sterowanie strzałkami/Home/End — pluginTablist()). Wybór zapamiętany w tej
@@ -2350,19 +2343,220 @@ function pluginTablist() {
 }
 
 function pluginsTab() {
-  const sub = PLUGIN_TABS.some(([id]) => id === S.pluginTab) ? S.pluginTab : "urzadzenia";
+  const sub = PLUGIN_TABS.some(([id]) => id === S.pluginTab) ? S.pluginTab : "zainstalowane";
   return h("section", {},
     // wstęp dotyczy instalowania wtyczek — nad ustawieniami wtyczek nie ma sensu;
     // zwijany, bo powtarza się nad każdą zakładką i spychał treść pod linię zgięcia
     sub !== PLUGSET && explainFold("wtyczki", "Panel tylko przypisuje wtyczki — instalację zawsze potwierdzasz na czytniku",
-      "Wtyczka KOReadera to kod Lua z pełnymi uprawnieniami na czytniku — koligilo nigdy nie instaluje jej samo: tylko przypisuje wersję jako „stan docelowy”. Instalację, aktualizację i usunięcie zawsze potwierdza człowiek na czytniku (Menu → Narzędzia → koligilo).",
+      "Wtyczka KOReadera to kod Lua z pełnymi uprawnieniami na czytniku — koligilo nigdy nie instaluje jej samo: panel tylko przypisuje wersję, która ma być zainstalowana. Instalację, aktualizację i usunięcie zawsze potwierdza człowiek na czytniku (" + MENU_PATH + ").",
       "Zgodę na instalowanie wtyczek („Pozwól instalować wtyczki”) włącza się wyłącznie na czytniku — panel nie może jej tu ustawić."),
     pluginTablist(),
     h("div", { id: "ptabpanel-" + sub, role: "tabpanel", "aria-labelledby": "ptab-" + sub, tabindex: "0", class: "tabpanel" },
       sub === PLUGSET ? pluginSettingsPanel()
         : sub === "galeria" ? galleryTab()
         : !S.plugins ? h("p", { class: "loading" }, "Wczytuję wtyczki…")
-        : sub === "urzadzenia" ? byDevicePanel() : byPluginPanel()));
+        : installedPanel()));
+}
+
+// ------------------------------------------------ zakładka: zainstalowane (TASK-33)
+//
+// Jedna macierz wtyczka × czytnik zamiast dawnych „Wg urządzeń” i „Wg wtyczek”.
+// Komórka to stan z zestawienia: stan docelowy (d.plugins: katalog → sha256, ustawia
+// panel), inwentarz zgłoszony przez czytnik (d.plugin_inventory) i ostatnie wyniki
+// operacji (d.plugin_results). „Zarządzana” pochodzi wyłącznie od czytnika (znacznik
+// .koligilo) — panel jej nie zgaduje. Usuwać z panelu wolno tylko wtyczki zarządzane
+// (PC-004, AC TASK-11.2); ręczne i wbudowane są tylko pokazane. Instalację i tak
+// zawsze potwierdza czytnik, więc panel wyłącznie przypisuje.
+
+const MENU_PATH = "Menu → Narzędzia → koligilo — synchronizacja ustawień";
+const SYNC_HINT = `Na czytniku: ${MENU_PATH} → Synchronizuj teraz, potem zatwierdź listę wtyczek.`;
+// stan komórki: znak (kształt niesie stan także bez koloru), zdanie, wskazówka co zrobić
+const PLUG_STATE = {
+  ok: { g: "✓", text: "zainstalowana" },
+  upd: { g: "↑", text: "nowsza wersja czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
+  wait: { g: "…", text: "czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
+  consent: { g: "!", text: "czytnik jeszcze nie pozwolił na wtyczki", hint: `Na czytniku: ${MENU_PATH} → Pozwól instalować wtyczki.` },
+  rm: { g: "−", text: "usunięcie czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
+  rejected: { g: "✕", text: "odrzucona na czytniku", hint: "Przypisz ją ponownie albo usuń z czytnika." },
+  err: { g: "✕", text: "błąd na czytniku" },
+  manual: { g: "▫", text: "ręczna lub wbudowana — koligilo jej nie rusza" },
+  none: { g: "＋", text: "nie ma na tym czytniku" },
+};
+const CONSENT_SHORT = "czytnik jeszcze nie pozwolił na wtyczki";
+
+function plugCell(d, dir) {
+  const inv = (d.plugin_inventory || []).find(p => p.dir === dir);
+  const res = (d.plugin_results || []).find(r => r.dir === dir);
+  const sha = (d.plugins || {})[dir];
+  const tv = sha ? pluginByHash(sha) : null;
+  let k = "none";
+  if (res && res.status === "error") k = "err";
+  else if (res && res.status === "rejected") k = "rejected";
+  else if (sha && !d.plugins_allowed) k = "consent";
+  else if (sha && inv && inv.sha256 === sha) k = "ok";
+  else if (sha && inv) k = "upd";
+  else if (sha) k = "wait";
+  else if (inv) k = inv.managed ? "rm" : "manual";
+  return { k, inv, sha, tv, res, canRemove: !!sha && (!inv || inv.managed) };
+}
+function plugVer(c) {
+  const t = c.tv ? (c.tv.version || c.sha.slice(0, 12)) : "";
+  const i = c.inv ? (c.inv.version || "?") : "";
+  if (c.k === "upd" || ((c.k === "consent" || c.k === "rejected") && i && t && i !== t)) return `${i} → ${t || "?"}`;
+  if (c.k === "wait" || c.k === "consent") return t ? "→ " + t : i;
+  return i || t;
+}
+function plugStateText(c) {
+  return c.k === "err" ? "błąd na czytniku: " + ((c.res && c.res.error) || "?") : PLUG_STATE[c.k].text;
+}
+
+function latestApproved(dir) {
+  return (S.plugins || []).filter(v => v.dir === dir && v.approved)
+    .sort((a, b) => String(b.added).localeCompare(String(a.added)))[0];
+}
+function pendingVersions(dir) { return (S.plugins || []).filter(v => v.dir === dir && v.source === "urządzenie" && !v.approved); }
+function updateFor(dir) {
+  const u = S.galUpdates && (S.galUpdates.updates || []).find(x => x.dir === dir && x.update_available);
+  return u || null;
+}
+
+// Wiersze macierzy: wtyczki z magazynu, przypisane gdziekolwiek albo zarządzane przez
+// koligilo na jakimś czytniku. Reszta inwentarza (ręczne i WBUDOWANE — kilkadziesiąt
+// na czytnik) idzie do zwiniętej listy pod tabelą.
+function pluginRows() {
+  const devs = S.state.devices, managed = new Set((S.plugins || []).map(v => v.dir));
+  for (const d of devs) {
+    Object.keys(d.plugins || {}).forEach(x => managed.add(x));
+    (d.plugin_inventory || []).filter(p => p.managed).forEach(p => managed.add(p.dir));
+  }
+  const other = new Map();
+  for (const d of devs) for (const p of d.plugin_inventory || []) {
+    if (managed.has(p.dir)) continue;
+    if (!other.has(p.dir)) other.set(p.dir, []);
+    other.get(p.dir).push(d.name);
+  }
+  const versions = S.plugins || [];
+  const rows = [...managed].sort((a, b) => {
+    const fa = dirIsFavorite(a, versions.filter(v => v.dir === a)), fb = dirIsFavorite(b, versions.filter(v => v.dir === b));
+    return (fb - fa) || pluginTitle(a).localeCompare(pluginTitle(b), "pl");
+  }).filter(dir => !S.favOnly || dirIsFavorite(dir, versions.filter(v => v.dir === dir)));
+  return { rows, other };
+}
+
+function plugGlyph(k) { return h("span", { class: "pg " + k, "aria-hidden": "true" }, PLUG_STATE[k].g); }
+
+function installedPanel() {
+  const devs = S.state.devices, { rows, other } = pluginRows();
+  const g = S.galUpdates, versions = S.plugins || [];
+  const nUpd = (g && (g.updates || []).filter(u => u.update_available).length) || 0;
+  const extraFav = favoriteReposNotInstalled(versions);
+  const msg = S.plugMsg;
+  return h("div", { class: "plugmatrix" },
+    h("div", { class: "row plugbar" },
+      h("button", { type: "button", class: "chip" + (S.favOnly ? " on" : ""), "aria-pressed": String(!!S.favOnly),
+        onclick: () => { S.favOnly = !S.favOnly; render(); } }, "★ Tylko ulubione"),
+      h("button", { type: "button", disabled: S.galUpdatesBusy, onclick: checkGalleryUpdates }, S.galUpdatesBusy ? "Sprawdzam…" : "Sprawdź aktualizacje"),
+      h("span", { class: "muted small" }, !g ? "Aktualizacji jeszcze nie sprawdzano w tej sesji."
+        : nUpd ? `${nUpd} ${plPl(nUpd, "wtyczka ma nowszą wersję", "wtyczki mają nowszą wersję", "wtyczek ma nowszą wersję")}.`
+        : "Wszystkie wtyczki z galerii są aktualne." + (g.updated_at && !g.updated_at.startsWith("0001") ? " Sprawdzono: " + ago(g.updated_at) + "." : ""))),
+    msg && h("p", { class: (msg.ok ? "ok" : "err") + " small", role: "status" }, msg.text),
+    devs.length === 0
+      ? h("p", { class: "muted" }, "Brak połączonych urządzeń — dodaj czytnik w zakładce „Urządzenia”.")
+      : rows.length === 0
+        ? h("p", { class: "muted" }, S.favOnly ? "Brak ulubionych wtyczek w magazynie."
+            : "Panel nie ma jeszcze żadnej wtyczki — znajdź ją w zakładce „Galeria” albo wgraj ZIP.")
+        : h("div", { class: "matrix-wrap" }, h("table", { class: "matrix pmx", "aria-label": "Wtyczki na czytnikach" },
+            h("thead", {}, h("tr", {},
+              h("th", { scope: "col" }, "Wtyczka"),
+              devs.map(d => h("th", { scope: "col", class: "cell" }, d.name,
+                !d.plugins_allowed && h("span", { class: "badge warn", title: CONSENT_SHORT + ". " + PLUG_STATE.consent.hint }, "bez zgody na wtyczki"))))),
+            h("tbody", {}, rows.map(dir => pluginMatrixRow(dir, devs))))),
+    S.plugSel && plugDetail(),
+    h("div", { class: "legend small muted", "aria-label": "Znaczenie znaków" },
+      ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", {}, plugGlyph(k), PLUG_STATE[k].text.replace(" na czytniku", "")))),
+    other.size > 0 && h("details", { class: "card otherplug" },
+      h("summary", {}, `Ręczne i wbudowane na czytnikach (${other.size})`),
+      h("p", { class: "muted small" }, "koligilo ich nie rusza — nie aktualizuje ani nie usuwa. Lista tylko pokazuje, co czytniki zgłosiły."),
+      h("ul", {}, [...other].sort((a, b) => a[0].localeCompare(b[0])).map(([dir, names]) =>
+        h("li", {}, pluginLabel(dir), " ", h("span", { class: "muted small" }, "— " + names.join(", ")))))),
+    !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-top:16px" },
+      h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
+      h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),
+      extraFav.map(full => h("div", { class: "row", style: "justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line)" },
+        h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full),
+          h("span", {}, h("span", { class: "pname" }, galleryTitle(full)), h("small", { class: "pdir" }, full))),
+        h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Otwórz w Galerii")))));
+}
+
+function pluginMatrixRow(dir, devs) {
+  const versions = (S.plugins || []).filter(v => v.dir === dir);
+  const upd = updateFor(dir), pend = pendingVersions(dir);
+  const sel = S.plugSel && S.plugSel.dir === dir;
+  return h("tr", { class: sel ? "sel" : "" },
+    h("th", { scope: "row" },
+      h("span", { class: "pmname" }, favStar("dir:" + dir),
+        h("button", { type: "button", class: "linkbtn pmopen", "aria-expanded": String(!!(sel && !S.plugSel.dev)),
+          onclick: () => plugSelect(dir, null) }, pluginLabel(dir)),
+        upd && h("span", { class: "badge warn", title: "Nowsza wersja w galerii" }, "↑ " + (upd.latest_tag || upd.latest_sha.slice(0, 7))),
+        pend.length > 0 && h("span", { class: "badge warn", title: "Wtyczka wysłana z czytnika czeka na Twoją akceptację" }, "czeka na akceptację"))),
+    devs.map(d => {
+      const c = plugCell(d, dir), on = S.plugSel && S.plugSel.dir === dir && S.plugSel.dev === d.id;
+      const label = `${d.name}: ${pluginTitle(dir)} — ${plugStateText(c)}`;
+      if (c.k === "none") {
+        const v = latestApproved(dir);
+        return h("td", { class: "cell" }, v
+          ? h("button", { type: "button", class: "pcell none", title: `Przypisz ${v.version || v.sha256.slice(0, 12)} do ${d.name}`,
+              "aria-label": `Przypisz ${pluginTitle(dir)} ${v.version || ""} do ${d.name}`, disabled: S.devPluginBusy === d.id,
+              onclick: () => saveDevicePlugins(d, { ...(d.plugins || {}), [dir]: v.sha256 }) }, plugGlyph("none"))
+          : h("span", { class: "muted", "aria-label": label, title: "Brak zaakceptowanej wersji" }, "–"));
+      }
+      return h("td", { class: "cell" }, h("button", { type: "button", class: "pcell " + c.k + (on ? " on" : ""), title: label, "aria-label": label,
+        "aria-expanded": String(on), onclick: () => plugSelect(dir, d.id) },
+        plugGlyph(c.k), h("span", { class: "vv" }, plugVer(c))));
+    }));
+}
+
+function plugSelect(dir, dev) {
+  const same = S.plugSel && S.plugSel.dir === dir && S.plugSel.dev === dev;
+  S.plugSel = same ? null : { dir, dev };
+  S.plugMsg = null;
+  render();
+}
+
+// Panel pod macierzą: zaznaczona wtyczka (i czytnik) — pełne zdanie stanu z podpowiedzią,
+// wersje w magazynie, aktualizacja, akceptacja i usuwanie.
+function plugDetail() {
+  const { dir, dev } = S.plugSel;
+  const d = dev ? S.state.devices.find(x => x.id === dev) : null;
+  if (dev && !d) { S.plugSel = null; return null; }
+  const versions = (S.plugins || []).filter(v => v.dir === dir)
+    .sort((a, b) => String(b.added).localeCompare(String(a.added)));
+  const c = d ? plugCell(d, dir) : null, upd = updateFor(dir);
+  return h("section", { class: "card plugdetail", "aria-label": "Szczegóły wtyczki" },
+    h("div", { class: "row", style: "justify-content:space-between;align-items:flex-start" },
+      h("h3", { style: "margin:0" }, pluginLabel(dir), d && h("span", { class: "muted" }, " na " + d.name)),
+      h("button", { type: "button", onclick: () => { S.plugSel = null; render(); } }, "Zamknij")),
+    c && h("p", { class: "pdstate" }, plugGlyph(c.k), " ", h("b", {}, plugStateText(c)), plugVer(c) && h("span", { class: "vv" }, " · " + plugVer(c)),
+      PLUG_STATE[c.k].hint && h("span", { class: "muted small", style: "display:block;margin-top:2px" }, PLUG_STATE[c.k].hint)),
+    c && c.k === "manual" && h("p", { class: "muted small" }, "Zainstalowana ręcznie albo wbudowana w KOReadera. koligilo jej nie aktualizuje ani nie usuwa."),
+    c && c.k !== "manual" && h("div", { class: "row" },
+      c.canRemove && h("button", { type: "button", class: "danger", disabled: S.devPluginBusy === d.id, onclick: () => removeDevicePlugin(d, dir) }, "Usuń z czytnika"),
+      !c.canRemove && c.sha && h("span", { class: "muted small" }, "Zainstalowana ręcznie — nie da się usunąć z panelu.")),
+    upd && updateRow(upd),
+    versions.length > 0 && h("div", { class: "matrix-wrap" }, h("table", { class: "matrix plugins" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Wersja w panelu"), h("th", {}, "Źródło"), h("th", {}, "Pochodzenie"), h("th", {}, "Stan"), h("th", {}, "Akcje"))),
+      h("tbody", {}, versions.map(v => {
+        const pending = v.source === "urządzenie" && !v.approved, isTarget = d && (d.plugins || {})[dir] === v.sha256;
+        return h("tr", {},
+          h("td", {}, v.version || v.sha256.slice(0, 12)),
+          h("td", {}, v.source),
+          h("td", { class: "muted small" }, v.source_ref || "—"),
+          h("td", {}, pending ? h("span", { class: "badge warn" }, "czeka na akceptację") : isTarget ? h("span", { class: "ok" }, "przypisana") : h("span", { class: "ok" }, "zaakceptowana")),
+          h("td", {}, pending
+            ? h("button", { type: "button", class: "primary", disabled: S.approveBusy === v.sha256, onclick: () => approvePlugin(v) }, S.approveBusy === v.sha256 ? "Akceptuję…" : "Zaakceptuj")
+            : d && !isTarget && h("button", { type: "button", disabled: S.devPluginBusy === d.id,
+                onclick: () => saveDevicePlugins(d, { ...(d.plugins || {}), [dir]: v.sha256 }) }, "Przypisz do " + d.name)));
+      })))));
 }
 
 // Wtyczki → „Ustawienia wtyczek” (TASK-26): ustawienia samych wtyczek, osobno od
@@ -2378,14 +2572,6 @@ function pluginSettingsPanel() {
       pad || h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada."),
       acts));
 }
-
-function byDevicePanel() {
-  return h("div", {},
-    S.state.devices.length === 0
-      ? h("p", { class: "muted" }, "Brak połączonych urządzeń — dodaj czytnik w zakładce „Urządzenia”.")
-      : S.state.devices.map(devicePluginCard));
-}
-
 // --- zakładka: wg wtyczek (TASK-19) ---
 //
 // Ten sam magazyn i te same urządzenia co „Wg urządzeń”, tylko odwrócone:
@@ -2450,135 +2636,6 @@ function openGalleryFor(full) {
   S.galQ = full; S.galPage = 1;
   showPluginTab("galeria");
 }
-
-function byPluginPanel() {
-  const versions = S.plugins || [];
-  const dirs = [...new Set(versions.map(v => v.dir))];
-  let sorted = dirs.slice().sort((a, b) => {
-    const va = versions.filter(v => v.dir === a), vb = versions.filter(v => v.dir === b);
-    const fa = dirIsFavorite(a, va), fb = dirIsFavorite(b, vb);
-    return (fb - fa) || pluginTitle(a).localeCompare(pluginTitle(b), "pl");
-  });
-  if (S.favOnly) sorted = sorted.filter(dir => dirIsFavorite(dir, versions.filter(v => v.dir === dir)));
-  const extraFav = favoriteReposNotInstalled(versions);
-  return h("div", {},
-    h("div", { class: "row", style: "margin:0 0 14px" },
-      h("button", {
-        type: "button", class: "chip" + (S.favOnly ? " on" : ""), "aria-pressed": String(!!S.favOnly),
-        onclick: () => { S.favOnly = !S.favOnly; render(); },
-      }, "★ Tylko ulubione")),
-    uploadCard(),
-    updatesCard(),
-    storeCard(),
-    !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-bottom:16px" },
-      h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
-      h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),
-      extraFav.map(full => h("div", { class: "row", style: "justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line)" },
-        h("div", { style: "display:flex;align-items:center;gap:8px" }, favStar("gh:" + full),
-          h("span", {}, h("span", { class: "pname" }, galleryTitle(full)), h("small", { class: "pdir" }, full))),
-        h("button", { type: "button", onclick: () => openGalleryFor(full) }, "Otwórz w Galerii")))),
-    sorted.length === 0
-      ? h("p", { class: "muted" }, S.favOnly ? "Brak ulubionych wtyczek w magazynie." : "Magazyn jest pusty — wgraj ZIP albo dodaj wtyczkę z zakładki „Galeria”.")
-      : sorted.map(dir => pluginDirCard(dir, versions.filter(v => v.dir === dir))));
-}
-
-function pluginDirCard(dir, versions) {
-  const approved = versions.filter(v => v.approved);
-  const invMap = d => new Map((d.plugin_inventory || []).map(p => [p.dir, p]));
-  const resMap = d => new Map((d.plugin_results || []).map(r => [r.dir, r]));
-  const withDir = S.state.devices.filter(d => (d.plugins || {})[dir] || invMap(d).has(dir));
-  const without = S.state.devices.filter(d => !withDir.includes(d));
-  const repo = dirGalleryRepos(versions)[0];
-  return h("article", { class: "card", style: "margin-bottom:14px" },
-    h("h3", { style: "margin:0 0 4px;display:flex;align-items:center;gap:8px" }, favStar("dir:" + dir), h("span", {}, pluginLabel(dir))),
-    repo && h("p", { class: "muted small", style: "margin:0 0 8px" },
-      "Z galerii: ", h("a", { href: "https://github.com/" + repo, target: "_blank", rel: "noopener" }, repo, " ↗"),
-      " ", favStar("gh:" + repo)),
-    withDir.length === 0
-      ? h("p", { class: "muted small" }, "Nie przypisana ani zainstalowana na żadnym urządzeniu.")
-      : h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
-          h("thead", {}, h("tr", {},
-            h("th", {}, "Urządzenie"), h("th", {}, "Zainstalowana"), h("th", {}, "Docelowa"),
-            h("th", {}, "Stan"), managedTh(), h("th", {}, "Akcje"))),
-          h("tbody", {}, withDir.map(d => pluginDeviceRow(d, dir, invMap(d).get(dir), resMap(d).get(dir))))))),
-    without.length > 0 && approved.length > 0 && assignToDeviceForm(dir, approved, without));
-}
-
-// pluginDeviceRow: jak pluginRow (devicePluginCard), ale pierwsza kolumna to
-// nazwa urządzenia, nie katalog wtyczki — tabela jest już wewnątrz karty
-// jednej wtyczki, więc kolumna z jej nazwą byłaby powtórzeniem.
-function pluginDeviceRow(d, dir, inv, lastResult) {
-  const targetSha = (d.plugins || {})[dir];
-  const targetV = targetSha ? pluginByHash(targetSha) : null;
-  const status = pluginStatus(d, targetSha, inv, lastResult);
-  const managed = managedText(inv, targetSha);
-  const canRemove = !!targetSha && (!inv || inv.managed);
-  return h("tr", {},
-    h("td", {}, d.name),
-    h("td", {}, inv ? (inv.version || "?") : "—"),
-    h("td", {}, targetV ? (targetV.version || targetSha.slice(0, 12)) : "—"),
-    h("td", { class: status.cls }, status.text),
-    h("td", {}, managed),
-    h("td", {}, !targetSha ? null
-      : canRemove
-        ? h("button", { class: "danger", disabled: S.devPluginBusy === d.id, onclick: () => removeDevicePlugin(d, dir) }, "Usuń")
-        : h("button", { disabled: true, title: "Zainstalowana ręcznie na czytniku — nie da się usunąć z panelu" }, "Usuń")));
-}
-
-function assignToDeviceForm(dir, approved, devices) {
-  const dkey = "byplug:" + dir;
-  const draft = S.devPluginDraft[dkey] || (S.devPluginDraft[dkey] = { sha: approved[0].sha256, dev: devices[0].id });
-  if (!approved.some(v => v.sha256 === draft.sha)) draft.sha = approved[0].sha256;
-  if (!devices.some(d => d.id === draft.dev)) draft.dev = devices[0].id;
-  const msg = S.devPluginMsg[draft.dev];
-  return h("div", { class: "row", style: "margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)" },
-    h("select", { "aria-label": "Wybierz urządzenie do przypisania wtyczki " + pluginTitle(dir), onchange: ev => { draft.dev = ev.target.value; } },
-      devices.map(d => h("option", { value: d.id, selected: draft.dev === d.id }, d.name))),
-    h("select", { "aria-label": "Wybierz wersję wtyczki " + pluginTitle(dir), onchange: ev => { draft.sha = ev.target.value; } },
-      approved.map(v => h("option", { value: v.sha256, selected: draft.sha === v.sha256 }, `${v.version || v.sha256.slice(0, 12)} (${v.source})`))),
-    h("button", { class: "primary", disabled: S.devPluginBusy === draft.dev, onclick: () => assignPluginToDevice(dir, draft) },
-      S.devPluginBusy === draft.dev ? "Przypisuję…" : "Przypisz do urządzenia"),
-    msg && h("span", { class: (msg.ok ? "ok" : "err") + " small" }, msg.text));
-}
-
-async function assignPluginToDevice(dir, draft) {
-  const d = S.state.devices.find(x => x.id === draft.dev);
-  if (!d) return;
-  await saveDevicePlugins(d, { ...(d.plugins || {}), [dir]: draft.sha });
-}
-
-// storeCard: pełna lista wersji w magazynie (TASK-12, dodatek do TASK-13) —
-// wersje wysłane z czytnika (source == "urządzenie") czekają na akceptację
-// admina, zanim będzie można je przypisać innym urządzeniom (addPluginForm
-// już je filtruje — patrz opts poniżej).
-function storeCard() {
-  const versions = S.plugins || [];
-  if (versions.length === 0) return null;
-  return h("section", { class: "card", style: "margin-bottom:16px" },
-    h("h3", { style: "margin-top:0" }, "Wersje w magazynie"),
-    h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
-      h("thead", {}, h("tr", {},
-        h("th", {}, "Wtyczka"), h("th", {}, "Wersja"), h("th", {}, "Źródło"),
-        h("th", {}, "Pochodzenie"), h("th", {}, "Stan"), h("th", {}, "Akcje"))),
-      h("tbody", {}, versions.map(storeRow))))));
-}
-
-function storeRow(v) {
-  const pending = v.source === "urządzenie" && !v.approved;
-  return h("tr", {},
-    h("td", {}, pluginLabel(v.dir, pluginVerName(v))),
-    h("td", {}, v.version || v.sha256.slice(0, 12)),
-    h("td", {}, v.source),
-    h("td", { class: "muted small" }, v.source_ref || "—"),
-    h("td", {}, pending
-      ? h("span", { class: "badge warn" }, "czeka na akceptację")
-      : h("span", { class: "ok" }, "zaakceptowana")),
-    h("td", {}, pending
-      ? h("button", { class: "primary", disabled: S.approveBusy === v.sha256, onclick: () => approvePlugin(v) },
-          S.approveBusy === v.sha256 ? "Akceptuję…" : "Zaakceptuj")
-      : null));
-}
-
 async function approvePlugin(v) {
   if (!confirm(
     `Zaakceptować „${pluginVerName(v)}” (katalog ${v.dir}, wersja ${v.version || v.sha256.slice(0, 12)}) przysłaną z czytnika (${v.source_ref})?\n\n` +
@@ -2592,30 +2649,6 @@ async function approvePlugin(v) {
   S.approveBusy = null;
   refresh();
 }
-
-// ------------------------------------------------ zakładka: wtyczki — aktualizacje z galerii (TASK-12)
-
-function updatesCard() {
-  const g = S.galUpdates;
-  return h("section", { class: "card", style: "margin-bottom:16px" },
-    h("div", { class: "row", style: "justify-content:space-between;align-items:center" },
-      h("h3", { style: "margin:0" }, "Dostępne aktualizacje"),
-      h("button", { disabled: S.galUpdatesBusy, onclick: checkGalleryUpdates }, S.galUpdatesBusy ? "Sprawdzam…" : "Sprawdź teraz")),
-    !g
-      ? h("p", { class: "muted small" }, "Nie sprawdzano jeszcze aktualizacji w tej sesji.")
-      : updatesBody(g));
-}
-
-function updatesBody(g) {
-  const avail = (g.updates || []).filter(u => u.update_available);
-  return h("div", {},
-    g.note && h("p", { class: "muted small" }, g.note),
-    g.updated_at && !g.updated_at.startsWith("0001") && h("p", { class: "muted small" }, "Ostatnio sprawdzono: ", ago(g.updated_at)),
-    avail.length === 0
-      ? h("p", { class: "muted small" }, "Wszystkie wtyczki z galerii są aktualne.")
-      : avail.map(updateRow));
-}
-
 function updateRow(u) {
   const key = u.repo;
   const busy = S.galUpdateBusy === key;
@@ -2682,85 +2715,13 @@ async function uploadPlugin() {
     const fd = new FormData();
     fd.append("file", file);
     const out = await apiUpload("/api/admin/plugins", fd);
-    S.uploadMsg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Przypisz ją niżej do urządzenia.` };
+    S.uploadMsg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Przypisz ją czytnikom w zakładce „Zainstalowane”.` };
   } catch (e) {
     S.uploadMsg = { ok: false, text: e.message };
   }
   S.uploadBusy = false;
   refresh();
 }
-
-function pluginStatus(d, targetSha, inv, lastResult) {
-  if (lastResult && lastResult.status === "error") return { text: "błąd: " + (lastResult.error || "?"), cls: "err small" };
-  if (lastResult && lastResult.status === "rejected") return { text: "odrzucona na czytniku", cls: "warn" };
-  if (targetSha && !d.plugins_allowed) return { text: "oczekuje na zgodę na czytniku", cls: "warn" };
-  if (targetSha && inv && inv.sha256 === targetSha) return { text: "zainstalowana", cls: "ok" };
-  if (targetSha && inv && inv.sha256 && inv.sha256 !== targetSha) return { text: "czeka na aktualizację", cls: "warn" };
-  if (targetSha && !inv) return { text: "czeka na instalację", cls: "warn" };
-  if (!targetSha && inv) return { text: "zainstalowana ręcznie / poza koligilo", cls: "" };
-  return { text: "—", cls: "" };
-}
-
-function devicePluginCard(d) {
-  const inv = new Map((d.plugin_inventory || []).map(p => [p.dir, p]));
-  const results = new Map((d.plugin_results || []).map(r => [r.dir, r]));
-  const dirs = new Set([...Object.keys(d.plugins || {}), ...inv.keys()]);
-  return h("article", { class: "card device", style: "margin-bottom:14px" },
-    h("h3", { style: "margin:0 0 4px" }, d.name,
-      !d.plugins_allowed && h("span", { class: "badge warn",
-        title: "Włącz na czytniku: menu koligilo → Pozwól instalować wtyczki" }, "brak zgody na czytniku")),
-    d.plugin_report_at && h("p", { class: "muted small", style: "margin:0 0 10px" }, "Ostatni raport z czytnika: ", ago(d.plugin_report_at)),
-    dirs.size === 0
-      ? h("p", { class: "muted small" }, "Brak wtyczek — ani przypisanych, ani zgłoszonych przez czytnik.")
-      : h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix plugins" },
-          h("thead", {}, h("tr", {},
-            h("th", {}, "Wtyczka"), h("th", {}, "Zainstalowana"), h("th", {}, "Docelowa"),
-            h("th", {}, "Stan"), managedTh(), h("th", {}, "Akcje"))),
-          h("tbody", {}, [...dirs].sort((a, b) => pluginTitle(a).localeCompare(pluginTitle(b), "pl"))
-            .map(dir => pluginRow(d, dir, inv.get(dir), results.get(dir))))))),
-    addPluginForm(d));
-}
-
-function pluginRow(d, dir, inv, lastResult) {
-  const targetSha = (d.plugins || {})[dir];
-  const targetV = targetSha ? pluginByHash(targetSha) : null;
-  const status = pluginStatus(d, targetSha, inv, lastResult);
-  const managed = managedText(inv, targetSha);
-  const canRemove = !!targetSha && (!inv || inv.managed);
-  return h("tr", {},
-    h("td", {}, pluginLabel(dir)),
-    h("td", {}, inv ? (inv.version || "?") : "—"),
-    h("td", {}, targetV ? (targetV.version || targetSha.slice(0, 12)) : "—"),
-    h("td", { class: status.cls }, status.text),
-    h("td", {}, managed),
-    h("td", {}, !targetSha ? null
-      : canRemove
-        ? h("button", { class: "danger", disabled: S.devPluginBusy === d.id, onclick: () => removeDevicePlugin(d, dir) }, "Usuń")
-        : h("button", { disabled: true, title: "Zainstalowana ręcznie na czytniku — nie da się usunąć z panelu" }, "Usuń")));
-}
-
-function addPluginForm(d) {
-  const opts = (S.plugins || []).filter(v => v.approved);
-  if (opts.length === 0) return h("p", { class: "muted small", style: "margin-top:10px" }, "Magazyn jest pusty — wgraj ZIP albo dodaj wtyczkę z galerii.");
-  const key = d.id;
-  const draft = S.devPluginDraft[key] || (S.devPluginDraft[key] = { sha: opts[0].sha256 });
-  if (!opts.some(v => v.sha256 === draft.sha)) draft.sha = opts[0].sha256;
-  return h("div", { class: "row", style: "margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)" },
-    h("select", { "aria-label": "Wybierz wtyczkę do dodania na " + d.name, onchange: ev => { draft.sha = ev.target.value; } },
-      opts.map(v => h("option", { value: v.sha256, selected: draft.sha === v.sha256 },
-        // dwie różne wtyczki o tej samej nazwie (np. fork) rozróżnia katalog
-        `${pluginVerName(v)}${opts.some(o => o.dir !== v.dir && pluginVerName(o) === pluginVerName(v)) ? ` [${v.dir}]` : ""} — ${v.version || v.sha256.slice(0, 12)} (${v.source})`))),
-    h("button", { class: "primary", disabled: S.devPluginBusy === key, onclick: () => addDevicePlugin(d, draft.sha) },
-      S.devPluginBusy === key ? "Dodaję…" : "Dodaj do urządzenia"),
-    S.devPluginMsg[key] && h("span", { class: (S.devPluginMsg[key].ok ? "ok" : "err") + " small" }, S.devPluginMsg[key].text));
-}
-
-async function addDevicePlugin(d, sha) {
-  const v = pluginByHash(sha);
-  if (!v) return;
-  await saveDevicePlugins(d, { ...(d.plugins || {}), [v.dir]: sha });
-}
-
 async function removeDevicePlugin(d, dir) {
   if (!confirm(`Usunąć wtyczkę „${pluginTitle(dir)}” z celu urządzenia „${d.name}”?\n\nPrzy najbliższej synchronizacji czytnik poprosi o potwierdzenie odinstalowania.`)) return;
   const next = { ...(d.plugins || {}) };
@@ -2769,12 +2730,12 @@ async function removeDevicePlugin(d, dir) {
 }
 
 async function saveDevicePlugins(d, next) {
-  S.devPluginBusy = d.id; S.devPluginMsg[d.id] = null; render();
+  S.devPluginBusy = d.id; S.plugMsg = null; render();
   try {
     await api("POST", `/api/admin/devices/${d.id}/plugins`, { plugins: next });
-    S.devPluginMsg[d.id] = { ok: true, text: "Zapisane. Czytnik poprosi o potwierdzenie przy najbliższej synchronizacji." };
+    S.plugMsg = { ok: true, text: `Zapisane dla „${d.name}”. Czytnik poprosi o potwierdzenie przy najbliższej synchronizacji.` };
   } catch (e) {
-    S.devPluginMsg[d.id] = { ok: false, text: e.message };
+    S.plugMsg = { ok: false, text: e.message };
   }
   S.devPluginBusy = null;
   refresh();
@@ -2821,6 +2782,7 @@ function galleryTab() {
         h("option", { value: "updated", selected: S.galSort === "updated" || undefined }, "ostatnia aktualizacja")),
       h("button", { type: "submit" }, "Szukaj"),
       h("button", { type: "button", disabled: S.galBusy, onclick: refreshGallery }, S.galBusy ? "Odświeżam…" : "Odśwież z GitHuba")),
+    uploadCard(),
     g.note && h("p", { class: "muted small" }, g.note),
     g.stale && h("p", { class: "muted small" }, "Dane mogą być nieaktualne (starsze niż 24 h) — kliknij „Odśwież z GitHuba”."),
     (g.promoted || []).length > 0 && g.page === 1 && h("section", { class: "gallery-promoted", style: "margin-bottom:20px" },
@@ -2880,7 +2842,7 @@ function galleryInstallPanel(repo, inst) {
           h("input", { type: "checkbox", disabled: !d.plugins_allowed, checked: inst.devices.has(d.id),
             onchange: ev => { if (ev.target.checked) inst.devices.add(d.id); else inst.devices.delete(d.id); render(); } }),
           d.name,
-          !d.plugins_allowed && h("span", { class: "muted small" }, " (brak zgody na czytniku)")))),
+          !d.plugins_allowed && h("span", { class: "muted small" }, " (" + CONSENT_SHORT + ")")))),
     inst.candidates && h("div", { class: "field" },
       h("span", {}, "Wiele katalogów *.koplugin w repozytorium — wybierz jeden:"),
       h("select", { onchange: ev => { inst.path = ev.target.value; } },
