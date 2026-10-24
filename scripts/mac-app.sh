@@ -32,7 +32,8 @@ done
 lipo -create -output "$APP/Contents/MacOS/koligilo-app" "$TMP/app-arm64" "$TMP/app-x86_64"
 
 echo "== ikona"
-python3 macapp/icon.py "$TMP/icon.png" 2>/dev/null || { echo "brak PIL — używam dołączonej macapp/icon.png"; cp macapp/icon.png "$TMP/icon.png"; }
+# macapp/icon.png jest wynikiem `python3 macapp/icon.py macapp/icon.png` (numpy/scipy, których Mac nie ma)
+cp macapp/icon.png "$TMP/icon.png"
 ICONSET="$TMP/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do

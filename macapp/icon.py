@@ -3,29 +3,56 @@
 
     python3 macapp/icon.py OUT.png   # 1024×1024, z niej iconutil robi .icns
 
-Geometria jak web/icon.svg (siatka 64): kafelek 3..61, ogniwa (25.5,32) i (38.5,32), r 11.5.
+Wynik jest zacommitowany jako macapp/icon.png i to jego bierze scripts/mac-app.sh
+(na Macu nie ma numpy/scipy). Ten skrypt uruchamia się tylko przy zmianie ikony.
+
+Ikona jest pełną kratką 1024 px (bez przezroczystego marginesu): macOS 26+ sam
+nakłada na każdą ikonę swoją maskę, normalizuje jej rozmiar i dodaje cień oraz skos
+u krawędzi. Własna ramka w kształcie zwykłego prostokąta z zaokrągleniem nie jest
+współśrodkowa z tą maską — na bokach wychodzi gruba, na rogach i u góry cienka.
+Dlatego ramka jest tu liczona równolegle do maski systemu: macapp/icon-mask.png to
+jej kształt (kanał alfa renderu czarnego kwadratu przez NSWorkspace.icon(forFile:),
+przycięty do bryły), a papier to wnętrze maski cofnięte o stałą odległość.
+Góra i dół dostają ramkę grubszą o RULE_V − RULE, bo skos systemu zjada tam
+ok. 10% czerni.
 """
+import os
 import sys
+
+import numpy as np
 from PIL import Image, ImageDraw
+from scipy.ndimage import distance_transform_edt
 
 S = 1024
-SS = 4                     # nadpróbkowanie zamiast antyaliasingu, którego ImageDraw nie ma
+SS = 2                     # nadpróbkowanie zamiast antyaliasingu, którego ImageDraw nie ma
 PAPER = (247, 247, 244)
 INK = (22, 22, 22)
+RULE = 53                  # grubość ramki na bokach (px na 1024) = 3/58 kafelka jak w web/icon.svg
+RULE_V = 60                # u góry i u dołu
+
+MASK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon-mask.png")
 
 
 def main(out):
     big = S * SS
-    k = 824 * SS / 58          # siatka 64 → kafelek 824 px (siatka ikon macOS)
-    o = 100 * SS - 3 * k
-    P = lambda v: o + v * k
+    mask = np.array(Image.open(MASK).convert("L").resize((big, big), Image.LANCZOS)) > 127
+    # pad: krawędź kratki też jest krawędzią maski
+    dist = distance_transform_edt(np.pad(mask, 1))[1:-1, 1:-1]
 
-    im = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    # waga 1 przy górze/dole, 0 przy bokach; grubość ramki płynnie między RULE a RULE_V
+    t = np.abs(np.linspace(-1, 1, big))
+    wv = t[:, None] ** 4 / (t[:, None] ** 4 + t[None, :] ** 4 + 1e-9)
+    thick = (RULE + (RULE_V - RULE) * wv) * SS
+
+    px = np.zeros((big, big, 4), np.uint8)
+    px[..., :3] = INK
+    px[..., 3] = 255
+    px[dist > thick, :3] = PAPER
+    im = Image.fromarray(px, "RGBA")
     d = ImageDraw.Draw(im)
-    rule = round(3 * k)
-    d.rounded_rectangle((P(3), P(3), P(61), P(61)), round(12 * k), fill=INK)
-    d.rounded_rectangle((P(3) + rule, P(3) + rule, P(61) - rule, P(61) - rule),
-                        round(12 * k) - rule, fill=PAPER)
+
+    k = big / 58               # siatka 64 jak web/icon.svg: kafelek 3..61 = cała kratka
+    P = lambda v: big / 2 + (v - 32) * k
 
     def ring(cx, cy, r, w):
         # ImageDraw rysuje obrys do środka ramki — poszerzamy ją o pół grubości

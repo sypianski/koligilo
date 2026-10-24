@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var Version = "0.7.0"
+var Version = "0.7.1"
 
 const usage = `koligilo %s — synchronizacja ustawień KOReadera
 
