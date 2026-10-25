@@ -112,7 +112,7 @@ make e2e     # serwer + dwa symulowane czytniki przez prawdziwe HTTP
 make dist    # binarki: macOS arm64/amd64, Linux amd64/arm64, Windows amd64 + zip pluginu
 ```
 
-## Stan (0.8.3)
+## Stan (0.9.0)
 
 - [x] Własny serwer, parowanie kodem, grupy per urządzenie, auto-sync po Wi-Fi
 - [x] Konta w panelu: kosync, Wallabag, konta w chmurze (Dropbox z logowaniem przez kod, WebDAV, FTP), gdzie statystyki i słowniczek trzymają bazę
@@ -120,6 +120,8 @@ make dist    # binarki: macOS arm64/amd64, Linux amd64/arm64, Windows amd64 + zi
 - [x] Edycja wspólnych ustawień w panelu (API z walidacją literałów Lua)
 - [x] Wtyczki: magazyn na serwerze, galeria z GitHuba (przypięta do SHA), aktualizacje, wysyłanie wtyczki z czytnika — instalacja tylko za zgodą i potwierdzeniem na czytniku (PC-004, KOReader ≥ 2025.08)
 - [x] Samoaktualizacja pluginu koligilo: tylko za zgodą z menu czytnika i po potwierdzeniu wersji na czytniku, wyłącznie do wyższej wersji, sha256 + kompilacja przed podmianą (PC-019, TASK-39)
+- [x] Opcjonalne akcje po synchronizacji, każda za zgodą z menu czytnika (podmenu „Zgody”): scalanie statystyk i słowniczka, pobieranie artykułów Wallabag (tylko poza książką); cicha synchronizacja po wybudzeniu; panel widzi wersję wtyczki, zgody i wstrzymaną synchronizację
+- [x] Panel: karty Rosetta i Asystent AI w ustawieniach wtyczek, katalogi OPDS jako konto, testy połączenia (kosync, Wallabag, Rosetta, chmura, folder statystyk)
 - [x] Panel desktop odporny na CSRF i DNS rebinding
 - [x] Jedna aplikacja: komputer jako serwer (domyślnie) albo własny serwer; przenosiny danych bez ponownego parowania
 - [ ] Test na prawdziwych czytnikach (Pixel 8a, Kobo/PocketBook)
