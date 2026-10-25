@@ -632,3 +632,48 @@ func TestAdminRVClaimRollsBackDeviceOnRemoteFailure(t *testing.T) {
 		t.Errorf("po nieudanym claim zostało %d urządzeń", n)
 	}
 }
+
+// TASK-56: zawieszony zdalny punkt kontaktowy nie wiesza panelu — po limicie
+// czasu lookup i claim kończą się 502.
+func TestRVClientTimesOutOnHungRemote(t *testing.T) {
+	release := make(chan struct{})
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer remote.Close()
+	defer close(release) // najpierw zwolnij handlery, inaczej Close czeka na nie
+
+	old := rvHTTP
+	rvHTTP = &http.Client{Timeout: 100 * time.Millisecond}
+	defer func() { rvHTTP = old }()
+
+	c := rvClient{remote: remote.URL}
+	start := time.Now()
+	if out, status := c.lookup("1.2.3.4", "123456"); status != 502 || out["error"] == "" {
+		t.Errorf("lookup: %d %v, chcę 502 z komunikatem", status, out)
+	}
+	if status, msg := c.claim("1.2.3.4", "123456", "https://s.test", "t", "d"); status != 502 || msg == "" {
+		t.Errorf("claim: %d %q, chcę 502 z komunikatem", status, msg)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("żądania trwały %v — limit czasu nie zadziałał", d)
+	}
+}
+
+// Cała odpowiedź zdalnego punktu nie jest czytana ponad rvMaxReply.
+func TestRVClientIgnoresOversizedReply(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte(`{"name":"`))
+		w.Write(bytes.Repeat([]byte("a"), rvMaxReply*2))
+		w.Write([]byte(`"}`))
+	}))
+	defer remote.Close()
+	out, status := rvClient{remote: remote.URL}.lookup("1.2.3.4", "123456")
+	if status != 200 {
+		t.Fatalf("status %d", status)
+	}
+	if len(out["name"]) != 0 {
+		t.Errorf("odczytano %d bajtów nazwy z przerośniętej odpowiedzi", len(out["name"]))
+	}
+}

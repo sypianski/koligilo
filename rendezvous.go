@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -207,6 +208,14 @@ func (rv *Rendezvous) claim(ip, code, server, token, devID string) (int, string)
 
 // --- panel serwera: lookup/claim lokalnie albo w zdalnym punkcie kontaktowym ---
 
+// rvHTTP: klient do zdalnego punktu kontaktowego. Domyślny http.Client nie ma
+// limitu czasu, więc zawieszony punkt (--rendezvous) wieszałby żądanie panelu.
+// Zmienna, żeby test mógł skrócić limit.
+var rvHTTP = &http.Client{Timeout: 15 * time.Second}
+
+// rvMaxReply: odpowiedź punktu kontaktowego to krótki JSON; reszty nie czytamy.
+const rvMaxReply = 64 << 10
+
 type rvClient struct {
 	self   *Rendezvous
 	remote string // "" = ten serwer jest punktem kontaktowym
@@ -216,13 +225,13 @@ func (c rvClient) lookup(ip, code string) (map[string]string, int) {
 	if c.remote == "" {
 		return c.self.lookup(ip, code)
 	}
-	resp, err := http.Get(c.remote + "/api/v1/rv/code/" + normCode(code))
+	resp, err := rvHTTP.Get(c.remote + "/api/v1/rv/code/" + normCode(code))
 	if err != nil {
 		return map[string]string{"error": "punkt kontaktowy nie odpowiada: " + err.Error()}, 502
 	}
 	defer resp.Body.Close()
 	var out map[string]string
-	json.NewDecoder(resp.Body).Decode(&out)
+	json.NewDecoder(io.LimitReader(resp.Body, rvMaxReply)).Decode(&out)
 	return out, resp.StatusCode
 }
 
@@ -231,12 +240,12 @@ func (c rvClient) claim(ip, code, server, token, devID string) (int, string) {
 		return c.self.claim(ip, code, server, token, devID)
 	}
 	b, _ := json.Marshal(map[string]string{"server": server, "token": token, "device_id": devID})
-	resp, err := http.Post(c.remote+"/api/v1/rv/code/"+normCode(code)+"/claim", "application/json", bytes.NewReader(b))
+	resp, err := rvHTTP.Post(c.remote+"/api/v1/rv/code/"+normCode(code)+"/claim", "application/json", bytes.NewReader(b))
 	if err != nil {
 		return 502, "punkt kontaktowy nie odpowiada: " + err.Error()
 	}
 	defer resp.Body.Close()
 	var out map[string]string
-	json.NewDecoder(resp.Body).Decode(&out)
+	json.NewDecoder(io.LimitReader(resp.Body, rvMaxReply)).Decode(&out)
 	return resp.StatusCode, out["error"]
 }
