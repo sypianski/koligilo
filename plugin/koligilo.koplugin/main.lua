@@ -259,6 +259,36 @@ function Koligilo:consentItems()
             })
         end,
     })
+    -- Słowniki (TASK-55, PC-020): jak czcionki — dane, jedna zgoda, bez pytania o każdy;
+    -- ale duże (do 300 MB), więc pobieranie rusza tylko poza książką, a okno zgody to mówi.
+    table.insert(items, {
+        text = _("Synchronizuj słowniki"),
+        checked_func = function() return self.settings:isTrue("dicts_allowed") end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            local function tell_server(silent)
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(silent) end)
+                end
+            end
+            if self.settings:isTrue("dicts_allowed") then
+                self.settings:delSetting("dicts_allowed")
+                self.settings:flush()
+                tell_server(true)
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Pozwolić koligilo pobierać słowniki z serwera do katalogu data/dict/koligilo i usuwać stamtąd te, które zniknęły z panelu?\n\nSłowniki instalują się bez pytania o każdy, ale bywają duże (nawet kilkaset MB) — najlepiej na Wi-Fi i z wolnym miejscem. Pobieranie rusza tylko poza książką. Pliki są sprawdzane sumą sha256, nie instalujemy plików .lua, a koligilo nigdy nie rusza słowników dodanych ręcznie."),
+                ok_text = _("Pozwól"),
+                ok_callback = function()
+                    self.settings:makeTrue("dicts_allowed")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server(false)
+                end,
+            })
+        end,
+    })
     -- Scalanie wspólnych baz (TASK-42): koligilo tylko wysyła KOReaderowi zdarzenia
     -- „synchronizuj statystyki/słowniczek”; konto i folder ustawia się w panelu, a bez
     -- nich zdarzenia nic nie robią. Zgoda stąd, bo to wysyła dane czytania do chmury.
@@ -401,7 +431,9 @@ Po pobraniu nowych ustawień KOReader poprosi o ponowne uruchomienie.
 
 Wtyczki: gdy włączysz „Pozwól instalować wtyczki”, koligilo zainstaluje wtyczki przypisane w panelu — zawsze dopiero po Twoim potwierdzeniu na czytniku.
 
-Czcionki: gdy włączysz „Synchronizuj czcionki”, koligilo pobierze czcionki z panelu do katalogu fonts/koligilo (bez pytania o każdą). Pojawią się w menu czcionek po ponownym uruchomieniu KOReadera.]]) })
+Czcionki: gdy włączysz „Synchronizuj czcionki”, koligilo pobierze czcionki z panelu do katalogu fonts/koligilo (bez pytania o każdą). Pojawią się w menu czcionek po ponownym uruchomieniu KOReadera.
+
+Słowniki: gdy włączysz „Synchronizuj słowniki”, koligilo pobierze słowniki z panelu do katalogu data/dict/koligilo (poza książką, bez pytania o każdy). Pojawią się w KOReaderze po ponownym otwarciu książki.]]) })
                 end,
             })
             return items
@@ -744,12 +776,17 @@ end
 
 -- Rozpakowuje ZIP do dest; każda nazwa wpisu sprawdzona (Sync.pluginEntryOK),
 -- tylko pliki i katalogi (bez linków), limity jak na serwerze.
-local function extract(Archiver, zip_path, dir, dest)
+-- opts (opcjonalne, słowniki): max_unpacked, max_files, entry_ok(dir, path), skip(path) —
+-- wpis, dla którego skip zwraca true, jest pomijany (nie liczy się do limitów i nie jest rozpakowywany).
+local function extract(Archiver, zip_path, dir, dest, opts)
+    opts = opts or {}
+    local max_unpacked, max_files = opts.max_unpacked or PLUGIN_MAX_UNPACKED, opts.max_files or PLUGIN_MAX_FILES
+    local entry_ok = opts.entry_ok or Sync.pluginEntryOK
     local arc = Archiver.Reader:new()
     if not arc:open(zip_path) then return nil, T(_("nieczytelny ZIP (%1)"), tostring(arc.err)) end
     local entries, total = {}, 0
     for e in arc:iterate() do
-        if not Sync.pluginEntryOK(dir, e.path) then
+        if not entry_ok(dir, e.path) then
             arc:close()
             return nil, T(_("niedozwolona ścieżka w ZIP-ie: %1"), e.path)
         end
@@ -757,11 +794,13 @@ local function extract(Archiver, zip_path, dir, dest)
             arc:close()
             return nil, T(_("niedozwolony typ wpisu w ZIP-ie (%1): %2"), e.mode, e.path)
         end
-        total = total + (tonumber(e.size) or 0)
-        entries[#entries + 1] = { path = e.path, mode = e.mode }
-        if total > PLUGIN_MAX_UNPACKED or #entries > PLUGIN_MAX_FILES then
-            arc:close()
-            return nil, _("ZIP po rozpakowaniu jest za duży")
+        if not (opts.skip and opts.skip(e.path)) then
+            total = total + (tonumber(e.size) or 0)
+            entries[#entries + 1] = { path = e.path, mode = e.mode }
+            if total > max_unpacked or #entries > max_files then
+                arc:close()
+                return nil, _("ZIP po rozpakowaniu jest za duży")
+            end
         end
     end
     if arc.err then
@@ -1431,6 +1470,209 @@ function Koligilo:sendFontMenu()
     return items
 end
 
+---------------------------------------------------------------- słowniki (TASK-55, PC-020)
+-- Katalog data/dict/koligilo w danych KOReadera (KOReader skanuje data/dict rekurencyjnie po .ifo).
+-- Ruszamy wyłącznie katalogi z manifestu .koligilo-dicts. Pobranie i rozpakowanie idą przez
+-- staging POZA data/dict, bo niedokończony katalog ze słownikiem byłby tam widoczny dla KOReadera.
+
+function Koligilo:dictDir() return DataStorage:getDataDir() .. "/" .. Sync.DICT_DIR end
+function Koligilo:dictStaging() return DataStorage:getDataDir() .. "/data/.koligilo-dict-staging" end
+
+--- Manifest (nazwa → sha256) i to, co faktycznie leży w katalogu (nazwa → true).
+function Koligilo:dictState()
+    local dir = self:dictDir()
+    local managed = Sync.dictManifestDecode(read_file(dir .. "/" .. Sync.DICT_MANIFEST, 1048576))
+    local present = {}
+    if is_dir(dir) then
+        for entry in lfs.dir(dir) do
+            if entry:sub(1, 1) ~= "." and Sync.dictNameOK(entry) and is_dir(dir .. "/" .. entry) then
+                present[entry] = true
+            end
+        end
+    end
+    return managed, present
+end
+
+--- Inwentarz dla serwera: zarządzane słowniki, które naprawdę leżą na dysku.
+function Koligilo:dictInventory()
+    local managed, present = self:dictState()
+    local list = {}
+    for name, sha in pairs(managed) do
+        if present[name] then list[#list + 1] = { name = name, sha256 = sha } end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
+function Koligilo:saveDictManifest(managed)
+    local dir = self:dictDir()
+    util.makePath(dir)
+    return write_file(dir .. "/" .. Sync.DICT_MANIFEST, Sync.dictManifestEncode(managed))
+end
+
+-- Pobiera do pliku (bez buforowania w pamięci — słownik ma do 300 MB) i liczy sha256
+-- przyrostowo. Zwraca sha256 (małe litery) i rozmiar albo nil, błąd, brak_sieci.
+local function download_to_file(url, token, dest, limit)
+    local fh, oerr = io.open(dest, "wb")
+    if not fh then return nil, T(_("nie udało się zapisać pliku (%1)"), tostring(oerr)) end
+    local feed = require("ffi/sha2").sha256()
+    local size, sink_err = 0, nil
+    local sink = function(chunk)
+        if chunk == nil or chunk == "" then return 1 end
+        size = size + #chunk
+        if size > limit then sink_err = _("za duży plik"); return nil, sink_err end
+        local ok, werr = fh:write(chunk)
+        if not ok then sink_err = T(_("nie udało się zapisać pliku (%1)"), tostring(werr)); return nil, sink_err end
+        feed(chunk)
+        return 1
+    end
+    socketutil:set_timeout(30, 1200)
+    local code, headers, status = socket.skip(1, http.request{
+        url = url, method = "GET", sink = sink,
+        headers = { ["Authorization"] = "Bearer " .. token, ["Accept"] = "application/zip" },
+    })
+    socketutil:reset_timeout()
+    fh:close()
+    if headers == nil then
+        purge(dest)
+        if sink_err then return nil, sink_err end
+        return nil, T(_("brak połączenia (%1)"), tostring(status or code)), true
+    end
+    if code ~= 200 then
+        purge(dest)
+        if code == 403 then return nil, _("serwer odmówił (brak zgody albo słownik niezaakceptowany)") end
+        return nil, T(_("serwer odpowiedział błędem HTTP %1"), code)
+    end
+    return (feed() or ""):lower(), size
+end
+
+-- Czy w drzewie jest choć jeden plik .ifo (słownik StarDict) — prosta kontrola po rozpakowaniu.
+local function has_ifo(dir, depth)
+    if depth > 6 or not is_dir(dir) then return false end
+    for entry in lfs.dir(dir) do
+        if entry ~= "." and entry ~= ".." then
+            local p = dir .. "/" .. entry
+            if is_file(p) and entry:lower():match("%.ifo$") then return true end
+            if is_dir(p) and has_ifo(p, depth + 1) then return true end
+        end
+    end
+    return false
+end
+
+-- Jedna operacja planu. Zwraca true albo nil, komunikat, brak_sieci; manifest zapisuje wołający.
+function Koligilo:applyDictOp(action, f, managed)
+    local name = f.name
+    if not Sync.dictNameOK(name) then return nil, _("niedozwolona nazwa słownika") end
+    local dir = self:dictDir()
+    local target = dir .. "/" .. name
+    if action == "remove" then
+        if managed[name] == nil then return nil, _("słownika nie ma w manifeście koligilo — nie ruszam słownika dodanego ręcznie") end
+        if is_dir(target) then
+            ffiutil.purgeDir(target)
+            if is_dir(target) then return nil, _("nie udało się usunąć katalogu słownika") end
+        end
+        managed[name] = nil
+        return true
+    end
+    local server, token = self.settings:readSetting("server"), self.settings:readSetting("token")
+    -- miejsce: ZIP + rozpakowane (+ zapas); brak API w tym KOReaderze = nie sprawdzamy
+    if type(util.diskUsage) == "function" then
+        local okd, du = pcall(util.diskUsage, DataStorage:getDataDir())
+        local avail = okd and type(du) == "table" and tonumber(du.available) or nil
+        local need = (tonumber(f.size) or 0) + math.ceil((tonumber(f.unpacked) or 0) * 1.2)
+        if avail and avail < need then
+            return nil, T(_("za mało miejsca na dysku (potrzeba ok. %1 MB)"), math.ceil(need / 1048576))
+        end
+    end
+    local staging = self:dictStaging()
+    purge(staging) -- pozostałość po przerwanej operacji
+    util.makePath(staging)
+    local function bail(msg, netfail) purge(staging); return nil, msg, netfail end
+    local zip = staging .. "/dl.zip"
+    local limit = math.min((tonumber(f.size) or 0) + 65536, Sync.DICT_MAX_ZIP)
+    local got, derr, netfail = download_to_file(server .. f.url, token, zip, limit)
+    if not got then return bail(derr, netfail) end
+    if got ~= f.sha256 then
+        return bail(T(_("zła suma sha256 pobranego pliku (%1…) — instalacja przerwana"), got:sub(1, 12)))
+    end
+    local has_archiver, Archiver = pcall(require, "ffi/archiver")
+    if not has_archiver then return bail(_("brak ffi/archiver w tym KOReaderze")) end
+    local newdir = staging .. "/new"
+    local ok, err = extract(Archiver, zip, name, newdir, {
+        max_unpacked = Sync.DICT_MAX_UNPACKED, max_files = Sync.DICT_MAX_FILES,
+        entry_ok = Sync.dictEntryOK, skip = Sync.dictEntrySkip,
+    })
+    if not ok then return bail(err) end
+    os.remove(zip) -- zwalniamy miejsce przed podmianą
+    if not has_ifo(newdir, 0) then return bail(_("to nie jest słownik StarDict (brak pliku .ifo)")) end
+    util.makePath(dir)
+    local old = staging .. "/old"
+    if is_dir(target) then
+        if managed[name] == nil then return bail(_("katalog o tej nazwie już istnieje i nie jest zarządzany przez koligilo")) end
+        ok, err = os.rename(target, old)
+        if not ok then return bail(T(_("nie udało się zastąpić starego słownika (%1)"), tostring(err))) end
+    end
+    ok, err = os.rename(newdir, target)
+    if not ok then
+        if is_dir(old) then
+            -- rollback: stary słownik wraca na miejsce; gdyby i to się nie udało, zostawiamy go w stagingu
+            local back, berr = os.rename(old, target)
+            if not back then
+                return nil, T(_("nie udało się zainstalować słownika (%1); stary leży w %2 (%3)"), tostring(err), old, tostring(berr))
+            end
+        end
+        return bail(T(_("nie udało się zainstalować słownika (%1)"), tostring(err)))
+    end
+    purge(staging)
+    managed[name] = f.sha256
+    return true
+end
+
+--- Etap słowników po synchronizacji ustawień. Bez pytania (zgoda jest w menu).
+-- Zwraca { n = ile zmieniono, failures = { … }, deferred = ile czeka na następny raz }.
+function Koligilo:handleDicts(target, silent)
+    local managed, present = self:dictState()
+    local plan = Sync.dictPlan(target, managed, present)
+    for _i, p in ipairs(plan.conflict) do logger.warn("koligilo: słownik", p.name, p.error) end
+    for _i, p in ipairs(plan.invalid) do logger.warn("koligilo: słownik", p.name, p.error) end
+    local res = { n = 0, failures = {}, deferred = #plan.deferred }
+    if Sync.dictPlanEmpty(plan) then return res end
+    for _i, p in ipairs(plan.forget) do managed[p.name] = nil end
+    local total = #plan.remove + #plan.update + #plan.install
+    local done, offline = 0, false
+    for _i, action in ipairs({ "remove", "update", "install" }) do
+        for _j, f in ipairs(plan[action]) do
+            if offline then
+                res.deferred = res.deferred + 1
+            else
+                done = done + 1
+                local msg
+                if action ~= "remove" and not silent then
+                    msg = InfoMessage:new{ text = T(_("Pobieram słownik %1 (%2 z %3)…"), f.name, done, total) }
+                    UIManager:show(msg)
+                    UIManager:forceRePaint()
+                end
+                local okc, ok, err, netfail = pcall(self.applyDictOp, self, action, f, managed)
+                if not okc then ok, err = nil, tostring(ok) end
+                if msg then UIManager:close(msg) end
+                if ok then
+                    res.n = res.n + 1
+                else
+                    res.failures[#res.failures + 1] = f.name .. ": " .. tostring(err)
+                    logger.warn("koligilo: słownik", action, f.name, err)
+                    if netfail then offline = true end -- kolejne próby tylko by czekały na timeouty
+                end
+            end
+        end
+    end
+    local ok, err = self:saveDictManifest(managed)
+    if not ok then
+        res.failures[#res.failures + 1] = T(_("manifest: %1"), tostring(err))
+        logger.warn("koligilo: manifest słowników", err)
+    end
+    return res
+end
+
 ---------------------------------------------------------------- synchronizacja
 
 function Koligilo:sync(silent, after_move)
@@ -1452,6 +1694,8 @@ function Koligilo:sync(silent, after_move)
     local query = {}
     if plugins_allowed then query[#query + 1] = "plugins_allowed=1" end
     if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
+    local dicts_allowed = self.settings:isTrue("dicts_allowed") -- jak wyżej: zgoda tylko z czytnika
+    if dicts_allowed then query[#query + 1] = "dicts_allowed=1" end
     local self_update_allowed = self.settings:isTrue("self_update_allowed")
     if self_update_allowed then query[#query + 1] = "self_update=1" end
     -- zgoda na scalanie statystyk i słowniczka: panel tylko ją pokazuje (TASK-46)
@@ -1542,6 +1786,16 @@ function Koligilo:sync(silent, after_move)
             logger.warn("koligilo: inwentarz czcionek", installed)
         end
     end
+    if dicts_allowed then
+        -- jak przy czcionkach: `reported` zawsze, bo pusta lista Lua zakodowałaby się jako {}
+        local dok, installed = pcall(self.dictInventory, self)
+        if dok then
+            body.dicts = { reported = true }
+            if #installed > 0 then body.dicts.installed = installed end
+        else
+            logger.warn("koligilo: inwentarz słowników", installed)
+        end
+    end
     local c2, resp, neterr2 = request("POST", server .. "/api/v1/sync", token, body)
     if c2 ~= 200 then
         return fail(T(_("Wysyłanie ustawień nie powiodło się: %1"), error_text(c2, resp, neterr2)))
@@ -1580,6 +1834,26 @@ function Koligilo:sync(silent, after_move)
         end
     end
 
+    -- Słowniki: duże pobrania nie ruszają w trakcie czytania — wtedy wszystko czeka na następny raz.
+    local dict_res
+    if dicts_allowed and type(remote.dicts) == "table" then
+        if self:isReading() then
+            local okd, managed, present = pcall(self.dictState, self)
+            local plan = okd and Sync.dictPlan(remote.dicts, managed, present)
+            if plan and not Sync.dictPlanEmpty(plan) then
+                dict_res = { n = 0, failures = {}, deferred = #plan.install + #plan.update, reading = true }
+            end
+        else
+            local okd, res = pcall(self.handleDicts, self, remote.dicts, silent)
+            if okd then
+                dict_res = res
+            else
+                logger.warn("koligilo: słowniki", res)
+                dict_res = { n = 0, failures = { tostring(res):sub(1, 200) }, deferred = 0 }
+            end
+        end
+    end
+
     -- Etap wtyczek dopiero po ustawieniach i tylko ze stanem od serwera,
     -- o który czytnik sam poprosił. Wyjątek nie psuje synchronizacji.
     if plugins_allowed and inventory and type(remote.plugins) == "table" then
@@ -1603,6 +1877,12 @@ function Koligilo:sync(silent, after_move)
         font_text = T(_("Zmieniono czcionki: %1. Pojawią się w menu czcionek po ponownym uruchomieniu KOReadera."), font_res.n)
         if font_res.deferred > 0 then font_text = font_text .. " " .. T(_("Kolejne (%1) pobiorą się przy następnej synchronizacji."), font_res.deferred) end
         if #font_res.failures > 0 then font_text = font_text .. "\n\n" .. _("Nie udało się:") .. "\n" .. table.concat(font_res.failures, "\n") end
+    end
+    if dict_res and not dict_res.reading and (dict_res.n > 0 or #dict_res.failures > 0) then
+        local dict_text = T(_("Zmieniono słowniki: %1. Pojawią się w KOReaderze po ponownym otwarciu książki."), dict_res.n)
+        if dict_res.deferred > 0 then dict_text = dict_text .. " " .. T(_("Kolejne (%1) pobiorą się przy następnej synchronizacji."), dict_res.deferred) end
+        if #dict_res.failures > 0 then dict_text = dict_text .. "\n\n" .. _("Nie udało się:") .. "\n" .. table.concat(dict_res.failures, "\n") end
+        font_text = font_text and (font_text .. "\n\n" .. dict_text) or dict_text
     end
     -- Wspólne bazy (statystyki, słowniczek): zdarzenia bez argumentu = ciche scalanie KOReadera.
     self:mergeSharedData(changed)
@@ -1628,7 +1908,7 @@ function Koligilo:showConsentsHint(silent)
     if not Sync.consentsHintDue(self.settings:isTrue("consents_hint_shown"), silent) then return false end
     self.settings:makeTrue("consents_hint_shown")
     self.settings:flush()
-    UIManager:show(InfoMessage:new{ text = _("Zgody koligilo: instalowanie wtyczek, czcionki, aktualizacja koligilo, scalanie statystyk i pobieranie artykułów Wallabag są na tym czytniku domyślnie wyłączone. Nic nie zostało włączone.\n\nGdybyś chciał z nich skorzystać, włączysz je tu: Menu → Narzędzia → koligilo → Zgody. Panel koligilo ich nie włącza — zgodę zawsze daje się na czytniku.") })
+    UIManager:show(InfoMessage:new{ text = _("Zgody koligilo: instalowanie wtyczek, czcionki, słowniki, aktualizacja koligilo, scalanie statystyk i pobieranie artykułów Wallabag są na tym czytniku domyślnie wyłączone. Nic nie zostało włączone.\n\nGdybyś chciał z nich skorzystać, włączysz je tu: Menu → Narzędzia → koligilo → Zgody. Panel koligilo ich nie włącza — zgodę zawsze daje się na czytniku.") })
     return true
 end
 

@@ -708,6 +708,188 @@ function Sync.fontPlanEmpty(plan)
     return #plan.install == 0 and #plan.update == 0 and #plan.remove == 0
 end
 
+---------------------------------------------------------------- słowniki (PC-020, TASK-55)
+--
+-- Słownik StarDict to dane, nie kod — pod warunkiem, że nie zawiera pliku
+-- <słownik>.lua (KOReader wykonuje go jako kod). Zgoda jest jedna, w menu czytnika;
+-- instalujemy wyłącznie do <dane>/data/dict/koligilo/<nazwa>/ i ruszamy tylko
+-- katalogi wpisane do manifestu ".koligilo-dicts". Ręcznie dodanego słownika
+-- (także o tej samej nazwie) nie nadpisujemy i nie kasujemy.
+
+Sync.DICT_DIR = "data/dict/koligilo"           -- względem katalogu danych KOReadera
+Sync.DICT_MANIFEST = ".koligilo-dicts"
+Sync.DICT_MAX_ZIP = 300 * 1024 * 1024          -- jak dictMaxZip w Go
+Sync.DICT_MAX_UNPACKED = 1500 * 1024 * 1024    -- jak dictMaxUnpacked
+Sync.DICT_MAX_FILES = 5000                     -- jak dictMaxFiles
+Sync.DICT_SYNC_BUDGET = 150 * 1024 * 1024      -- ile bajtów ZIP-ów pobieramy w jednej synchronizacji
+
+--- Nazwa katalogu słownika (lustro checkDictName z dicts.go na poziomie bajtów):
+-- UTF-8 do 96 znaków, bez znaków sterujących, / \ : * ? " < > |, bez „..”, bez kropki
+-- na początku i kropki/spacji na końcu, bez podwójnej spacji. Litery spoza ASCII
+-- przepuszczamy (rozstrzyga serwer) — ważne, że żaden bajt nie zrobi z nazwy ścieżki.
+function Sync.dictNameOK(name)
+    if type(name) ~= "string" or name == "" or #name > 96 * 4 then return false end
+    if name:find("..", 1, true) or name:find("  ", 1, true) then return false end
+    if name:find('[%c/\\:*?"<>|]') then return false end
+    if name:find("\194[\128-\159]") then return false end -- sterujące C1
+    local first, last = name:sub(1, 1), name:sub(-1)
+    if first == "." or first == " " or last == "." or last == " " then return false end
+    local i, n, len = 1, 0, #name
+    while i <= len do
+        local b = name:byte(i)
+        local extra
+        if b < 0x80 then
+            if not string.char(b):match("[%w ._+()'&,%-%[%]{}]") then return false end
+            extra = 0
+        elseif b >= 0xC2 and b <= 0xDF then extra = 1
+        elseif b >= 0xE0 and b <= 0xEF then extra = 2
+        elseif b >= 0xF0 and b <= 0xF4 then extra = 3
+        else return false end
+        for k = 1, extra do
+            local c = name:byte(i + k)
+            if not c or c < 0x80 or c > 0xBF then return false end
+        end
+        i, n = i + extra + 1, n + 1
+        if n > 96 then return false end
+    end
+    return true
+end
+
+--- Wpis ZIP-a słownika: wyłącznie <name>/… (zasady jak dla wtyczek: bez .., backslashy, sterujących)
+-- oraz składowe bezpieczne na FAT/NTFS/Androidzie: bez : * ? " < > |, bez kropki albo spacji na
+-- końcu (na FAT „x.lua.” i „x.lua ” lądują jako x.lua, czyli kod wykonywany przez KOReadera).
+-- false = cała instalacja tego słownika przerwana, nic nie ląduje na dysku. Serwer robi to samo,
+-- ale nie jest granicą zaufania.
+function Sync.dictEntryOK(name, path)
+    if not Sync.dictNameOK(name) or not Sync.pluginEntryOK(name, path) then return false end
+    for seg in (path:gsub("/$", "") .. "/"):gmatch("([^/]*)/") do
+        if seg:find('[:*?"<>|]') or seg:find("[%. ]$") then return false end
+    end
+    return true
+end
+
+local DICT_KEEP_EXT = {
+    ifo = true, idx = true, dict = true, syn = true, css = true,
+    png = true, jpg = true, jpeg = true, gif = true, svg = true, webp = true, bmp = true,
+    ogg = true, oga = true, opus = true, mp3 = true, wav = true,
+    woff = true, woff2 = true, ttf = true, otf = true,
+    txt = true, md = true,
+}
+-- pliki bez rozszerzenia z licencją (atrybucja CC BY-SA); KOReader ich nie czyta
+local DICT_KEEP_NAME = {
+    license = true, licence = true, copying = true, notice = true,
+    attribution = true, readme = true, authors = true,
+}
+local DICT_KEEP_SUFFIX = { ".idx.gz", ".dict.dz", ".syn.dz", ".syn.gz" }
+
+--- Czy plik słownika wolno rozpakować: biała lista rozszerzeń (jak dictKeepExt w dicts.go).
+-- Reszta (kod, nieznane formaty) jest pomijana. Lista musi zgadzać się z dictFileKept w dicts.go. KOReader wykonuje <słownik>.lua jako
+-- kod, więc żaden wariant „.lua” (wielkość liter, .lua.gz, kropka/spacja na końcu) nie przejdzie.
+function Sync.dictEntryKeep(path)
+    if type(path) ~= "string" then return false end
+    local base = (path:match("([^/]*)$") or ""):lower()
+    if base == "" or base:find("%.lua[%. ]*$") or base:find("%.lua%.") then return false end
+    for _, suf in ipairs(DICT_KEEP_SUFFIX) do
+        if base:sub(-#suf) == suf then return true end
+    end
+    if DICT_KEEP_NAME[base] then return true end
+    local ext = base:match("%.([^%.]+)$")
+    return ext ~= nil and DICT_KEEP_EXT[ext] == true
+end
+
+--- Wpis do pominięcia przy rozpakowaniu (odwrotność białej listy).
+function Sync.dictEntrySkip(path) return not Sync.dictEntryKeep(path) end
+
+--- Manifest: linie nazwa=sha256 (bez load).
+function Sync.dictManifestEncode(m)
+    local names = {}
+    for n in pairs(m) do names[#names + 1] = n end
+    table.sort(names)
+    local lines = { "# koligilo: słowniki z tej listy są zarządzane przez koligilo (PC-020)" }
+    for _, n in ipairs(names) do lines[#lines + 1] = n .. "=" .. m[n] end
+    return table.concat(lines, "\n") .. "\n"
+end
+
+function Sync.dictManifestDecode(s)
+    local m = {}
+    for line in (s or ""):gmatch("[^\n]+") do
+        local n, sha = line:match("^(.-)=(%x+)$")
+        if n and Sync.dictNameOK(n) and sha_ok(sha) then m[n] = sha end
+    end
+    return m
+end
+
+--- Plan synchronizacji słowników.
+-- target: lista z GET /api/v1/sync (pole "dicts") — PEŁNY stan docelowy;
+--   nil = serwer nie podał stanu (brak zgody / stary serwer) → nic nie robimy.
+-- managed: nazwa → sha256 z manifestu; present: nazwa → true (katalog faktycznie istnieje).
+-- Zwraca { install, update, remove, forget, conflict, invalid, deferred }:
+--   install/update to wpisy z target (update + old_sha256), remove = zarządzane katalogi do
+--   usunięcia, forget = wpisy manifestu bez katalogu (tylko sprzątanie manifestu),
+--   conflict: katalog o tej nazwie leży poza manifestem (nie nadpisujemy),
+--   deferred: przekroczony budżet pobierania na jedną synchronizację (reszta następnym razem).
+-- Budżet liczy rozmiary ZIP-ów; pierwszy słownik w synchronizacji wolno pobrać nawet większy
+-- niż budżet (inaczej duży słownik nigdy by nie przeszedł).
+function Sync.dictPlan(target, managed, present)
+    local plan = { install = {}, update = {}, remove = {}, forget = {}, conflict = {}, invalid = {}, deferred = {} }
+    if type(target) ~= "table" then return plan end
+    managed, present = managed or {}, present or {}
+    local wanted, used = {}, 0
+    local function take(list, t)
+        local size = tonumber(t.size) or 0
+        if used > 0 and used + size > Sync.DICT_SYNC_BUDGET then
+            plan.deferred[#plan.deferred + 1] = t
+        else
+            used = used + size
+            list[#list + 1] = t
+        end
+    end
+    for _, t in ipairs(target) do
+        local name = type(t) == "table" and t.name or nil
+        local size = type(t) == "table" and tonumber(t.size) or nil
+        local unpacked = type(t) == "table" and tonumber(t.unpacked) or nil
+        local dup = Sync.dictNameOK(name) and wanted[name]
+        -- zły wpis o poprawnej nazwie też „jest chciany”: błąd serwera nie może skasować zainstalowanego
+        if Sync.dictNameOK(name) then wanted[name] = true end
+        if dup then
+            plan.invalid[#plan.invalid + 1] = { name = name, sha256 = t.sha256, error = "słownik podany dwa razy" }
+        elseif type(t) ~= "table" or not Sync.dictNameOK(name) or not sha_ok(t.sha256) or not rel_url_ok(t.url)
+            or not size or size < 1 or size > Sync.DICT_MAX_ZIP
+            or not unpacked or unpacked < 0 or unpacked > Sync.DICT_MAX_UNPACKED then
+            plan.invalid[#plan.invalid + 1] = { name = tostring(name), sha256 = type(t) == "table" and t.sha256 or nil,
+                error = "nieprawidłowy wpis słownika od serwera" }
+        elseif managed[name] == nil then
+            if present[name] then
+                plan.conflict[#plan.conflict + 1] = { name = name, sha256 = t.sha256,
+                    error = "w katalogu słowników koligilo leży już katalog o tej nazwie, którego koligilo nie dodało — nie nadpisuję" }
+            else
+                take(plan.install, t)
+            end
+        elseif not present[name] then
+            take(plan.install, t) -- katalog zniknął z dysku, manifest został
+        elseif managed[name] ~= t.sha256 then
+            local u = {}
+            for k, v in pairs(t) do u[k] = v end
+            u.old_sha256 = managed[name]
+            take(plan.update, u)
+        end
+    end
+    local names = {}
+    for n in pairs(managed) do names[#names + 1] = n end
+    table.sort(names)
+    for _, n in ipairs(names) do
+        if not wanted[n] then
+            local list = present[n] and plan.remove or plan.forget
+            list[#list + 1] = { name = n, sha256 = managed[n] }
+        end
+    end
+    return plan
+end
+
+function Sync.dictPlanEmpty(plan)
+    return #plan.install == 0 and #plan.update == 0 and #plan.remove == 0 and #plan.forget == 0
+end
+
 ---------------------------------------------------------------- przenosiny serwera
 
 -- Host w sieci prywatnej / Tailscale / mDNS — tam http jest dopuszczalne

@@ -355,6 +355,50 @@ local _, fgone = http("GET", "/api/v1/sync?fonts_allowed=1", kobo.token)
 check("czcionki: po usunięciu plan zdejmuje zarządzaną", #Sync.fontPlan(fgone.fonts, { ["Charis.ttf"] = fsha }, { ["Charis.ttf"] = 301 }).remove == 1)
 os.execute("rm -rf " .. sh_quote(ftmp))
 
+-- słowniki (TASK-55): panel (prawdziwy ZIP StarDict z podejrzanym .lua) → magazyn → dwa czytniki
+local dtmp = run("mktemp -d"):gsub("%s+$", "")
+os.execute("mkdir -p " .. sh_quote(dtmp .. "/Test Dict"))
+local function dwrite(name, body) local f = io.open(dtmp .. "/Test Dict/" .. name, "wb"); f:write(body); f:close() end
+dwrite("t.ifo", "StarDict's dict ifo file\nversion=2.4.2\nwordcount=1\nbookname=Test Dict\n")
+dwrite("t.idx", ("i"):rep(40)); dwrite("t.dict.dz", ("d"):rep(80)); dwrite("t.lua", "os.execute('echo pwned')"); dwrite("LICENSE", "CC BY-SA")
+os.execute("cd " .. sh_quote(dtmp) .. " && zip -qr dict.zip 'Test Dict'")
+local dup = J.decode(run("curl -s -H " .. sh_quote("Authorization: Bearer " .. ADMIN) .. " -F file=@"
+    .. sh_quote(dtmp .. "/dict.zip") .. " -F name=Test\\ Dict " .. sh_quote(SERVER .. "/api/admin/dicts")))
+local dsha2 = dup and dup.dict and dup.dict.sha256
+check("słowniki: upload z panelu", dsha2 and #dsha2 == 64 and dup.dict.approved == true and dup.dict.name == "Test Dict" and dup.dict.title == "Test Dict", dup and dup.error)
+check("słowniki: .lua pominięty przy normalizacji", dup and dup.dict and dup.dict.dropped == 1, dup and dup.dict and dup.dict.dropped)
+local _, dnone = http("GET", "/api/v1/sync", kobo.token)
+check("słowniki: bez zgody brak pola dicts", dnone.dicts == nil)
+local _, dcons = http("GET", "/api/v1/sync?dicts_allowed=1", kobo.token)
+local dplan = Sync.dictPlan(dcons.dicts, {}, {})
+check("słowniki: plan install z odpowiedzi serwera", #dplan.install == 1 and dplan.install[1].name == "Test Dict" and #dplan.invalid == 0, dcons.dicts and J.encode(dcons.dicts))
+local dcode = tonumber(run("curl -s -o " .. sh_quote(dtmp .. "/dl.zip") .. " -w '%{http_code}' -H "
+    .. sh_quote("Authorization: Bearer " .. kobo.token) .. " " .. sh_quote(SERVER .. dplan.install[1].url)))
+check("słowniki: pobranie 200 i zgodne sha256", dcode == 200
+    and run("sha256sum " .. sh_quote(dtmp .. "/dl.zip")):match("^(%x+)") == dplan.install[1].sha256)
+local dlist = run("unzip -Z1 " .. sh_quote(dtmp .. "/dl.zip"))
+local dok = true
+for entry in dlist:gmatch("[^\n]+") do
+    if not Sync.dictEntryOK("Test Dict", entry) then dok = false end
+    if entry:match("%.lua$") then dok = false end
+end
+check("słowniki: ZIP z serwera przechodzi dictEntryOK i nie ma .lua", dok and dlist:find("Test Dict/t.ifo", 1, true) and dlist:find("Test Dict/LICENSE", 1, true), dlist)
+check("słowniki: Bigme bez zgody dostaje 403", tonumber(run("curl -s -o /dev/null -w '%{http_code}' -H "
+    .. sh_quote("Authorization: Bearer " .. bigme.token) .. " " .. sh_quote(SERVER .. dplan.install[1].url))) == 403)
+local _, bd = http("GET", "/api/v1/sync?dicts_allowed=1", bigme.token)
+check("słowniki: drugi czytnik za zgodą dostaje ten sam", #Sync.dictPlan(bd.dicts, {}, {}).install == 1)
+check("słowniki: pobranie bez tokenu odrzucone", tonumber(run("curl -s -o /dev/null -w '%{http_code}' " .. sh_quote(SERVER .. dplan.install[1].url))) == 401)
+check("słowniki: raport inwentarza przyjęty", (http("POST", "/api/v1/sync", kobo.token, { received = 0, note = "e2e",
+    dicts = { reported = true, installed = { { name = "Test Dict", sha256 = dsha2 } } } })) == 200)
+local _, dst = http("GET", "/api/admin/state", ADMIN)
+local dseen
+for _i, d in ipairs(dst.devices) do if d.id == kobo.id and d.dict_inventory then dseen = d.dict_inventory[1] end end
+check("słowniki: panel widzi zainstalowany na Kobo i zgodę", dseen and dseen.name == "Test Dict" and dseen.sha256 == dsha2)
+check("słowniki: usunięcie w panelu", (http("DELETE", "/api/admin/dicts/" .. dsha2, ADMIN)) == 200)
+local _, dgone = http("GET", "/api/v1/sync?dicts_allowed=1", kobo.token)
+check("słowniki: po usunięciu plan zdejmuje zarządzany", #Sync.dictPlan(dgone.dicts, { ["Test Dict"] = dsha2 }, { ["Test Dict"] = true }).remove == 1)
+os.execute("rm -rf " .. sh_quote(dtmp))
+
 os.execute("rm -rf " .. sh_quote(ptmp))
 
 print(string.format("%d ok, %d fail", passed, failed))

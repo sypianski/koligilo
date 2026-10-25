@@ -53,7 +53,9 @@ P["socket.http"] = function() return { request = function(req)
     requested[#requested + 1] = req.url
     local body = served[req.url]
     if not body then return 1, 404, {}, "404" end
-    req.sink(body); req.sink(nil)
+    local sok, serr = req.sink(body) -- jak LuaSocket: sink zwracający nil, błąd przerywa żądanie
+    if sok == nil and serr then return nil, serr end
+    req.sink(nil)
     return 1, 200, { ["x-koligilo-sha256"] = "?" }, "200 OK"
 end } end
 P["socket"] = function() return { skip = function(n, ...) return select(n + 1, ...) end } end
@@ -84,8 +86,16 @@ P["ffi/util"] = function() return {
 } end
 P["util"] = function() return { makePath = function(p) return sh("mkdir -p " .. q(p)) end } end
 P["ffi/sha2"] = function() return { sha256 = function(s)
-    local f = TMP .. "/sha.in"; spit(f, s)
-    return out("sha256sum " .. q(f)):match("^(%x+)")
+    local f = TMP .. "/sha.in"
+    local function digest() return out("sha256sum " .. q(f)):match("^(%x+)") end
+    if s ~= nil then spit(f, s); return digest() end
+    -- tryb strumieniowy jak w prawdziwym ffi/sha2: sha256() zwraca funkcję przyjmującą kawałki,
+    -- a wywołana bez argumentu — skrót
+    spit(f, "")
+    return function(chunk)
+        if chunk == nil then return digest() end
+        local h = assert(io.open(f, "ab")); h:write(chunk); h:close()
+    end
 end } end
 -- Archiver.Reader na unzip: typ wpisu z atrybutów (l = link)
 P["ffi/archiver"] = function()
@@ -583,14 +593,14 @@ local citems = consents and consents.sub_item_table_func() or {}
 local keys = {}
 for _i, it in ipairs(citems) do
     local k
-    for _j, name in ipairs({ "self_update_allowed", "plugins_allowed", "fonts_allowed", "merge_after_sync", "wallabag_after_sync" }) do
+    for _j, name in ipairs({ "self_update_allowed", "plugins_allowed", "fonts_allowed", "dicts_allowed", "merge_after_sync", "wallabag_after_sync" }) do
         settings_data[name] = true
         if it.checked_func() then k = k or name end
         settings_data[name] = nil
     end
     keys[#keys + 1] = k
 end
-check("zgody: pięć kluczy ustawień", table.concat(keys, ",") == "self_update_allowed,plugins_allowed,fonts_allowed,merge_after_sync,wallabag_after_sync", table.concat(keys, ","))
+check("zgody: sześć kluczy ustawień", table.concat(keys, ",") == "self_update_allowed,plugins_allowed,fonts_allowed,dicts_allowed,merge_after_sync,wallabag_after_sync", table.concat(keys, ","))
 -- włączenie nadal wymaga potwierdzenia w ConfirmBox (nic nie włącza się samo)
 shown = {}
 citems[2].callback(nil)
@@ -599,6 +609,15 @@ check("zgody: wtyczki wciąż pytają o zgodę oknem", #shown == 1 and shown[1].
 shown[1].ok_callback()
 check("zgody: po potwierdzeniu zgoda zapisana", settings_data.plugins_allowed == true)
 settings_data.plugins_allowed = nil
+-- zgoda na słowniki: okno z ostrzeżeniem o rozmiarze i .lua, wyłączenie bez okna
+shown = {}
+citems[4].callback(nil)
+check("słowniki menu: włączenie pyta oknem, nic samo się nie włącza", #shown == 1 and shown[1].kind == "confirm" and not settings_data.dicts_allowed
+    and tostring(shown[1].text):find("sha256", 1, true) and tostring(shown[1].text):find(".lua", 1, true) and tostring(shown[1].text):find("poza książką", 1, true))
+shown[1].ok_callback()
+check("słowniki menu: po potwierdzeniu zapisane", settings_data.dicts_allowed == true)
+citems[4].callback(nil)
+check("słowniki menu: wyłączenie od razu, bez okna", settings_data.dicts_allowed == nil)
 -- zgłoszenie w zapytaniu sync (serwer odpowiada 404 → synchronizacja kończy się cicho, ale GET widać)
 -- wcześniejszy test samoaktualizacji zostawił restart_pending (upvalue main.lua): zdejmujemy go
 for i = 1, 60 do
@@ -617,19 +636,22 @@ check("query: zapytanie w ogóle poszło", base_q:find("/api/v1/sync?", 1, true)
 check("query: bez zgody brak merge_after_sync", not base_q:find("merge_after_sync", 1, true))
 check("query: bez zgody brak wallabag_after_sync", not base_q:find("wallabag_after_sync", 1, true))
 check("query: za zgodą wallabag_after_sync=1", sync_query(function() settings_data.wallabag_after_sync = true end):find("wallabag_after_sync=1", 1, true))
+check("query: bez zgody brak dicts_allowed", not sync_query(function() settings_data.dicts_allowed = nil end):find("dicts_allowed", 1, true))
+check("query: za zgodą dicts_allowed=1", sync_query(function() settings_data.dicts_allowed = true end):find("dicts_allowed=1", 1, true))
+settings_data.dicts_allowed = nil
 check("query: za zgodą merge_after_sync=1", sync_query(function() settings_data.merge_after_sync = true end):find("merge_after_sync=1", 1, true))
 check("query: zapamiętane wstrzymanie idzie w pełnym GET", sync_query(function() settings_data.sync_blocked = { at = 1, deleted = 7 } end):find("sync_blocked=7", 1, true))
 check("query: zepsuty wpis wstrzymania nie trafia do zapytania", not sync_query(function() settings_data.sync_blocked = { at = 1, deleted = "x&y" } end):find("sync_blocked", 1, true))
 settings_data.merge_after_sync, settings_data.sync_blocked, settings_data.wallabag_after_sync = nil, nil, nil
 -- zgoda Wallabag: ConfirmBox z ostrzeżeniem, domyślnie wyłączone, wyłączenie bez okna
 shown = {}
-citems[5].callback(nil)
+citems[6].callback(nil)
 check("wallabag menu: włączenie pyta oknem z ostrzeżeniem, nic samo się nie włącza", #shown == 1 and shown[1].kind == "confirm"
     and not settings_data.wallabag_after_sync and tostring(shown[1].text):find("Sync finished", 1, true)
     and tostring(shown[1].text):find("menedżerze plików", 1, true))
 shown[1].ok_callback()
 check("wallabag menu: po potwierdzeniu zapisane", settings_data.wallabag_after_sync == true)
-citems[5].callback(nil)
+citems[6].callback(nil)
 check("wallabag menu: wyłączenie od razu, bez okna", settings_data.wallabag_after_sync == nil)
 -- jednorazowa informacja, gdzie są zgody
 shown = {}
@@ -638,6 +660,162 @@ check("hint: pierwszy raz pokazuje, nic nie włącza", K:showConsentsHint(false)
     and not settings_data.plugins_allowed and not settings_data.fonts_allowed and not settings_data.self_update_allowed and not settings_data.merge_after_sync
     and tostring(shown[1].text):find("Zgody"))
 check("hint: tylko raz", K:showConsentsHint(false) == false and #shown == 1)
+
+-- słowniki (TASK-55, PC-020) ---------------------------------------------------------
+local DICTROOT = DATA .. "/data/dict/koligilo"
+local STAGING = DATA .. "/data/.koligilo-dict-staging"
+local function make_dict(name, tag, extra)
+    local src = TMP .. "/src/dict-" .. tag
+    sh("rm -rf " .. q(src) .. " && mkdir -p " .. q(src .. "/" .. name))
+    spit(src .. "/" .. name .. "/d.ifo", "StarDict's dict ifo file\nversion=2.4.2\nwordcount=1\nbookname=" .. tag .. "\n")
+    spit(src .. "/" .. name .. "/d.idx", "idx-" .. tag)
+    spit(src .. "/" .. name .. "/d.dict.dz", "dict-" .. tag)
+    if extra then extra(src .. "/" .. name) end
+    local z = src .. ".zip"
+    sh("rm -f " .. q(z) .. " && cd " .. q(src) .. " && zip -qry " .. q(z) .. " " .. q(name))
+    local body = slurp(z)
+    local sha = out("sha256sum " .. q(z)):match("^(%x+)")
+    served["http://srv/api/v1/dicts/" .. sha] = body
+    return { name = name, sha256 = sha, size = #body, unpacked = 100, url = "/api/v1/dicts/" .. sha }
+end
+local function dict_ifo(name) return slurp(DICTROOT .. "/" .. name .. "/d.ifo") end
+local function dict_leftovers() return sh("test -e " .. q(STAGING)) end
+
+-- 1) instalacja: pliki na miejscu, .lua i śmieci pominięte, manifest, brak stagingu
+local d1 = make_dict("Słownik testowy", "v1", function(dir)
+    spit(dir .. "/d.lua", "os.execute('echo pwned > " .. TMP .. "/pwned')")
+    spit(dir .. "/README.txt", "atrybucja"); spit(dir .. "/LICENSE", "CC BY-SA"); spit(dir .. "/run.sh", "echo")
+    sh("mkdir -p " .. q(dir .. "/res")); spit(dir .. "/res/a.png", "png")
+end)
+local managed = {}
+ok, err = K:applyDictOp("install", d1, managed)
+check("dict install ok", ok, err)
+check("dict install: pliki słownika na miejscu", (dict_ifo("Słownik testowy") or ""):find("v1") and slurp(DICTROOT .. "/Słownik testowy/d.idx") == "idx-v1"
+    and slurp(DICTROOT .. "/Słownik testowy/res/a.png") == "png")
+check("dict install: .lua i nieznane pliki pominięte, licencja i README zostają", not sh("test -e " .. q(DICTROOT .. "/Słownik testowy/d.lua"))
+    and not sh("test -e " .. q(DICTROOT .. "/Słownik testowy/run.sh"))
+    and slurp(DICTROOT .. "/Słownik testowy/README.txt") == "atrybucja" and slurp(DICTROOT .. "/Słownik testowy/LICENSE") == "CC BY-SA")
+check("dict install: manifest w pamięci i brak stagingu", managed["Słownik testowy"] == d1.sha256 and not dict_leftovers())
+
+-- 2) zła suma: nic nie ląduje, stary słownik nietknięty, staging posprzątany
+local d2 = make_dict("Słownik testowy", "v2")
+local badd = {}; for k, v in pairs(d2) do badd[k] = v end
+badd.sha256 = ("0"):rep(64)
+served["http://srv/api/v1/dicts/" .. badd.sha256] = served["http://srv/api/v1/dicts/" .. d2.sha256]
+ok, err = K:applyDictOp("update", badd, managed)
+check("dict zła sha: odmowa", not ok and tostring(err):find("sha256"), err)
+check("dict zła sha: stary słownik nietknięty", (dict_ifo("Słownik testowy") or ""):find("v1") and managed["Słownik testowy"] == d1.sha256)
+check("dict zła sha: brak śmieci", not dict_leftovers())
+
+-- 3) aktualizacja
+ok, err = K:applyDictOp("update", d2, managed)
+check("dict update ok", ok, err)
+check("dict update: nowa wersja, stara zniknęła, manifest", (dict_ifo("Słownik testowy") or ""):find("v2") and not (dict_ifo("Słownik testowy") or ""):find("v1")
+    and managed["Słownik testowy"] == d2.sha256 and not dict_leftovers())
+
+-- 4) ręczny katalog o tej samej nazwie: nie nadpisujemy, nie kasujemy
+sh("mkdir -p " .. q(DICTROOT .. "/Ręczny") .. " && echo reczny > " .. q(DICTROOT .. "/Ręczny/d.ifo"))
+local d3 = make_dict("Ręczny", "v3")
+ok, err = K:applyDictOp("install", d3, managed)
+check("dict install na ręczny katalog: odmowa", not ok and (dict_ifo("Ręczny") or ""):find("reczny") and managed["Ręczny"] == nil, err)
+ok = K:applyDictOp("remove", { name = "Ręczny" }, managed)
+check("dict remove ręcznego: odmowa", not ok and sh("test -d " .. q(DICTROOT .. "/Ręczny")))
+
+-- 5) zip-slip, link, korzeń różny od nazwy, nazwy FAT: odmowa bez śladów
+local function evil_dict(label, entries)
+    local ez2 = TMP .. "/evil-dict-" .. label .. ".zip"
+    local py = "import zipfile,sys\nz=zipfile.ZipFile(sys.argv[1],'w')\n"
+    for _i, e in ipairs(entries) do py = py .. "z.writestr(" .. string.format("%q", e):gsub("\\\n", "\\n") .. ",'x')\n" end
+    py = py .. "z.close()"
+    sh("python3 -c " .. q(py) .. " " .. q(ez2))
+    local body = slurp(ez2)
+    local sha = out("sha256sum " .. q(ez2)):match("^(%x+)")
+    served["http://srv/api/v1/dicts/" .. sha] = body
+    return { name = "Zły", sha256 = sha, size = #body, unpacked = 100, url = "/api/v1/dicts/" .. sha }
+end
+for label, entries in pairs({
+    slip = { "Zły/d.ifo", "Zły/../../pwned.ifo" },
+    root = { "Inny/d.ifo" },
+    lua_dot = { "Zły/d.ifo", "Zły/d.lua." },
+    lua_space = { "Zły/d.ifo", "Zły/d.lua " },
+    colon = { "Zły/d.ifo", "Zły/a:b.ifo" },
+    abs = { "/etc/Zły/d.ifo" },
+}) do
+    local e = evil_dict(label, entries)
+    ok, err = K:applyDictOp("install", e, {})
+    check("dict zły ZIP " .. label .. ": odmowa", not ok and tostring(err):find("ścieżka"), err)
+    check("dict zły ZIP " .. label .. ": nic na dysku", not sh("test -e " .. q(DICTROOT .. "/Zły")) and not dict_leftovers()
+        and not sh("test -e " .. q(DATA .. "/pwned.ifo")) and not sh("test -e " .. q(TMP .. "/pwned.ifo")))
+end
+local dl = make_dict("Zły", "lnk", function(dir) sh("ln -s /etc/passwd " .. q(dir .. "/x.ifo")) end)
+ok, err = K:applyDictOp("install", dl, {})
+check("dict link w ZIP-ie: odmowa", not ok and tostring(err):find("typ"), err)
+check("dict link: nic na dysku", not sh("test -e " .. q(DICTROOT .. "/Zły")) and not dict_leftovers())
+-- ZIP bez .ifo to nie słownik
+local dn = make_dict("Nie słownik", "noifo", function(dir) sh("rm " .. q(dir .. "/d.ifo")) end)
+ok, err = K:applyDictOp("install", dn, {})
+check("dict bez .ifo: odmowa", not ok and tostring(err):find("StarDict"), err)
+check("dict bez .ifo: nic na dysku", not sh("test -e " .. q(DICTROOT .. "/Nie słownik")) and not dict_leftovers())
+-- plik większy niż zapowiedziany rozmiar: odcięty przez limit, nic nie ląduje
+local dbig = make_dict("Za duży", "big", function(dir) sh("head -c 200000 /dev/urandom > " .. q(dir .. "/d.syn")) end)
+dbig.size = 10
+ok, err = K:applyDictOp("install", dbig, {})
+check("dict za duży plik: odmowa", not ok and tostring(err):find("za duży"), err)
+check("dict za duży plik: nic na dysku", not sh("test -e " .. q(DICTROOT .. "/Za duży")) and not dict_leftovers())
+-- niedozwolona nazwa od serwera
+ok = K:applyDictOp("install", { name = "../x", sha256 = d1.sha256, size = 1, unpacked = 1, url = d1.url }, {})
+check("dict zła nazwa: odmowa", not ok)
+
+-- 6) rollback: nie udaje się podstawić nowego katalogu → stary wraca
+local d4 = make_dict("Słownik testowy", "v4")
+local real_rename = os.rename
+os.rename = function(a, b) if a:match("/new$") then return nil, "boom" end; return real_rename(a, b) end
+ok, err = K:applyDictOp("update", d4, managed)
+os.rename = real_rename
+check("dict rollback: błąd zgłoszony", not ok and tostring(err):find("boom"), err)
+check("dict rollback: stary słownik wrócił", (dict_ifo("Słownik testowy") or ""):find("v2") and managed["Słownik testowy"] == d2.sha256 and not dict_leftovers())
+
+-- 7) remove: tylko zarządzany; katalogu z manifestu nie ma → samo sprzątnięcie manifestu
+ok, err = K:applyDictOp("remove", { name = "Słownik testowy" }, managed)
+check("dict remove zarządzanego", ok and not sh("test -e " .. q(DICTROOT .. "/Słownik testowy")) and managed["Słownik testowy"] == nil, err)
+check("dict remove: ręczny dalej leży", (dict_ifo("Ręczny") or ""):find("reczny"))
+
+-- 8) handleDicts: stan z dysku, plan, manifest, budżet, konflikt, sprzątanie
+sh("rm -rf " .. q(DICTROOT))
+local da, db_ = make_dict("Alfa", "a"), make_dict("Beta", "b")
+sh("mkdir -p " .. q(DICTROOT .. "/Ręczny") .. " && echo reczny > " .. q(DICTROOT .. "/Ręczny/d.ifo"))
+requested, shown = {}, {}
+local budget = Sync.DICT_SYNC_BUDGET
+Sync.DICT_SYNC_BUDGET = da.size + 1
+local res = K:handleDicts({ da, db_ }, true)
+Sync.DICT_SYNC_BUDGET = budget
+check("handleDicts: budżet — jeden pobrany, drugi czeka", res.n == 1 and res.deferred == 1 and #res.failures == 0, res.n .. "/" .. res.deferred)
+check("handleDicts: tylko jedno pobranie", #requested == 1 and requested[1]:find(da.sha256, 1, true), requested[1])
+check("handleDicts: cichy tryb nie pokazuje okien", #shown == 0)
+local m1, p1 = K:dictState()
+check("handleDicts: manifest zapisany na dysku", m1["Alfa"] == da.sha256 and p1["Alfa"] and not m1["Beta"], m1["Alfa"])
+check("handleDicts: inwentarz tylko zarządzane", (function() local inv2 = K:dictInventory(); return #inv2 == 1 and inv2[1].name == "Alfa" and inv2[1].sha256 == da.sha256 end)())
+res = K:handleDicts({ da, db_, { name = "Ręczny", sha256 = d3.sha256, size = d3.size, unpacked = 100, url = d3.url } }, false)
+check("handleDicts: druga synchronizacja dociąga resztę, konflikt pomija", res.n == 1 and res.deferred == 0 and #res.failures == 0, res.n)
+check("handleDicts: ręczny nietknięty mimo celu z serwera", (dict_ifo("Ręczny") or ""):find("reczny"))
+check("handleDicts: okna postępu poza trybem cichym", #shown >= 1 and shown[1].kind == "info" and tostring(shown[1].text):find("Beta", 1, true), shown[1] and shown[1].text)
+requested = {}
+res = K:handleDicts({ da, db_ }, true)
+check("handleDicts: nic do zrobienia — zero pobrań", res.n == 0 and #requested == 0)
+res = K:handleDicts({ da }, true)
+check("handleDicts: zdjęty z celu zarządzany jest usuwany, ręczny zostaje", res.n == 1 and not sh("test -e " .. q(DICTROOT .. "/Beta"))
+    and sh("test -d " .. q(DICTROOT .. "/Alfa")) and sh("test -d " .. q(DICTROOT .. "/Ręczny")))
+check("handleDicts: manifest po usunięciu", (function() local m = K:dictState(); return m["Alfa"] and not m["Beta"] end)())
+-- błąd sieci przerywa kolejne pobrania (bez czekania na timeouty), błędy się zgłasza
+sh("rm -rf " .. q(DICTROOT))
+local dx, dy = make_dict("Iks", "x"), make_dict("Igrek", "y")
+served["http://srv" .. dx.url] = nil
+local real_request = package.loaded["socket.http"].request
+package.loaded["socket.http"].request = function() return nil, "timeout" end
+-- (atrapa socket.skip zwraca resztę wartości: headers == nil → brak sieci)
+res = K:handleDicts({ dx, dy }, true)
+package.loaded["socket.http"].request = real_request
+check("handleDicts: brak sieci — jedna próba, reszta czeka", res.n == 0 and #res.failures == 1 and res.deferred == 1, #res.failures .. "/" .. res.deferred)
 
 sh("rm -rf " .. q(TMP))
 print(string.format("%d ok, %d fail", passed, failed))

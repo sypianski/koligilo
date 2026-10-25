@@ -334,6 +334,66 @@ local pb = Sync.fontPlan({ font("a.ttf", SHA1, big), font("b.ttf", SHA2, big), f
 Sync.FONT_MAX_BATCH = batch
 check("font plan: budżet na synchronizację", #pb.install == 2 and #pb.deferred == 1 and pb.deferred[1].file == "b.ttf")
 
+-- słowniki (TASK-55, PC-020) ---------------------------------------------------
+local function dict(name, sha, size, unpacked) return { name = name, sha256 = sha, size = size or 1000, unpacked = unpacked or 3000, url = "/api/v1/dicts/" .. sha } end
+for _, ok in ipairs({ "GCIDE", "Wiktionary (en-pl)", "Mój słownik", "วิกิพจนานุกรม ภาษาไทย", "ウィクショナリー セルビア・クロアチア語", "a_b-c+d, e's & f.2", "WikDict [de-en]", string.rep("ż", 96) }) do
+    check("dict: nazwa ok " .. ok:sub(1, 12), Sync.dictNameOK(ok))
+end
+for _, bad in ipairs({ "", ".ukryty", " spacja", "koniec.", "koniec ", "dwie  spacje", "a/b", "a\\b", "../x", "x..y", "a:b", "a*b", "a?b", 'a"b', "a<b", "a>b", "a|b",
+    "a\nb", "a\0b", "a\127b", string.rep("ż", 97), "\255\254", "zepsuty\195", "\194\133ukryty", "a!b", "a#b", "a;b", "a$b", "a%b" }) do
+    check("dict: zła nazwa " .. bad:gsub("%c", "?"):sub(1, 14), not Sync.dictNameOK(bad))
+end
+check("dict: nie-napis", not Sync.dictNameOK(nil) and not Sync.dictNameOK(5) and not Sync.dictNameOK({}))
+check("dict wpis ZIP: ok", Sync.dictEntryOK("Słownik", "Słownik/") and Sync.dictEntryOK("Słownik", "Słownik/gcide.ifo") and Sync.dictEntryOK("Słownik", "Słownik/res/a.png"))
+for _, bad in ipairs({ "inny/gcide.ifo", "Słownik/../x", "Słownik/../../etc/passwd", "/etc/passwd", "Słownik\\x", "Słownik//x", "Słownik/./x", "Słownik2/x", "gcide.ifo", "Słownik/a\nb",
+    "Słownik/d.lua.", "Słownik/d.lua ", "Słownik/a:b.ifo", "Słownik/x\\y", "Słownik/a\1b", "Słownik/..", "Słownik/a*b", "Słownik/a?b", 'Słownik/a"b', "Słownik/a<b", "Słownik/a>b", "Słownik/a|b",
+    "Słownik/res./a.png", "Słownik/res /a.png", "Słownik/koniec.", "Słownik/koniec ", "../Słownik/x" }) do
+    check("dict wpis ZIP: zły " .. bad:gsub("%c", "?"), not Sync.dictEntryOK("Słownik", bad))
+end
+check("dict wpis ZIP: zła nazwa korzenia", not Sync.dictEntryOK("../x", "../x/a") and not Sync.dictEntryOK("x", "y/a"))
+for _, kept in ipairs({ "S/S.ifo", "S/S.idx", "S/S.dict", "S/S.dict.dz", "S/S.idx.gz", "S/S.syn", "S/S.syn.dz", "S/S.syn.gz", "S/S.css", "S/res/a.PNG", "S/res/a.jpg",
+    "S/res/b.ogg", "S/res/c.woff2", "S/S.IFO", "S/README.txt", "S/NOTES.md", "S/LICENSE", "S/License", "S/COPYING", "S/NOTICE", "S/ATTRIBUTION", "S/readme", "S/AUTHORS", "S/Licence" }) do
+    check("dict biała lista: zostaje " .. kept, Sync.dictEntryKeep(kept) and not Sync.dictEntrySkip(kept))
+end
+for _, dropped in ipairs({ "S/S.lua", "S/d.LUA", "S/d.Lua", "S/d.lua.gz", "S/d.lua.", "S/d.lua ", "S/d.lua.png", "S/d.lua.dz", "S/README.lua", "S/LICENSE.sh", "S/Makefile", "S/x.sh", "S/x.exe", "S/x.so",
+    "S/x.html", "S/x.gz", "S/x.dz", "S/.hidden", "S/", "S/res/", "S/x.js", "S/x.py", "S/x.ifo.lua" }) do
+    check("dict biała lista: pomijane " .. dropped, not Sync.dictEntryKeep(dropped) and Sync.dictEntrySkip(dropped))
+end
+check("dict biała lista: nie-napis", not Sync.dictEntryKeep(nil) and not Sync.dictEntryKeep(5))
+local dman = Sync.dictManifestDecode(Sync.dictManifestEncode({ ["A B"] = SHA1, ["Mój słownik"] = SHA2 }))
+check("dict: manifest roundtrip", deep_eq(dman, { ["A B"] = SHA1, ["Mój słownik"] = SHA2 }))
+check("dict: manifest odrzuca śmieci", next(Sync.dictManifestDecode("../x=" .. SHA1 .. "\na=zly\n# kom\nb=" .. SHA1)) == "b")
+check("dict: plan bez stanu serwera nic nie robi", Sync.dictPlanEmpty(Sync.dictPlan(nil, { a = SHA1 }, { a = true })))
+
+local dp = Sync.dictPlan({ dict("Nowy", SHA1), dict("Zmieniony", SHA2), dict("Ten sam", SHA1), dict("Zniknął z dysku", SHA1), dict("Obcy", SHA1) },
+    { ["Zmieniony"] = SHA1, ["Ten sam"] = SHA1, ["Zniknął z dysku"] = SHA1, ["Stary"] = SHA2, ["Stary bez katalogu"] = SHA2 },
+    { ["Zmieniony"] = true, ["Ten sam"] = true, ["Obcy"] = true, ["Stary"] = true, ["Ręczny"] = true })
+check("dict plan: install nowego i zniknietego z dysku", #dp.install == 2 and dp.install[1].name == "Nowy" and dp.install[2].name == "Zniknął z dysku")
+check("dict plan: update zmienionego sha", #dp.update == 1 and dp.update[1].name == "Zmieniony" and dp.update[1].old_sha256 == SHA1)
+check("dict plan: ten sam sha bez zmian", #dp.install + #dp.update == 3)
+check("dict plan: katalog obcy w naszym katalogu to konflikt", #dp.conflict == 1 and dp.conflict[1].name == "Obcy")
+check("dict plan: usunięcie tylko zarządzanego i istniejącego", #dp.remove == 1 and dp.remove[1].name == "Stary")
+check("dict plan: wpis manifestu bez katalogu tylko do sprzątnięcia", #dp.forget == 1 and dp.forget[1].name == "Stary bez katalogu")
+check("dict plan: ręcznego katalogu nie ruszamy", (function()
+    for _, l in ipairs({ dp.install, dp.update, dp.remove, dp.forget }) do for _, x in ipairs(l) do if x.name == "Ręczny" then return false end end end
+    return true
+end)())
+check("dict plan: pusty cel usuwa wszystko z manifestu", #Sync.dictPlan({}, { a = SHA1, b = SHA2 }, { a = true, b = true }).remove == 2)
+local dpi = Sync.dictPlan({ dict("../x", SHA1), dict("a", "zly"), { name = "b", sha256 = SHA1, size = 10, unpacked = 10, url = "http://evil/x" },
+    dict("c", SHA1, Sync.DICT_MAX_ZIP + 1), dict("c2", SHA1, 10, Sync.DICT_MAX_UNPACKED + 1), dict("d", SHA1), dict("d", SHA2), "x",
+    { name = "e", sha256 = SHA1, url = "/api/v1/dicts/" .. SHA1 }, dict("f", SHA1, 0) }, {}, {})
+check("dict plan: wpisy nieprawidłowe", #dpi.invalid == 9 and #dpi.install == 1, #dpi.invalid)
+-- zły wpis o poprawnej nazwie nie może skasować zainstalowanego słownika
+local dbad = Sync.dictPlan({ dict("Zainstalowany", "zly") }, { ["Zainstalowany"] = SHA1 }, { ["Zainstalowany"] = true })
+check("dict plan: błąd serwera nie kasuje zainstalowanego", #dbad.remove == 0 and #dbad.invalid == 1)
+local dbatch = Sync.DICT_SYNC_BUDGET
+Sync.DICT_SYNC_BUDGET = 1500
+local dpb = Sync.dictPlan({ dict("a", SHA1, 800), dict("b", SHA2, 800), dict("c", SHA1, 20) }, {}, {})
+check("dict plan: budżet na synchronizację", #dpb.install == 2 and #dpb.deferred == 1 and dpb.deferred[1].name == "b")
+local dpf = Sync.dictPlan({ dict("duży", SHA1, 5000), dict("mały", SHA2, 10) }, {}, {})
+check("dict plan: pierwszy słownik większy niż budżet przechodzi, reszta czeka", #dpf.install == 1 and dpf.install[1].name == "duży" and #dpf.deferred == 1)
+Sync.DICT_SYNC_BUDGET = dbatch
+
 -- przenosiny serwera (TASK-15) ------------------------------------------------
 local M = Sync.movedURL
 check("moved: https → https", M("https://a.example", "https://b.example") == "https://b.example")
