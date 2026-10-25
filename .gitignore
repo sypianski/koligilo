@@ -1,3 +1,5 @@
 koligilo
 dist/
 koligilo-data/
+koligilo.bak-*
+koligilo.prev-*

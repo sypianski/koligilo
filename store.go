@@ -311,8 +311,22 @@ func (st *Store) saveLocked() error {
 		return err
 	}
 	tmp := st.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		return err
+	}
+	// Sync przed Rename: inaczej po awarii zasilania rename może przetrwać,
+	// a dane pliku nie — i state.json (z tokenami urządzeń) zostaje pusty.
+	_, werr := f.Write(b)
+	if serr := f.Sync(); werr == nil {
+		werr = serr
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(tmp)
+		return werr
 	}
 	return os.Rename(tmp, st.path)
 }

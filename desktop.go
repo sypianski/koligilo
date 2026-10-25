@@ -202,7 +202,7 @@ func (dk *Desktop) startDevices() {
 	dk.devUp, dk.devErr = true, ""
 	dk.devPort = ln.Addr().(*net.TCPAddr).Port
 	log.Printf("koligilo: API czytników na %s", ln.Addr())
-	go http.Serve(ln, dk.devMux)
+	go newHTTPServer(dk.devMux).Serve(ln)
 }
 
 // publicURL: adres wbudowanego serwera dla czytników — nadpisany w panelu
@@ -341,7 +341,9 @@ func (dk *Desktop) Routes() *http.ServeMux {
 	// „Mój serwer”: sprawdź adres i token, przełącz panel na proxy.
 	m.HandleFunc("POST /api/local/config", func(w http.ResponseWriter, r *http.Request) {
 		var in LocalConfig
-		json.NewDecoder(r.Body).Decode(&in)
+		if !readJSON(w, r, &in) {
+			return
+		}
 		srv, err := normalizeServer(in.Server)
 		if err == nil {
 			err = checkServer(srv, strings.TrimSpace(in.AdminToken))
@@ -566,7 +568,9 @@ func (dk *Desktop) handleMoveOut(w http.ResponseWriter, r *http.Request) {
 		AdminToken string `json:"admin_token"`
 		Replace    bool   `json:"replace"`
 	}
-	json.NewDecoder(r.Body).Decode(&in)
+	if !readJSON(w, r, &in) {
+		return
+	}
 	sum, code, err := dk.moveOut(in.Server, strings.TrimSpace(in.AdminToken), in.Replace)
 	moveReply(w, sum, code, err)
 }
@@ -575,7 +579,9 @@ func (dk *Desktop) handleMoveHere(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Replace bool `json:"replace"`
 	}
-	json.NewDecoder(r.Body).Decode(&in)
+	if !readJSON(w, r, &in) {
+		return
+	}
 	sum, code, err := dk.moveHere(in.Replace)
 	moveReply(w, sum, code, err)
 }
@@ -667,7 +673,7 @@ func runDesktop(o desktopOpts) error {
 	if o.open {
 		openURL(u)
 	}
-	return http.Serve(ln, guard(o.port, dk.Routes()))
+	return newHTTPServer(guard(o.port, dk.Routes())).Serve(ln)
 }
 
 // guard opakowuje mux panelu desktopowego obroną przed CSRF i DNS rebindingiem.

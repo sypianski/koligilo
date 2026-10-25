@@ -87,7 +87,9 @@ func main() {
 		routes := srv.Routes()
 		startGalleryTicker(srv.gal, nil)
 		log.Printf("koligilo %s serwer na %s (dane: %s)", Version, *listen, *data)
-		log.Fatal(http.ListenAndServe(*listen, routes))
+		srvHTTP := newHTTPServer(routes)
+		srvHTTP.Addr = *listen
+		log.Fatal(srvHTTP.ListenAndServe())
 	case "admin-token":
 		// Token wypisywany TU, w terminalu — nie w logach usługi (journald).
 		// Też ratunek, gdy token zginął: urządzenia i ustawienia zostają.
@@ -156,6 +158,13 @@ func main() {
 		fmt.Printf(usage, Version, DesktopPort)
 		os.Exit(2)
 	}
+}
+
+// newHTTPServer: serwer z limitami na wolnych klientów (slowloris). Bez
+// ReadTimeout/WriteTimeout, bo pobieranie zipów wtyczek i czcionek oraz import
+// kopii mogą trwać długo — chroni nagłówek i bezczynne połączenia.
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 }
 
 // startGalleryTicker: okresowe odświeżanie katalogu galerii (gdy przeterminowany)

@@ -89,7 +89,11 @@ func (rv *Rendezvous) tooMany(ip string) bool {
 			keep = append(keep, t)
 		}
 	}
-	rv.failures[ip] = keep
+	if len(keep) == 0 {
+		delete(rv.failures, ip) // bez tego mapa rosłaby o każdy IP, który się kiedyś pomylił
+	} else {
+		rv.failures[ip] = keep
+	}
 	return len(keep) >= 10
 }
 

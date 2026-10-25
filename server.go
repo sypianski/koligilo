@@ -390,7 +390,9 @@ func (s *Server) adminDecide(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Approve bool `json:"approve"`
 	}
-	json.NewDecoder(r.Body).Decode(&in)
+	if !readJSON(w, r, &in) {
+		return
+	}
 	d, err := s.st.Decide(r.PathValue("id"), in.Approve)
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
@@ -450,7 +452,9 @@ func (s *Server) adminGroups(w http.ResponseWriter, r *http.Request) {
 		Group string `json:"group"`
 		On    bool   `json:"on"`
 	}
-	json.NewDecoder(r.Body).Decode(&in)
+	if !readJSON(w, r, &in) {
+		return
+	}
 	if err := s.st.SetGroup(r.PathValue("id"), in.Group, in.On); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -462,7 +466,9 @@ func (s *Server) adminRename(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&in)
+	if !readJSON(w, r, &in) {
+		return
+	}
 	if strings.TrimSpace(in.Name) == "" {
 		writeJSON(w, 400, map[string]string{"error": "pusta nazwa"})
 		return

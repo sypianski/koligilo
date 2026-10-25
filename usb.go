@@ -305,7 +305,9 @@ func (dk *Desktop) usbRoutes(m *http.ServeMux) {
 		var in struct {
 			ID string `json:"id"`
 		}
-		json.NewDecoder(r.Body).Decode(&in)
+		if !readJSON(w, r, &in) {
+			return
+		}
 		t, err := dk.usbTarget()
 		if err != nil {
 			writeJSON(w, 409, map[string]string{"error": err.Error()})
