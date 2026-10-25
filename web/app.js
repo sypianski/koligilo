@@ -342,7 +342,7 @@ async function refresh() {
     if (S.tab === "czcionki") {
       try { S.fontCat = (await api("GET", "/api/admin/font-catalog")).families; } catch (e) { S.fontCat = S.fontCat || null; S.error = e.message; }
     }
-    if (S.tab === "konta" || plugSet) { // „Ustawienia wtyczek” podpowiadają brak klucza Rosetty (TASK-42)
+    if (S.tab === "konta" || S.tab === "grupy" || plugSet) { // „Ustawienia wtyczek” podpowiadają brak klucza Rosetty (TASK-42), „Co synchronizować” brak konta (TASK-51)
       try { S.acc = await api("GET", "/api/admin/accounts"); } catch (e) { S.acc = null; S.error = e.message; }
     }
     // lista wtyczek, aktualizacje i galeria są potrzebne tylko w pozostałych zakładkach —
@@ -1164,6 +1164,17 @@ function grpDetail(g) {
   return [h("div", { class: "gdesc" }, g.description), g.warning && h("div", { class: "gwarn" }, "⚠ ", g.warning)];
 }
 
+// TASK-51: grupa konta włączona na czytniku, a w „Konta” nic nie wpisano — czytnik nie dostanie niczego.
+function grpAccHint(g, devices) {
+  const a = ACCOUNTS.find(x => x.group === g.id);
+  if (!a || !S.acc || accInfo(a.id).conf) return null;
+  const on = devices.filter(d => d.groups[g.id]).map(d => d.name);
+  if (!on.length) return null;
+  return h("div", { class: "gacc small", role: "note" },
+    h("span", {}, "⚠ Grupa włączona, ale konto nie jest skonfigurowane"), h("span", { class: "muted" }, ` (${on.join(", ")})`), " ",
+    h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = a.id; showTab("konta"); } }, "Przejdź do Kont"));
+}
+
 function grpNameCell(g, devices) {
   const open = !!S.grp.rows[g.id], id = "grp-row-" + g.id;
   return h("th", { scope: "row", style: "text-align:left;font-weight:400" },
@@ -1173,6 +1184,7 @@ function grpNameCell(g, devices) {
         onclick: () => { S.grp.rows[g.id] = !open; render(); },
       }, h("span", { class: "car", "aria-hidden": "true" }, open ? "▾" : "▸"), g.name),
       grpMarks(g), grpChip(g, devices)),
+    grpAccHint(g, devices),
     open && h("div", { id: id + "-more" }, grpDetail(g)));
 }
 
@@ -1350,6 +1362,7 @@ function groupCards(devices, sections, nGroups) {
     h("div", { class: "sech" }, c.name, h("span", { class: "muted small" }, " · ", nGroups(c.groups.length))),
     c.groups.map(g => h("div", { class: "gcard" },
       h("div", { class: "gname" }, g.name, grpMarks(g), grpChip(g, devices)),
+      grpAccHint(g, devices),
       grpDetail(g),
       h("div", { class: "dl" }, devices.map(d => h("div", { class: "dr" }, h("span", {}, d.name), grpSwitch(g, d)))))),
   ]));
@@ -1530,10 +1543,10 @@ async function accTest(msgKey, path, label, dirty) {
   render();
 }
 
-function testBtn(msgKey, path, label, dirty) {
+function testBtn(msgKey, path, label, dirty, text = "Sprawdź połączenie") {
   const busy = S.accTesting === path;
   return h("button", { type: "button", id: "test" + path.replace(/[^a-z0-9]+/gi, "-"), disabled: !!S.accTesting || S.accBusy === msgKey,
-    onclick: () => accTest(msgKey, path, label, typeof dirty === "function" ? dirty() : dirty) }, busy ? "Sprawdzam…" : "Sprawdź połączenie");
+    onclick: () => accTest(msgKey, path, label, typeof dirty === "function" ? dirty() : dirty) }, busy ? "Sprawdzam…" : text);
 }
 
 // Zapis na górze, „Usuń konto z czytników” jako link po prawej pod kreską. Usunięcia nie da się cofnąć
@@ -1866,7 +1879,10 @@ function targetsBody() {
               list.map((c, j) => h("option", { value: j, selected: Number(d.account) === j || undefined }, `${c.name} (${CLOUD_TYPES[c.type] || c.type})`)))),
           h("label", { class: "tgf" }, h("span", {}, "Folder na koncie"),
             h("input", { id: `f-t-${which}`, type: "text", value: d.folder, placeholder: "np. /koreader", disabled: !d.on,
-              autocomplete: "off", spellcheck: "false", oninput: ev => { d.folder = ev.target.value; targetsDirtyUI(ev.target.form, ds); } }))));
+              autocomplete: "off", spellcheck: "false", oninput: ev => { d.folder = ev.target.value; targetsDirtyUI(ev.target.form, ds); } })),
+          // TASK-51: serwer sprawdza ZAPISANY cel (konto i folder), nie to, co jest w polach
+          d.on && cur && h("div", { class: "tgtest" },
+            testBtn("targets", `/api/admin/accounts/target/${which}/test`, label, () => targetDirty(d), "Sprawdź folder"))));
     }),
     h("div", { class: "row", style: "margin-top:10px" },
       h("button", { class: "primary", type: "submit", disabled: !dirty || S.accBusy === "targets" },
@@ -1907,7 +1923,9 @@ function rosettaForm() {
           hint: "Najdłuższa odpowiedź modelu. Przy długich stronach podnieś." }),
         field(d, "ai_temperature", "Temperatura", { form: "ro", placeholder: "0.3",
           hint: "0–2. Niska wartość to wierniejszy, mniej „kreatywny” przekład." }))),
-    accActions("rosetta", { cur, path: "/api/admin/accounts/rosetta", confirm: "Usunąć klucze API Rosetty ze wszystkich czytników?" }),
+    accActions("rosetta", { cur, test: "/api/admin/accounts/rosetta/test",
+      dirty: () => !!d.api_key || Object.keys(changedOnly(d, extraKeys)).length > 0,
+      path: "/api/admin/accounts/rosetta", confirm: "Usunąć klucze API Rosetty ze wszystkich czytników?" }),
     h("p", { class: "muted small" }, "Język tłumaczenia, wybór Google/AI i wygląd panelu ustawiasz w ",
       h("button", { type: "button", class: "linkbtn", onclick: () => { S.plugView = PLUGSET; showTab("wtyczki"); } }, "Wtyczki → Ustawienia wtyczek → Rosetta"), "."),
     accMsg("rosetta"));
@@ -2729,6 +2747,8 @@ function valuesTab() {
   if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
   // ustawienia Rosetty też mają własną kartę w „Ustawienia wtyczek” (TASK-40)
   for (const o of ROSETTA_OPTS) { const id = idFor(ROSETTA_FILE, o.key); if (id) mapped.add(id); }
+  // …a Asystent AI (TASK-47)
+  for (const o of ASSISTANT_OPTS) { const id = idFor(ASSISTANT_FILE, o.key); if (id) mapped.add(id); }
   const unmapped = values.filter(v => !v.deleted && !mapped.has(v.id)).length;
   const hits = searchHits(S.valQ);
   return h("section", {},
@@ -3636,6 +3656,7 @@ function plugDetail() {
 function pluginSettingsPanel() {
   return h("div", { class: "plugset" },
     rosettaSettingsSection(),
+    assistantSettingsSection(),
     h("section", { "aria-labelledby": "plugset-kopad" },
       h("h2", { id: "plugset-kopad" }, "KOPad"),
       kopadCard()));
@@ -3709,6 +3730,59 @@ function rosettaSettingsSection() {
         on.length ? `Teraz dostają ją: ${on.join(", ")}. ` : "Żaden czytnik jej jeszcze nie dostaje — włącz ją w „Co synchronizować”. ",
         "Dostęp do modelu AI (adres, model, klucz) wpisujesz osobno, w „Konta” → Rosetta: ",
         h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = "rosetta"; showTab("konta"); } }, "przejdź do kluczy"), "."),
+      rows));
+}
+
+// --- Asystent AI: ustawienia wtyczki assistant (TASK-47) ---
+//
+// Grupa katalogu „asystent” (settings/assistant.lua). Domyślne wartości sprawdzone w źródle wtyczki
+// (assistant_settings.lua / assistant_dialog.lua: readSetting("klucz", domyślna)). Pól bez
+// potwierdzonej wartości domyślnej (provider, języki) nie wypełniamy: panel pokazuje „nie ustawiono”.
+// Klucze API i lista dostawców to configuration.lua w katalogu wtyczki na czytniku — poza katalogiem
+// koligilo, więc nigdy nie wędrują. previous_config_ai_provider to wewnętrzny znacznik wtyczki
+// (zostaje w „Zaawansowane”).
+const ASSISTANT_FILE = "settings/assistant.lua";
+const ASSISTANT_LANGS = [["Polish", "polski"], ["English", "angielski"], ["German", "niemiecki"], ["French", "francuski"],
+  ["Spanish", "hiszpański"], ["Italian", "włoski"], ["Latin", "łacina"], ["Greek", "grecki"], ["Russian", "rosyjski"], ["Arabic", "arabski"]];
+const ASSISTANT_OPTS = [
+  { key: "provider", kind: "text", label: "Dostawca AI", placeholder: "np. openai",
+    help: ["Nazwa wpisu z listy dostawców w configuration.lua na czytniku (np. openai, anthropic). Jeśli czytnik nie ma dostawcy o takiej nazwie, wtyczka wybierze innego i nadpisze to ustawienie — dlatego włączaj to tylko, gdy czytniki mają te same nazwy dostawców.",
+      "Gdy zmienisz dostawcę domyślnego w configuration.lua, wtyczka przy następnym uruchomieniu przełączy się na niego niezależnie od tej wartości."] },
+  { key: "response_language", kind: "text", label: "Język odpowiedzi AI", suggest: ASSISTANT_LANGS, placeholder: "język interfejsu",
+    help: ["Język, w którym AI ma odpowiadać (nazwa po angielsku trafia do zapytania, np. Polish). Nie ustawiono: język interfejsu KOReadera. Żeby wrócić do tego stanu, użyj „usuń” pod kontrolką."] },
+  { key: "dict_language", kind: "text", label: "Język słownika", suggest: ASSISTANT_LANGS, placeholder: "język interfejsu",
+    help: ["Język objaśnień w oknie słownika AI. Nie ustawiono: język interfejsu KOReadera. Żeby wrócić do tego stanu, użyj „usuń” pod kontrolką."] },
+  { key: "dict_popup_show_dictionary", kind: "switch", label: "„Słownik (AI)” w oknie słownika", default: true, on: true, off: false,
+    help: ["Dodaje przycisk Słownik (AI) do okna, które otwiera się po dotknięciu słowa w słowniku KOReadera."] },
+  { key: "dict_popup_show_wikipedia", kind: "switch", label: "„Wikipedia (AI)” w oknie słownika", default: true, on: true, off: false,
+    help: ["Dodaje przycisk Wikipedia (AI) do tego samego okna."] },
+  { key: "use_stream_mode", kind: "switch", label: "Odpowiedź na żywo (strumień)", default: true, on: true, off: false,
+    help: ["Odpowiedź pojawia się słowo po słowie, w miarę jak AI ją pisze. Wyłączone: czytnik czeka na całość."] },
+  { key: "stream_mode_auto_scroll", kind: "switch", label: "Przewijaj odpowiedź w trakcie pisania", default: true, on: true, off: false,
+    help: ["Ma znaczenie tylko przy odpowiedzi na żywo: okno samo przewija się za nowym tekstem."] },
+  { key: "large_stream_dialog", kind: "switch", label: "Duże okno odpowiedzi na żywo", default: true, on: true, off: false,
+    help: ["Ma znaczenie tylko przy odpowiedzi na żywo: okno strumienia zajmuje większą część ekranu."] },
+  { key: "auto_copy_asked_question", kind: "switch", label: "Kopiuj zadane pytanie do schowka", default: true, on: true, off: false,
+    help: ["Po wysłaniu pytania jego treść trafia do schowka czytnika. Działa tylko na urządzeniach, które mają schowek."] },
+];
+
+function assistantSettingsSection() {
+  const g = catalogGroup("asystent");
+  if (!g) return null;
+  const byId = new Map(S.state.values.map(v => [v.id, v]));
+  const on = S.state.devices.filter(d => d.groups && d.groups.asystent).map(d => d.name);
+  const rows = ASSISTANT_OPTS.map(o => {
+    const id = idFor(ASSISTANT_FILE, o.key);
+    return id && settingRow(o, id, byId.get(id), "");
+  }).filter(Boolean);
+  return h("section", { "aria-labelledby": "plugset-assistant" },
+    h("h2", { id: "plugset-assistant" }, "Asystent AI"),
+    h("div", { class: "card sgroup assistantset" },
+      h("p", { class: "muted small padintro" },
+        "Asystent AI odpowiada na pytania o zaznaczony tekst. Tu ustawiasz język, okno odpowiedzi i słownik — wartości trafiają na czytniki, które mają włączoną grupę „Asystent AI (assistant)”. ",
+        on.length ? `Teraz dostają ją: ${on.join(", ")}. ` : "Żaden czytnik jej jeszcze nie dostaje — włącz ją w „Co synchronizować”. "),
+      h("p", { class: "muted small padintro" },
+        "Klucze API i lista dostawców leżą w pliku configuration.lua w katalogu wtyczki na czytniku (assistant.koplugin) i NIE są synchronizowane — każdy czytnik wpisujesz osobno."),
       rows));
 }
 // --- ulubione (TASK-20) ---

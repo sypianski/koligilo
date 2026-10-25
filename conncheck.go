@@ -25,6 +25,12 @@ import (
 
 const defaultKosyncServer = "https://sync.koreader.rocks:443" // jak w kosync.koplugin
 
+// Domyślne wtyczki Rosetta (rosetta_config.lua), gdy konto nie ma własnego adresu lub modelu.
+const (
+	defaultRosettaURL   = "https://openrouter.ai/api/v1/chat/completions"
+	defaultRosettaModel = "google/gemini-2.5-flash"
+)
+
 // Zmienne tylko po to, żeby testy mogły je skrócić.
 var checkTimeout = 10 * time.Second
 
@@ -40,6 +46,8 @@ func (s *Server) connRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/admin/accounts/kosync/test", s.admin(s.kosyncTest))
 	m.HandleFunc("POST /api/admin/accounts/wallabag/test", s.admin(s.wallabagTest))
 	m.HandleFunc("POST /api/admin/accounts/cloud/{i}/test", s.admin(s.cloudTest))
+	m.HandleFunc("POST /api/admin/accounts/rosetta/test", s.admin(s.rosettaTest))
+	m.HandleFunc("POST /api/admin/accounts/target/{which}/test", s.admin(s.targetTest))
 }
 
 func notSaved(w http.ResponseWriter, what string) {
@@ -92,6 +100,49 @@ func (s *Server) cloudTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, checkWebDAV(r.Context(), str(acc, "address"), str(acc, "url"), str(acc, "username"), str(acc, "password")))
 	case "ftp":
 		writeJSON(w, 200, checkFTP(r.Context(), str(acc, "address"), str(acc, "username"), str(acc, "password")))
+	default:
+		writeJSON(w, 200, fail("Nieznany rodzaj konta."))
+	}
+}
+
+// Rosetta (TASK-51): adres, model i klucz tylko z zapisanego stanu (jak czyta je wtyczka:
+// ai_api_key, a w starszych wersjach api_key; puste adres/model = domyślne wtyczki).
+func (s *Server) rosettaTest(w http.ResponseWriter, r *http.Request) {
+	key := s.getString(rosettaFile + "ai_api_key")
+	if key == "" {
+		key = s.getString(rosettaFile + "api_key")
+	}
+	if key == "" {
+		notSaved(w, "klucz API Rosetty")
+		return
+	}
+	base, model := s.getString(rosettaFile+"ai_base_url"), s.getString(rosettaFile+"ai_model")
+	if base == "" {
+		base = defaultRosettaURL
+	}
+	if model == "" {
+		model = defaultRosettaModel
+	}
+	writeJSON(w, 200, checkRosetta(r.Context(), base, model, key))
+}
+
+// Cel statystyk/słowniczka (TASK-51): konto i folder z zapisanego celu w settings.reader.lua.
+func (s *Server) targetTest(w http.ResponseWriter, r *http.Request) {
+	which := r.PathValue("which")
+	if _, ok := syncTargets[which]; !ok {
+		writeJSON(w, 404, map[string]string{"error": "nieznany cel synchronizacji"})
+		return
+	}
+	t := s.target(which)
+	if t == nil {
+		notSaved(w, "ten cel (statystyki albo słowniczek)")
+		return
+	}
+	switch str(t, "type") {
+	case "webdav":
+		writeJSON(w, 200, checkWebDAVFolder(r.Context(), str(t, "address"), str(t, "url"), str(t, "username"), str(t, "password")))
+	case "dropbox", "ftp":
+		writeJSON(w, 200, fail("Sprawdzanie folderu nie jest dla tego typu konta (%s) dostępne. Sprawdź samo konto w „Konta w chmurze” → „Sprawdź połączenie”, a folder upewnij się, że istnieje na koncie.", str(t, "type")))
 	default:
 		writeJSON(w, 200, fail("Nieznany rodzaj konta."))
 	}
@@ -292,6 +343,86 @@ func checkWebDAV(ctx context.Context, address, folder, user, pass string) checkR
 		}
 	}
 	return fail("Serwer odpowiedział HTTP %d — sprawdź adres (WebDAV zwykle kończy się ścieżką, np. /dav/Koofr).", code)
+}
+
+// Folder celu (statystyki/słowniczek): PROPFIND Depth 0 wprost na folder. Odróżnia zły login, brak
+// folderu i zły adres serwera. Pusty folder to korzeń konta.
+func checkWebDAVFolder(ctx context.Context, address, folder, user, pass string) checkResult {
+	if address == "" {
+		return fail("Konto nie ma adresu serwera.")
+	}
+	base := strings.TrimRight(address, "/")
+	folder = strings.Trim(folder, "/")
+	target, shown := base, "główny folder konta"
+	if folder != "" {
+		target, shown = base+"/"+folder, "folder „/"+folder+"”"
+	}
+	code, err := propfind(ctx, target, user, pass)
+	if err != nil {
+		return unreachable(err)
+	}
+	switch {
+	case code == 207 || code == 200:
+		return passed("Jest " + shown + ", a login działa (uprawnień zapisu nie sprawdzam).")
+	case code == 401 || code == 403:
+		return fail("Serwer odrzucił login lub hasło (HTTP %d).", code)
+	case isRedirect(code):
+		return redirected(code)
+	case code == 404 && folder != "":
+		if c2, err := propfind(ctx, base, user, pass); err == nil && (c2 == 207 || c2 == 200) {
+			return fail("Logowanie działa, ale folderu „/%s” nie ma na koncie. Utwórz go (np. w przeglądarce plików konta) albo wpisz inny.", folder)
+		}
+	}
+	return fail("Serwer odpowiedział HTTP %d — sprawdź adres konta (WebDAV zwykle kończy się ścieżką, np. /dav/Koofr).", code)
+}
+
+// --- Rosetta (API zgodne z OpenAI) ---
+
+// Jedno krótkie żądanie chat/completions z nagłówkiem Bearer, jak w rosetta_ai.lua. Odpowiedzi
+// dostawcy nie przepisujemy do komunikatu (mogłaby zawierać fragment klucza) — tylko kod i wniosek.
+func checkRosetta(ctx context.Context, endpoint, model, key string) checkResult {
+	if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fail("Adres API jest nieprawidłowy (oczekiwany https://…/chat/completions).")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"max_tokens": 5,
+		"messages":   []map[string]string{{"role": "user", "content": "Say OK."}},
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(body)))
+	if err != nil {
+		return fail("Adres API jest nieprawidłowy.")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := checkClient().Do(req)
+	if err != nil {
+		return unreachable(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Choices []json.RawMessage `json:"choices"`
+	}
+	json.Unmarshal(readBody(resp), &out)
+	switch c := resp.StatusCode; {
+	case c == 200 && len(out.Choices) > 0:
+		return passed("Model „" + model + "” odpowiedział: adres, model i klucz działają.")
+	case c == 200:
+		return fail("Serwer odpowiedział HTTP 200, ale bez odpowiedzi modelu — to nie wygląda na API zgodne z OpenAI.")
+	case c == 401 || c == 403:
+		return fail("Dostawca odrzucił klucz API (HTTP %d).", c)
+	case c == 402:
+		return fail("Dostawca odmówił (HTTP 402) — zwykle brakuje środków na koncie.")
+	case c == 404:
+		return fail("Pod tym adresem nic nie ma (HTTP 404) — adres ma kończyć się na /chat/completions, a model musi istnieć u dostawcy.")
+	case c == 400 || c == 422:
+		return fail("Dostawca odrzucił żądanie (HTTP %d) — sprawdź nazwę modelu „%s”.", c, model)
+	case c == 429:
+		return fail("Dostawca ogranicza liczbę zapytań (HTTP 429) — klucz jest przyjęty, ale limit wyczerpany.")
+	case isRedirect(c):
+		return redirected(c)
+	}
+	return fail("Dostawca odpowiedział HTTP %d.", resp.StatusCode)
 }
 
 // --- FTP ---

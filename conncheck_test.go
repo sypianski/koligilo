@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +26,8 @@ func testResult(t *testing.T, hh *harness, path string) (int, bool, string) {
 // Bez zapisanego konta nic nie jest testowane (i nie ma dokąd wysłać żądania).
 func TestConnCheckNeedsSavedAccount(t *testing.T) {
 	hh := newHarness(t)
-	for _, p := range []string{"/api/admin/accounts/kosync/test", "/api/admin/accounts/wallabag/test", "/api/admin/accounts/cloud/0/test"} {
+	for _, p := range []string{"/api/admin/accounts/kosync/test", "/api/admin/accounts/wallabag/test", "/api/admin/accounts/cloud/0/test",
+		"/api/admin/accounts/rosetta/test", "/api/admin/accounts/target/statystyki/test", "/api/admin/accounts/target/slowniczek/test"} {
 		if c, _, _ := testResult(t, hh, p); c != 409 {
 			t.Errorf("%s bez konta: %d, chcę 409", p, c)
 		}
@@ -283,5 +286,143 @@ func TestConnCheckDoesNotFollowRedirects(t *testing.T) {
 	}
 	if hits != 0 {
 		t.Errorf("obcy host dostał %d żądań", hits)
+	}
+}
+
+// Rosetta: sukces, zły klucz (401), błąd sieci, brak konta (409). Odpowiedź nie zawiera klucza,
+// a żądanie idzie na zapisany adres z nagłówkiem Bearer i krótkim chat/completions.
+func TestConnCheckRosetta(t *testing.T) {
+	hh := newHarness(t)
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" || r.Method != "POST" {
+			w.WriteHeader(404)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer sk-tajny-klucz-123" {
+			w.WriteHeader(401)
+			w.Write([]byte(`{"error":{"message":"bad key sk-tajny-klucz-123"}}`))
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer srv.Close()
+	const p = "/api/admin/accounts/rosetta/test"
+	put := func(base, key string) {
+		hh.call("PUT", "/api/admin/accounts/rosetta", map[string]string{"ai_base_url": base, "ai_model": "m-1", "api_key": key})
+	}
+	// brak zapisanego klucza
+	if c, _, _ := testResult(t, hh, p); c != 409 {
+		t.Fatalf("bez konta: %d, chcę 409", c)
+	}
+	put(srv.URL+"/v1/chat/completions", "sk-tajny-klucz-123")
+	c, ok, msg := testResult(t, hh, p)
+	if c != 200 || !ok || !strings.Contains(msg, "m-1") {
+		t.Errorf("dobry klucz: %d %v %q", c, ok, msg)
+	}
+	if got["model"] != "m-1" || got["max_tokens"] != float64(5) {
+		t.Errorf("żądanie: %v", got)
+	}
+	// zły klucz: wynik, nie błąd żądania; komunikat nie przepisuje odpowiedzi dostawcy (z kluczem)
+	put(srv.URL+"/v1/chat/completions", "sk-zly-klucz-999")
+	c, ok, msg = testResult(t, hh, p)
+	if c != 200 || ok || !strings.Contains(msg, "klucz") || strings.Contains(msg, "sk-") {
+		t.Errorf("zły klucz: %d %v %q", c, ok, msg)
+	}
+	// zły adres (404)
+	put(srv.URL+"/inne", "sk-tajny-klucz-123")
+	if _, ok, msg = testResult(t, hh, p); ok || !strings.Contains(msg, "404") {
+		t.Errorf("zły adres: %v %q", ok, msg)
+	}
+	// błąd sieci
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
+	put(deadURL+"/v1/chat/completions", "sk-tajny-klucz-123")
+	c, ok, msg = testResult(t, hh, p)
+	if c != 200 || ok || !strings.Contains(msg, "Nie mogę połączyć") || strings.Contains(msg, "sk-") {
+		t.Errorf("sieć: %d %v %q", c, ok, msg)
+	}
+	// odpowiedź 200 bez choices
+	odd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("<html>")) }))
+	defer odd.Close()
+	put(odd.URL, "sk-tajny-klucz-123")
+	if _, ok, msg = testResult(t, hh, p); ok || !strings.Contains(msg, "zgodne z OpenAI") {
+		t.Errorf("nie-API: %v %q", ok, msg)
+	}
+}
+
+// Rosetta bez własnego adresu i modelu używa domyślnych wtyczki (tu: podmienione na serwer testowy).
+func TestConnCheckRosettaDefaults(t *testing.T) {
+	var model string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		model, _ = b["model"].(string)
+		w.Write([]byte(`{"choices":[{}]}`))
+	}))
+	defer srv.Close()
+	res := checkRosetta(context.Background(), srv.URL, defaultRosettaModel, "k")
+	if !res.OK || model != "google/gemini-2.5-flash" {
+		t.Errorf("%+v model=%q", res, model)
+	}
+}
+
+// Folder celu statystyk/słowniczka: WebDAV (OK, brak folderu, zły login), Dropbox/FTP bez wsparcia,
+// brak zapisanego celu (409), wynik bez haseł.
+func TestConnCheckTargetFolder(t *testing.T) {
+	hh := newHarness(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, _ := r.BasicAuth()
+		switch {
+		case r.Method != "PROPFIND" || r.Header.Get("Depth") != "0":
+			w.WriteHeader(405)
+		case u != "a@b.pl" || p != "p1":
+			w.WriteHeader(401)
+		case r.URL.Path == "/dav" || r.URL.Path == "/dav/koreader":
+			w.WriteHeader(207)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	set := func(which, typ, addr, user, pass, folder string) {
+		v := `{["address"]="` + addr + `",["name"]="W",["password"]="` + pass + `",["type"]="` + typ + `",["url"]="` + folder + `",["username"]="` + user + `"}`
+		hh.s.st.SetFromPanel(map[string]*string{syncTargets[which]: &v})
+	}
+	const p = "/api/admin/accounts/target/statystyki/test"
+	if c, _, _ := testResult(t, hh, p); c != 409 {
+		t.Fatalf("bez celu: %d, chcę 409", c)
+	}
+	if c, _, _ := testResult(t, hh, "/api/admin/accounts/target/nic/test"); c != 404 {
+		t.Errorf("nieznany cel: %d, chcę 404", c)
+	}
+	set("statystyki", "webdav", srv.URL+"/dav/", "a@b.pl", "p1", "/koreader")
+	if c, ok, msg := testResult(t, hh, p); c != 200 || !ok || !strings.Contains(msg, "/koreader") {
+		t.Errorf("jest folder: %d %v %q", c, ok, msg)
+	}
+	set("statystyki", "webdav", srv.URL+"/dav/", "a@b.pl", "p1", "")
+	if _, ok, msg := testResult(t, hh, p); !ok || !strings.Contains(msg, "główny") {
+		t.Errorf("korzeń: %v %q", ok, msg)
+	}
+	set("statystyki", "webdav", srv.URL+"/dav/", "a@b.pl", "p1", "/nie-ma")
+	if _, ok, msg := testResult(t, hh, p); ok || !strings.Contains(msg, "folderu „/nie-ma” nie ma") {
+		t.Errorf("brak folderu: %v %q", ok, msg)
+	}
+	set("slowniczek", "webdav", srv.URL+"/dav/", "a@b.pl", "zle-haslo", "/koreader")
+	if _, ok, msg := testResult(t, hh, "/api/admin/accounts/target/slowniczek/test"); ok || !strings.Contains(msg, "login lub hasło") || strings.Contains(msg, "zle-haslo") {
+		t.Errorf("zły login: %v %q", ok, msg)
+	}
+	set("statystyki", "webdav", "http://127.0.0.1:1/dav", "a@b.pl", "p1", "/koreader")
+	if _, ok, msg := testResult(t, hh, p); ok || !strings.Contains(msg, "Nie mogę połączyć") {
+		t.Errorf("sieć: %v %q", ok, msg)
+	}
+	for _, typ := range []string{"dropbox", "ftp"} {
+		set("statystyki", typ, "ftp://127.0.0.1:1", "u", "pass-sekret", "/koreader")
+		c, ok, msg := testResult(t, hh, p)
+		if c != 200 || ok || !strings.Contains(msg, "nie jest dla tego typu konta") || strings.Contains(msg, "pass-sekret") {
+			t.Errorf("%s: %d %v %q", typ, c, ok, msg)
+		}
 	}
 }
