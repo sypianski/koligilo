@@ -751,15 +751,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 .padsvg .pctl.chg text { fill: var(--on-accent); }
 .padsvg .pctl.chg text.sm { fill: var(--ink); }
 .padlist { display: flex; flex-direction: column; min-width: 0; }
-.padrow { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 4px 10px; align-items: center; padding: 6px 8px; margin: 0 -8px; border-top: 1px solid var(--border); border-radius: 6px; }
+.padrow { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 2px 10px; align-items: center; padding: 3px 8px; margin: 0 -8px; border-top: 1px solid var(--border); border-radius: 6px; }
 .padrow:first-child { border-top: 0; }
 .padrow.chg { background: var(--accent-soft); }
-.padrow label { display: flex; flex-direction: column; font-weight: 600; font-size: 13.5px; }
+.padrow label { display: flex; flex-direction: row; align-items: baseline; gap: 8px; font-weight: 600; font-size: 13.5px; }
 .padrow .pk { font-size: 15px; }
 .padrow label .muted { font-weight: 400; }
-.padsel { display: flex; flex-direction: column; gap: 2px; min-width: 0; align-items: flex-start; }
-.padsel select { width: 100%; max-width: 280px; min-width: 0; }
-.actcard .padsel select { max-width: 340px; }
+.padrow select { width: 100%; max-width: 280px; min-width: 0; padding-block: 3px; }
+.actcard .padrow select { max-width: 340px; }
+.padrow .padnote { grid-column: 2; }
+.padrow:hover, .padrow:focus-within { background: var(--accent-soft); }
+.padsvg .pctl.hl rect, .padsvg .pctl.hl circle { stroke-width: 4; fill: var(--accent-soft); }
 .padactions { margin-top: 4px; }
 @media (max-width: 760px) {
   .padgrid { grid-template-columns: 1fr; }

@@ -55,7 +55,7 @@ const S = {
   valDev: null,        // czytnik wybrany na pasku „Pokaż dla” (id) albo null = wszystkie (TASK-32)
   grp: { cats: { wyglad: true }, rows: {}, menu: null, snack: null, never: false, busy: false }, // widok „Co synchronizować” (TASK-30): rozwinięte sekcje i wiersze, otwarte menu „⋯”, pasek „Cofnij”
   ctl: {},             // szkice pól liczbowych/tekstowych kontrolek: id(+część) -> tekst
-  pad: { layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
+  pad: { view: "btn", layout: "xbox", drafts: {}, fresh: false, msg: null, busy: false, actDraft: null, actMsg: null }, // edytor mapowania gamepada (TASK-25): drafts układ -> {kontrolka: rola}; actDraft (TASK-27) rola -> akcja w czytaniu
 
   // wtyczki (TASK-10/11); TASK-33: jedna strona + arkusz „Dodaj wtyczkę”,
   // TASK-20: gwiazdki ulubionych.
@@ -2775,17 +2775,23 @@ ${g("east", circ(291, 107, 11), txt(291, 107, lab("east"), "face"))}
   return el;
 }
 
+// Wiersz pod kursorem albo z fokusem zapala odpowiedni przycisk na schemacie (TASK-41). Sam znacznik klasy,
+// bez render(), więc nie przerywa edycji; kształt (grubszy obrys) niesie to także bez koloru.
+function padHl(c, on) { document.querySelector(`.padsvg [data-ctl="${c}"]`)?.classList.toggle("hl", on); }
+
 function padRow(layout, c, map, acts) {
   const P = Padmap, id = `padsel-${layout}-${c}`;
   const def = P.defaultMap(layout)[c], changed = map[c] !== def;
-  return h("div", { class: "padrow" + (changed ? " chg" : "") },
+  return h("div", { class: "padrow" + (changed ? " chg" : ""),
+    onmouseenter: () => padHl(c, true), onmouseleave: () => padHl(c, false),
+    onfocusin: () => padHl(c, true), onfocusout: () => padHl(c, false) },
     h("label", { for: id },
       h("span", { class: "pk" }, P.printed(layout, c)),
       h("span", { class: "muted small" }, P.POSITIONS[c])),
-    h("div", { class: "padsel" },
-      h("select", { id, onchange: ev => { S.pad.drafts[layout] = { ...map, [c]: ev.target.value }; render(); } },
-        P.ROLE_IDS.map(r => h("option", { value: r, selected: map[c] === r }, P.roleLabel(r, acts)))),
-      h("span", { class: "padnote muted small" }, changed ? "zmienione, domyślnie: " + P.roleLabel(def, acts) : "domyślnie")));
+    h("select", { id, onchange: ev => { S.pad.drafts[layout] = { ...map, [c]: ev.target.value }; render(); } },
+      P.ROLE_IDS.map(r => h("option", { value: r, selected: map[c] === r }, P.roleLabel(r, acts) + (r === def ? " — domyślnie" : "")))),
+    changed && h("span", { class: "padnote muted small" }, "● zmienione · domyślnie: " + P.roleLabel(def, acts) + " ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.pad.drafts[layout] = { ...map, [c]: def }; render(); } }, "↺ przywróć")));
 }
 
 const PAD_LAYOUT_NOTES = {
@@ -2846,32 +2852,37 @@ async function padSave(layout) {
   document.getElementById("padtab-" + layout)?.focus();
 }
 
-function padmapCard() {
+// Krótki wstęp karty (TASK-41): jedno zdanie i link do tematu „Jak to działa”. Stan grupy „KOPad” zostaje,
+// bo bez niej mapowanie nie dotrze na czytnik.
+function padIntro(k) {
+  const on = S.state.devices.filter(d => d.groups && d.groups.kopad).map(d => d.name);
+  const text = k === 1 ? "Wybierz układ pada i ustaw rolę każdej kontrolki. Zapisujemy tylko różnice względem domyślnych."
+    : "Ustaw, co rola robi podczas czytania. Akcja należy do roli, nie do przycisku.";
+  return [
+    h("p", { class: "muted small padintro" }, text + " ", h("button", { type: "button", class: "linkbtn", onclick: () => showHow("kopad") }, "Jak to działa ›")),
+    k === 1 && h("p", { class: "muted small padintro" }, on.length ? `Grupa „KOPad” jest włączona na: ${on.join(", ")}.`
+      : "Grupa „KOPad” nie jest włączona na żadnym urządzeniu — włącz ją w „Co synchronizować”, żeby mapowanie dotarło na czytnik.")];
+}
+
+// Zawartość zakładki „Przyciski” karty KOPada (TASK-41: wcześniej osobna karta).
+function padmapBody() {
   if (typeof Padmap === "undefined") return null;
   const g = catalogGroup("kopad");
   if (!g || g.secret) return null;
   const P = S.pad, saved = padSaved(), base = padBase(saved), acts = padActs(saved);
-  const on = S.state.devices.filter(d => d.groups && d.groups.kopad).map(d => d.name);
-  const head = [
-    h("h3", {}, "Gamepad (KOPad): przyciski"),
-    h("p", { class: "muted small padintro" },
-      "Wybierz układ pada, który Cię interesuje, i ustaw, jaką rolę pełni każda kontrolka. Role mają nazwy z Xboksa, tak jak w dokumentacji KOPada (np. „A” to dolny przycisk). Zapisujemy tylko różnice względem domyślnego mapowania układu. To, co dana rola robi podczas czytania (np. czy RB przewraca stronę, czy otwiera menu), ustawiasz w osobnej karcie poniżej."),
-    h("p", { class: "muted small padintro" },
-      "Który układ ma pad na danym urządzeniu, wybierasz na nim samym (menu KOPada → „Gamepad layout (this device)”); włączenie KOPada też zostaje lokalne. Krzyżak, drążki, Guide, L3 i R3 nie są przemapowywane. ",
-      on.length ? `Grupa „KOPad” jest włączona na: ${on.join(", ")}.` : "Grupa „KOPad” nie jest włączona na żadnym urządzeniu — włącz ją w „Co synchronizować”, żeby mapowanie dotarło na czytnik."),
-  ];
-  if (saved.state === "loading") return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head, h("p", { class: "muted small" }, "Wczytuję…"));
+  const head = padIntro(1);
+  if (saved.state === "loading") return [head, h("p", { class: "muted small" }, "Wczytuję…")];
   if (base === null) {
-    return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head,
+    return [head,
       h("div", { class: "padwarn", role: "alert" },
         h("p", {}, h("strong", {}, "Zapisana wartość mapowania jest w formacie, którego ten edytor nie rozumie")),
         h("p", { class: "small" }, `Powód: ${saved.reason}. Nie zmieniam jej po cichu — możesz ją obejrzeć w Ustawienia czytników → „Zaawansowane” (klucz kopad.lua | padmap) albo zacząć od zera: pierwszy zapis zastąpi dotychczasową wartość.`),
-        h("button", { type: "button", onclick: () => { P.fresh = true; P.drafts = {}; P.actDraft = null; render(); } }, "Zacznij od zera")));
+        h("button", { type: "button", onclick: () => { P.fresh = true; P.drafts = {}; P.actDraft = null; render(); } }, "Zacznij od zera"))];
   }
   const L = P.layout, map = P.drafts[L] || Padmap.effective(base, L);
   const dirty = !!P.drafts[L] && Padmap.differs(base, L, P.drafts[L]);
   const modified = Padmap.changed(L, map).length > 0;
-  return h("section", { class: "card padcard", "aria-label": "Gamepad (KOPad): przyciski" }, head,
+  return [head,
     P.fresh && saved.state === "bad" && h("div", { class: "padwarn" },
       h("p", { class: "small" }, "Zaczynasz od zera: pierwszy zapis zastąpi zapisaną wartość, której edytor nie rozumiał."),
       h("button", { type: "button", onclick: () => { P.fresh = false; P.drafts = {}; P.actDraft = null; render(); } }, "Wróć bez zmian")),
@@ -2888,7 +2899,7 @@ function padmapCard() {
         h("button", { type: "button", disabled: !modified || P.busy, onclick: () => { P.drafts[L] = Padmap.defaultMap(L); P.msg = null; render(); } },
           "Przywróć domyślne"),
         dirty && h("span", { class: "muted small" }, "Niezapisane zmiany.")),
-      P.msg && h("p", { class: (P.msg.ok ? "ok" : "err") + " small", role: "status" }, P.msg.text)));
+      P.msg && h("p", { class: (P.msg.ok ? "ok" : "err") + " small", role: "status" }, P.msg.text))];
 }
 
 // ------------------------------------------------ gamepad: akcje ról w czytaniu (TASK-27, PC-014)
@@ -2914,12 +2925,12 @@ function padActRow(role, map) {
     h("label", { for: id },
       h("span", { class: "pk" }, P.roleName(role)),
       h("span", { class: "muted small" }, padRoleHint(S.pad.layout, role))),
-    h("div", { class: "padsel" },
-      h("select", { id, onchange: ev => { S.pad.actDraft = { ...map, [role]: ev.target.value === "" ? null : ev.target.value }; S.pad.actMsg = null; render(); } },
-        def === null ? opt(null, P.actionLabel(null) + " — domyślnie") : null,
-        P.ACTION_GROUPS.map(g => h("optgroup", { label: g.label },
-          g.ids.map(a => opt(a, P.ACTION_LABELS[a] + (a === def ? " — domyślnie" : "")))))),
-      h("span", { class: "padnote muted small" }, changed ? "zmienione, domyślnie: " + P.actionLabel(def) : def === null ? "domyślnie (działa Wstecz KOReadera)" : "domyślnie")));
+    h("select", { id, onchange: ev => { S.pad.actDraft = { ...map, [role]: ev.target.value === "" ? null : ev.target.value }; S.pad.actMsg = null; render(); } },
+      def === null ? opt(null, P.actionLabel(null) + " — domyślnie") : null,
+      P.ACTION_GROUPS.map(g => h("optgroup", { label: g.label },
+        g.ids.map(a => opt(a, P.ACTION_LABELS[a] + (a === def ? " — domyślnie" : "")))))),
+    changed && h("span", { class: "padnote muted small" }, "● zmienione · domyślnie: " + P.actionLabel(def) + " ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.pad.actDraft = { ...map, [role]: def }; S.pad.actMsg = null; render(); } }, "↺ przywróć")));
 }
 
 async function padSaveActions() {
@@ -2947,29 +2958,22 @@ async function padSaveActions() {
   document.getElementById("padact-save")?.focus();
 }
 
-function padActionsCard() {
+// Zawartość zakładki „Akcje w czytaniu” karty KOPada.
+function padActionsBody() {
   if (typeof Padmap === "undefined" || typeof Padmap.ACTION_IDS === "undefined") return null;
   const g = catalogGroup("kopad");
   if (!g || g.secret) return null;
   const P = S.pad, saved = padSaved(), base = padBase(saved);
-  const label = "Gamepad (KOPad): akcje w czytaniu";
-  const head = [
-    h("h3", {}, label),
-    h("p", { class: "muted small padintro" },
-      "Tu ustawiasz, co dana rola robi, gdy po prostu czytasz książkę — np. RB może otwierać menu górne (a w nim ustawienia) zamiast przewracać stronę. Akcja należy do roli, nie do konkretnego przycisku, więc zostaje, gdy zmienisz pad albo układ. Pod nazwą roli widać, który przycisk pełni ją na układzie wybranym w karcie powyżej."),
-    h("p", { class: "muted small padintro" },
-      "Zmiana działa tylko w czytaniu, bez otwartego zaznaczenia, słownika i menu. Tam rola robi to samo co zawsze (RB rozszerza zaznaczenie i przełącza kategorie menu, LT/RT zmieniają stronę menu), a kombinacje z X (X + krzyżak, X + LB/RB) zostają bez zmian. W przeglądarce plików przyciski działają jak dotąd."),
-  ];
-  if (saved.state === "loading") return h("section", { class: "card padcard", "aria-label": label }, head, h("p", { class: "muted small" }, "Wczytuję…"));
+  const head = padIntro(2);
+  if (saved.state === "loading") return [head, h("p", { class: "muted small" }, "Wczytuję…")];
   if (base === null) {
-    return h("section", { class: "card padcard", "aria-label": label }, head,
-      h("p", { class: "muted small", role: "status" }, "Zapisana wartość mapowania jest w formacie, którego ten edytor nie rozumie — rozwiąż to w karcie „Gamepad (KOPad): przyciski” powyżej."));
+    return [head, h("p", { class: "muted small", role: "status" }, "Zapisana wartość mapowania jest w formacie, którego ten edytor nie rozumie — rozwiąż to w zakładce „Przyciski”.")];
   }
   const savedActs = padSavedActions(saved);
   const map = P.actDraft || Padmap.effectiveActions(savedActs);
   const dirty = !!P.actDraft && Padmap.actionsDiffer(savedActs, P.actDraft);
   const modified = Padmap.changedActions(map).length > 0;
-  return h("section", { class: "card padcard actcard", "aria-label": label }, head,
+  return [head,
     h("div", { class: "padlist" }, Padmap.ROLE_IDS.map(r => padActRow(r, map))),
     h("div", { class: "row padactions" },
       h("button", { type: "button", id: "padact-save", class: "primary", disabled: !dirty || P.busy, onclick: () => padSaveActions() },
@@ -2978,7 +2982,36 @@ function padActionsCard() {
       h("button", { type: "button", disabled: !modified || P.busy, onclick: () => { P.actDraft = { ...Padmap.DEFAULT_ACTIONS }; P.actMsg = null; render(); } },
         "Przywróć domyślne"),
       dirty && h("span", { class: "muted small" }, "Niezapisane zmiany.")),
-    P.actMsg && h("p", { class: (P.actMsg.ok ? "ok" : "err") + " small", role: "status" }, P.actMsg.text));
+    P.actMsg && h("p", { class: (P.actMsg.ok ? "ok" : "err") + " small", role: "status" }, P.actMsg.text)];
+}
+
+// Jedna karta KOPada z zakładkami „Przyciski” i „Akcje w czytaniu” (TASK-41). Szkice obu żyją w S.pad,
+// więc przełączanie zakładek ich nie gubi; kropka „niezapisane” stoi na zakładce z niezapisaną zmianą.
+const PAD_VIEWS = [["btn", "Przyciski"], ["act", "Akcje w czytaniu"]];
+function showPadView(id) { S.pad.view = id; render(); document.getElementById("padview-" + id)?.focus(); }
+function kopadCard() {
+  const btn = padmapBody();
+  if (!btn) return h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada.");
+  const act = padActionsBody();
+  const v = act && S.pad.view === "act" ? "act" : "btn";
+  const saved = padSaved(), base = padBase(saved);
+  const dirty = { btn: !!base && Object.keys(S.pad.drafts).some(id => Padmap.differs(base, id, S.pad.drafts[id])),
+    act: !!base && !!S.pad.actDraft && Padmap.actionsDiffer(padSavedActions(saved), S.pad.actDraft) };
+  return h("section", { class: "card padcard", "aria-label": "KOPad" },
+    act && h("div", { class: "tabs", role: "tablist", "aria-label": "Karta KOPada" },
+      PAD_VIEWS.map(([id, label], i) => h("button", {
+        type: "button", role: "tab", id: "padview-" + id, "aria-selected": String(v === id), "aria-controls": "padviewpanel",
+        tabindex: v === id ? "0" : "-1", class: "tab" + (v === id ? " selected" : ""),
+        onclick: () => showPadView(id),
+        onkeydown: ev => {
+          const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+          if (d == null && ev.key !== "Home" && ev.key !== "End") return;
+          ev.preventDefault();
+          showPadView(PAD_VIEWS[ev.key === "Home" ? 0 : ev.key === "End" ? PAD_VIEWS.length - 1 : (i + d + PAD_VIEWS.length) % PAD_VIEWS.length][0]);
+        },
+      }, label, dirty[id] && h("span", { class: "dirty", title: "niezapisane zmiany" }, "●", h("span", { class: "sr" }, " niezapisane zmiany"))))),
+    h("div", { id: "padviewpanel", role: act ? "tabpanel" : null, "aria-labelledby": act ? "padview-" + v : null, class: v === "act" ? "actcard" : "" },
+      v === "act" ? act : btn));
 }
 
 // ------------------------------------------------ zakładka: jak to działa
@@ -3033,6 +3066,12 @@ const HOW_TOPICS = [
       h("li", {}, "Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Limit to 40 MB na plik i 150 MB pobrań na jedną synchronizację."),
       h("li", {}, "Czcionka wysłana z czytnika czeka na Twoją akceptację w panelu, zanim trafi na inne urządzenia."),
       h("li", {}, "W zakładce „Czytniki” możesz wyłączyć rodzinę na wybranym czytniku. Dostaje ją wtedy tylko reszta, a ten czytnik usuwa jej pliki (tylko te od koligilo) przy następnej synchronizacji."))]],
+  ["kopad", "Gamepad (KOPad)", "KOPad", () => [
+    h("p", {}, "Zakładka „Przyciski”: wybierz układ pada, który Cię interesuje, i ustaw, jaką rolę pełni każda kontrolka. Role mają nazwy z Xboksa, tak jak w dokumentacji KOPada (np. „A” to dolny przycisk). Zapisujemy tylko różnice względem domyślnego mapowania układu."),
+    h("p", {}, "Który układ ma pad na danym urządzeniu, wybierasz na nim samym (menu KOPada → „Gamepad layout (this device)”); włączenie KOPada też zostaje lokalne. Krzyżak, drążki, Guide, L3 i R3 nie są przemapowywane."),
+    h("p", {}, "Zakładka „Akcje w czytaniu”: tu ustawiasz, co dana rola robi, gdy po prostu czytasz książkę, np. RB może otwierać menu górne (a w nim ustawienia) zamiast przewracać stronę. Akcja należy do roli, nie do konkretnego przycisku, więc zostaje, gdy zmienisz pad albo układ. Pod nazwą roli widać, który przycisk pełni ją na układzie wybranym w zakładce „Przyciski”."),
+    h("p", {}, "Zmiana działa tylko w czytaniu, bez otwartego zaznaczenia, słownika i menu. Tam rola robi to samo co zawsze (RB rozszerza zaznaczenie i przełącza kategorie menu, LT/RT zmieniają stronę menu), a kombinacje z X (X + krzyżak, X + LB/RB) zostają bez zmian. W przeglądarce plików przyciski działają jak dotąd."),
+    h("p", { class: "muted small" }, "Mapowanie dociera na czytnik tylko wtedy, gdy grupa „KOPad” jest włączona w „Co synchronizować”.")]],
   ["sec", "Bezpieczeństwo", "Bezpieczeństwo", () => [
     h("div", { class: "how-tw" }, howTable()),
     h("ul", {},
@@ -3555,13 +3594,11 @@ function plugDetail() {
 // (S.pad.drafts) żyje w S, więc przeżywa odświeżanie w tle (interwał na dole pliku
 // odświeża tę zakładkę, choć pozostałych zakładek „Wtyczek” nie).
 function pluginSettingsPanel() {
-  const pad = padmapCard(), acts = padActionsCard();
   return h("div", { class: "plugset" },
     rosettaSettingsSection(),
     h("section", { "aria-labelledby": "plugset-kopad" },
       h("h2", { id: "plugset-kopad" }, "KOPad"),
-      pad || h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada."),
-      acts));
+      kopadCard()));
 }
 
 // --- Rosetta: ustawienia tłumaczenia (TASK-40) ---
