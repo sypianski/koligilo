@@ -1102,11 +1102,18 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .djobs { border: 1.5px solid var(--ink); border-radius: 8px; background: var(--surface); padding: 8px 12px; margin: 0 0 14px; display: grid; gap: 4px; }
 .djobs progress { width: 10em; margin-right: 8px; vertical-align: middle; }
 .dzrow { text-align: left; padding: 10px 14px; margin: 0 0 12px; }
-.langbtn { max-width: 100%; }
-.langbtn.on { border-color: var(--ink); font-weight: 600; }
-.langpanel { border: 1.5px solid var(--ink); border-radius: 8px; background: var(--surface); padding: 8px 12px; margin: 0 0 10px; }
-.langlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(13em, 1fr)); gap: 2px 12px; max-height: 14em; overflow-y: auto; margin-top: 6px; }
-.langopt { display: flex; align-items: center; gap: 6px; font-weight: 400; padding: 3px 0; min-width: 0; }
+.langrow { gap: 10px; align-items: flex-start; flex-wrap: wrap; margin: 0 0 10px; }
+.langfield { flex: 1 1 15em; min-width: 0; }
+.lab2 { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 2px; }
+.tagbox { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; border: 1.5px solid var(--border-strong); border-radius: 7px; background: var(--field); padding: 4px 6px; min-width: 0; }
+.tagbox.focus, .tagbox:focus-within { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.tagbox .langin { flex: 1 1 8em; min-width: 6em; border: 0; outline: 0; background: none; padding: 3px 4px; font: inherit; }
+.lchip { display: inline-flex; align-items: center; gap: 4px; border: 1.5px solid var(--ink); border-radius: 999px; background: var(--accent-soft); padding: 0 4px 0 9px; font-size: 12.5px; font-weight: 600; }
+.lchip button { border: 0; background: none; padding: 0 5px; font-size: 14px; line-height: 1.4; min-width: 0; }
+.sugg { border: 1.5px solid var(--ink); border-radius: 8px; background: var(--surface); padding: 4px 0; margin-top: 4px; max-height: 14em; overflow-y: auto; font-size: 13px; }
+.sugg > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px; cursor: pointer; }
+.sugg > div.on { background: var(--accent-soft); font-weight: 600; }
+.dsheet-tabs { margin: 4px 18px 8px; align-self: flex-start; }
 .dzrow .row { gap: 10px; }
 .dzdet { margin-top: 6px; }
 .dzdet summary { cursor: pointer; }
