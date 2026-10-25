@@ -94,7 +94,7 @@ var Catalog = []Group{
 	},
 	{
 		ID: "slowniki", Category: "czytanie", Name: "Słowniki",
-		Description: "Kolejność słowników, wyłączone słowniki i zestawy (presety). Same pliki słowników przenieś osobno.",
+		Description: "Kolejność słowników, wyłączone słowniki i zestawy (presety). Same pliki słowników pobierzesz i roześlesz w zakładce „Słowniki”.",
 		Default:     true,
 		Entries:     keys(readerFile, "dicts_order", "dicts_disabled", "dict_presets"),
 	},
