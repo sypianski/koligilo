@@ -69,7 +69,7 @@ const S = {
   dictJobs: {},        // trwające i nieudane pobrania z katalogu: id katalogu -> {state, error, done, total}
   dictCat: null,       // katalog słowników z KOReadera (GET /api/admin/dict-catalog, ładowany raz)
   dictSheet: false,    // arkusz „Dodaj słownik” (katalog), TASK-58
-  dictQ: "", dictIn: "", dictOut: "", dictOrigin: "", dictOnly: false, // filtry katalogu
+  dictQ: "", dictIn: [], dictOut: [], dictLangOpen: null, dictOrigin: "", dictOnly: false, // filtry katalogu (języki: listy kodów)
   dictShown: 50,       // ile wierszy katalogu jest narysowanych („Pokaż więcej”)
   dictPick: new Set(), // zaznaczone w katalogu (id) — „Pobierz zaznaczone”, TASK-58
   dictMsg: null,       // komunikat {ok, text}
@@ -394,6 +394,7 @@ function render() {
   const focused = document.activeElement && document.activeElement.id;
   const scroll = app.scrollTop;
   const sheetBody = app.querySelector(".sheet-body"), sheetScroll = sheetBody ? sheetBody.scrollTop : 0;
+  const langList = app.querySelector(".langlist"), langScroll = langList ? langList.scrollTop : 0;
   app.replaceChildren();
   renderConn();
   renderNav();
@@ -406,6 +407,8 @@ function render() {
   app.scrollTop = scroll;
   const sheetBodyNew = app.querySelector(".sheet-body");
   if (sheetBodyNew) sheetBodyNew.scrollTop = sheetScroll;
+  const langListNew = app.querySelector(".langlist");
+  if (langListNew) langListNew.scrollTop = langScroll;
   if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
   // panel podglądu żyje poza #app (ramki nie przeładowują się co 3 s)
   // TASK-32: w „Ustawieniach czytników” podgląd stoi od początku (na wybranym ustawieniu albo „Rozmiar czcionki”),
@@ -4964,15 +4967,16 @@ function dictTiles(dicts, active) {
     tile(devs.length ? `${ok} z ${devs.length}` : "0", devs.length ? plPl(devs.length, "czytnik ze zgodą", "czytniki ze zgodą", "czytników ze zgodą") : "czytników"));
 }
 
-// Wgrywanie własnego słownika (TASK-58): ostatni wiersz listy w panelu, nie karta nad nią — wgrywa się rzadko,
-// a pobiera z katalogu. Nazwa katalogu na czytniku i opis formatów są w rozwijanym „Nazwa i formaty”.
+// Wgrywanie własnego słownika (TASK-58): jedno wejście „＋ Dodaj słownik” na stronie, a plik własny jest drugim
+// źródłem w tym samym arkuszu (wcześniej osobny kafelek na stronie dublował przycisk). Nazwa katalogu na czytniku
+// i opis formatów są w rozwijanym „Nazwa i formaty”.
 function dictUploadRow() {
   const over = (ev, on) => { ev.preventDefault(); ev.currentTarget.classList.toggle("over", on); };
   return h("div", { class: "dropzone dzrow", id: "f-dict-drop",
     ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
     ondrop: ev => { over(ev, false); uploadDicts(ev.dataTransfer.files); } },
     h("div", { class: "row", style: "justify-content:center" },
-      h("b", {}, S.dictBusy ? "Wgrywam…" : "＋ Upuść tu archiwum słownika albo jego pliki"),
+      h("b", {}, S.dictBusy ? "Wgrywam…" : "Własny plik: upuść tu archiwum słownika albo jego pliki"),
       h("button", { type: "button", id: "b-dict-pick", disabled: S.dictBusy, onclick: () => document.getElementById("f-dict-files").click() }, "Wybierz pliki…"),
       h("input", { type: "file", id: "f-dict-files", multiple: true, hidden: true, "aria-label": "Pliki słownika",
         accept: ".zip,.tar,.tgz,.gz,.bz2,.zst,.ifo,.idx,.dict,.dz,.syn,.css",
@@ -5003,9 +5007,8 @@ function dictLibrary(dicts) {
   return h("section", { class: "card", id: "dict-library" },
     h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
     list.length === 0
-      ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Pobierz słownik z katalogu („＋ Dodaj słownik”) albo wgraj plik poniżej.")
-      : h("ul", { class: "plain" }, list.map(dictRow)),
-    dictUploadRow());
+      ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. „＋ Dodaj słownik” pobierze go z katalogu albo wgra Twój plik.")
+      : h("ul", { class: "plain" }, list.map(dictRow)));
 }
 
 function dictCatalogRow(c, have, job) {
@@ -5026,41 +5029,76 @@ function dictCatalogRow(c, have, job) {
     failed && h("button", { type: "button", onclick: () => startDictJobs([c]) }, "Spróbuj ponownie"));
 }
 
+// Wybór wielu języków (TASK-58): przycisk otwiera panel z polami wyboru; w obrębie jednego filtra języki się
+// sumują (polski LUB angielski), a „z” i „na” łączą się iloczynem. Lista jednego filtra pokazuje tylko języki,
+// które mają parę z wybranymi w drugim; wybrane, które przestają mieć parę, są zdejmowane.
+const dictLangSet = which => which === "in" ? S.dictIn : S.dictOut;
+function dictLangOptions(cat, which) {
+  const other = dictLangSet(which === "in" ? "out" : "in");
+  const key = which === "in" ? "lang_in" : "lang_out";
+  return Dicts.langCounts(other.length ? Dicts.filterCatalog(cat, which === "in" ? { outL: other } : { inL: other }) : cat, key);
+}
+function dictLangPrune(cat, which) {
+  const have = new Set(dictLangOptions(cat, which).map(([code]) => code));
+  const kept = dictLangSet(which).filter(code => have.has(code));
+  if (which === "in") S.dictIn = kept; else S.dictOut = kept;
+}
+function dictLangPicker(cat, which) {
+  const label = which === "in" ? "Z języka" : "Na język", id = "f-dict-" + which;
+  const mine = dictLangSet(which), open = S.dictLangOpen === which;
+  const names = mine.map(langName);
+  const text = !names.length ? label : `${label}: ${names.length <= 2 ? names.join(", ") : `${names.length} ${plPl(names.length, "język", "języki", "języków")}`}`;
+  return h("button", { type: "button", id, class: "langbtn" + (mine.length ? " on" : ""), "aria-expanded": String(open), "aria-controls": "dict-lang-panel",
+    onclick: () => { S.dictLangOpen = open ? null : which; render(); document.getElementById(id)?.focus(); } },
+    text, h("span", { "aria-hidden": "true" }, open ? " ▴" : " ▾"));
+}
+function dictLangPanel(cat, which) {
+  const label = which === "in" ? "Z języka" : "Na język", mine = new Set(dictLangSet(which));
+  const change = code => {
+    const set = new Set(dictLangSet(which)); if (set.has(code)) set.delete(code); else set.add(code);
+    if (which === "in") S.dictIn = [...set]; else S.dictOut = [...set];
+    dictLangPrune(cat, which === "in" ? "out" : "in");
+    S.dictShown = DICT_PAGE; render(); document.getElementById(`dl-${which}-${code}`)?.focus({ preventScroll: true });
+  };
+  return h("div", { class: "langpanel", id: "dict-lang-panel", role: "group", "aria-label": `${label} — zaznacz jeden lub kilka` },
+    h("div", { class: "row", style: "gap:8px" },
+      h("b", { class: "grow" }, `${label}: zaznacz jeden lub kilka`),
+      mine.size > 0 && h("button", { type: "button", class: "linkbtn", onclick: () => {
+        if (which === "in") S.dictIn = []; else S.dictOut = [];
+        S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-" + which)?.focus(); } }, "Wyczyść"),
+      h("button", { type: "button", class: "linkbtn", id: "b-dict-lang-done", onclick: () => { S.dictLangOpen = null; render(); document.getElementById("f-dict-" + which)?.focus(); } }, "Gotowe")),
+    h("div", { class: "langlist" },
+      dictLangOptions(cat, which).map(([code, n]) => h("label", { class: "langopt" },
+        h("input", { type: "checkbox", id: `dl-${which}-${code}`, checked: mine.has(code), onchange: () => change(code) }),
+        `${langName(code)} (${n})`))));
+}
+
 function dictFilterBar(cat) {
-  // „Z języka” i „Na język” zawężają się wzajemnie (TASK-58): lista jednego pokazuje tylko języki, które mają parę
-  // z wybranym drugim, a zmiana jednego zeruje drugi, gdy para przestaje istnieć.
-  const sel = (id, label, key, val, other, set) => h("select", { id, "aria-label": label,
-    onchange: ev => {
-      set(ev.target.value);
-      if (S.dictIn && S.dictOut && !Dicts.filterCatalog(cat, { inL: S.dictIn, outL: S.dictOut }).length) { if (key === "lang_in") S.dictOut = ""; else S.dictIn = ""; }
-      S.dictShown = DICT_PAGE; render(); document.getElementById(id)?.focus();
-    } },
-    h("option", { value: "" }, label),
-    Dicts.langCounts(other ? Dicts.filterCatalog(cat, key === "lang_in" ? { outL: other } : { inL: other }) : cat, key)
-      .map(([code, n]) => h("option", { value: code, selected: code === val }, `${langName(code)} (${n})`)));
-  return h("div", { class: "row", style: "gap:8px;flex-wrap:wrap;margin:6px 0 10px" },
-    h("input", { type: "search", id: "f-dictq", "aria-label": "Szukaj słownika", placeholder: "Szukaj słownika, języka…", value: S.dictQ, style: "flex:1 1 14em",
-      oninput: ev => {
-        const pos = ev.target.selectionStart;
-        S.dictQ = ev.target.value; S.dictShown = DICT_PAGE; render();
-        const el = document.getElementById("f-dictq");
-        if (el) { el.focus(); el.setSelectionRange(pos, pos); }
-      } }),
-    sel("f-dict-in", "Z języka", "lang_in", S.dictIn, S.dictOut, v => { S.dictIn = v; }),
-    sel("f-dict-out", "Na język", "lang_out", S.dictOut, S.dictIn, v => { S.dictOut = v; }),
-    h("select", { id: "f-dict-origin", "aria-label": "Pochodzenie", onchange: ev => { S.dictOrigin = ev.target.value; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-origin")?.focus(); } },
-      h("option", { value: "" }, "Każde pochodzenie"),
-      Dicts.ORIGINS.map(([id, label]) => h("option", { value: id, selected: id === S.dictOrigin }, label))),
-    h("label", { class: "row", style: "font-weight:400;gap:4px" },
-      h("input", { type: "checkbox", id: "f-dict-only", checked: S.dictOnly, onchange: ev => { S.dictOnly = ev.target.checked; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-only")?.focus(); } }),
-      "tylko pobrane"));
+  return h("div", {},
+    h("div", { class: "row", style: "gap:8px;flex-wrap:wrap;margin:6px 0 10px" },
+      h("input", { type: "search", id: "f-dictq", "aria-label": "Szukaj słownika", placeholder: "Szukaj słownika, języka…", value: S.dictQ, style: "flex:1 1 14em",
+        oninput: ev => {
+          const pos = ev.target.selectionStart;
+          S.dictQ = ev.target.value; S.dictShown = DICT_PAGE; render();
+          const el = document.getElementById("f-dictq");
+          if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+        } }),
+      dictLangPicker(cat, "in"),
+      dictLangPicker(cat, "out"),
+      h("select", { id: "f-dict-origin", "aria-label": "Pochodzenie", onchange: ev => { S.dictOrigin = ev.target.value; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-origin")?.focus(); } },
+        h("option", { value: "" }, "Każde pochodzenie"),
+        Dicts.ORIGINS.map(([id, label]) => h("option", { value: id, selected: id === S.dictOrigin }, label))),
+      h("label", { class: "row", style: "font-weight:400;gap:4px" },
+        h("input", { type: "checkbox", id: "f-dict-only", checked: S.dictOnly, onchange: ev => { S.dictOnly = ev.target.checked; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-only")?.focus(); } }),
+        "tylko pobrane")),
+    S.dictLangOpen && dictLangPanel(cat, S.dictLangOpen));
 }
 
 function dictCatalogPane(inSheet) {
   const cat = S.dictCat;
   if (!cat) return h("p", { class: "loading" }, "Wczytuję katalog…");
   const haveIds = new Set((S.dicts || []).filter(d => d.source === "katalog").map(d => d.source_ref));
-  const filtered = !!(S.dictQ || S.dictIn || S.dictOut || S.dictOrigin || S.dictOnly);
+  const filtered = !!(S.dictQ || S.dictIn.length || S.dictOut.length || S.dictOrigin || S.dictOnly);
   // Bez filtra nie rysujemy 1,7 tys. pozycji w kolejności kodów języków (pierwsze byłyby afarski i abchaski):
   // najpierw wybór języka, potem lista od największego słownika.
   const hits = filtered ? Dicts.bySize(Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName)) : [];
@@ -5075,8 +5113,8 @@ function dictCatalogPane(inSheet) {
     h("p", { class: "muted small", id: "dict-count", role: "status" },
       filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)} · od największego (liczba haseł)` : `${fmtCount(cat.length)} słowników w ${fmtCount(langs.size)} językach`,
       filtered && h("button", { type: "button", class: "linkbtn", style: "margin-left:8px",
-        onclick: () => { S.dictQ = ""; S.dictIn = ""; S.dictOut = ""; S.dictOrigin = ""; S.dictOnly = false; S.dictShown = DICT_PAGE; render(); } }, "Wyczyść filtry")),
-    !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz język „z” albo „na”, albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
+        onclick: () => { S.dictQ = ""; S.dictIn = []; S.dictOut = []; S.dictLangOpen = null; S.dictOrigin = ""; S.dictOnly = false; S.dictShown = DICT_PAGE; render(); } }, "Wyczyść filtry")),
+    !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz języki „z” albo „na” (możesz kilka) albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
       : hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
       : h("ul", { class: "plain" }, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id]))),
     hits.length > shown.length && h("p", {},
@@ -5131,7 +5169,7 @@ function dictDevicesBlock(active) {
 // Arkusz „Dodaj słownik” (TASK-58): katalog z filtrami i wyborem wielu słowników; pasek zadań widać też w nim,
 // bo arkusz zasłania stronę, a pobieranie startuje właśnie stąd. Zostaje otwarty po „Pobierz zaznaczone”.
 function openDictSheet() { S.dictSheet = true; render(); document.getElementById("f-dictq")?.focus(); }
-function closeDictSheet() { S.dictSheet = false; render(); document.getElementById("b-dict-add")?.focus(); }
+function closeDictSheet() { S.dictSheet = false; S.dictLangOpen = null; render(); document.getElementById("b-dict-add")?.focus(); }
 function dictSheet() {
   const bar = dictJobBar(true);
   return h("div", { class: "sheet-back", onmousedown: ev => { if (ev.target === ev.currentTarget) closeDictSheet(); } },
@@ -5140,7 +5178,7 @@ function dictSheet() {
         h("h2", { id: "dsheet-title" }, "Dodaj słownik"),
         h("button", { type: "button", id: "dsh-close", "aria-label": "Zamknij", onclick: closeDictSheet }, "×")),
       bar && h("div", { class: "sheet-src" }, bar),
-      h("div", { class: "sheet-body" }, dictCatalogPane(true))));
+      h("div", { class: "sheet-body" }, dictUploadRow(), dictCatalogPane(true))));
 }
 
 function dictsTab() {
@@ -5183,6 +5221,11 @@ document.addEventListener("keydown", ev => {
     return;
   }
   const dsheet = S.dictSheet && S.tab === "slowniki";
+  if (dsheet && S.dictLangOpen && ev.key === "Escape") {
+    ev.preventDefault();
+    const w = S.dictLangOpen; S.dictLangOpen = null; render(); document.getElementById("f-dict-" + w)?.focus();
+    return;
+  }
   if (dsheet || (S.addSheet && S.tab === "wtyczki")) {
     if (ev.key === "Escape" && (dsheet || !S.addSheet.busy)) { ev.preventDefault(); if (dsheet) closeDictSheet(); else closeAddSheet(); return; }
     if (ev.key === "Tab") {

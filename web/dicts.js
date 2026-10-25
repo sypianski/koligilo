@@ -18,13 +18,16 @@ const Dicts = (() => {
       langName ? langName(c.lang_in) : "", langName ? langName(c.lang_out) : ""].join(" "));
   }
 
-  // Filtr katalogu. f: {q, inL, outL, origin, only}; only = tylko pobrane (haveIds: Set id).
+  // Język w filtrze: pusty (""/[]) = dowolny, tekst = ten jeden, tablica = którykolwiek z nich (TASK-58).
+  const langOk = (want, code) => !want || (Array.isArray(want) ? !want.length || want.includes(code) : want === code);
+
+  // Filtr katalogu. f: {q, inL, outL, origin, only}; inL/outL to kod albo lista kodów (suma w obrębie jednego
+  // filtra, iloczyn między „z” i „na”); only = tylko pobrane (haveIds: Set id).
   // Kolejność z katalogu jest zachowana (serwer sortuje po parze języków i nazwie).
   function filterCatalog(cat, f, haveIds, langName) {
     const words = fold(f.q).split(/\s+/).filter(Boolean);
     return cat.filter(c => {
-      if (f.inL && c.lang_in !== f.inL) return false;
-      if (f.outL && c.lang_out !== f.outL) return false;
+      if (!langOk(f.inL, c.lang_in) || !langOk(f.outL, c.lang_out)) return false;
       if (f.origin && c.origin !== f.origin) return false;
       if (f.only && !(haveIds && haveIds.has(c.id))) return false;
       if (!words.length) return true;
