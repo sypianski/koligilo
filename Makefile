@@ -22,8 +22,10 @@ test:
 	node --check web/koreader_opts.js
 	node --check web/preview.js
 	node --check web/padmap.js
+	node --check web/dicts.js
 	node tests/preview_test.js
 	node tests/padmap_test.js
+	node tests/dicts_test.js
 	node tests/luaser_test.js
 
 # mapa ustawień KOReadera (web/koreader_opts.js) ze źródeł przypiętych do tagu

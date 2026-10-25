@@ -1068,6 +1068,9 @@ ul.plain li.row .grow { flex: 1 1 14em; }
 .dropzone { border: 2px dashed var(--rule); border-radius: 10px; padding: 18px; text-align: center; }
 .dropzone.over { background: var(--accent-soft); }
 .dropzone p { margin: 0 0 6px; }
+/* TASK-55: Słowniki — ostrzeżenie o pominiętych .lua, pasek postępu pobierania */
+.dwarn { color: var(--st-warn); font-weight: 600; }
+li.row progress { vertical-align: middle; }
 .fchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .fchips button { border-radius: 999px; padding: 3px 12px; }
 .fchips button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }

@@ -65,6 +65,14 @@ const S = {
   fontScript: "all",   // filtr pisma w katalogu polecanych
   fontOpen: {},        // rozwinięte rodziny w Bibliotece: nazwa -> true
   fontAddedOpen: false, // rozwinięta lista „Dodane” w katalogu
+  dicts: null,         // /api/admin/dicts → słowniki StarDict w magazynie (TASK-55)
+  dictJobs: {},        // trwające i nieudane pobrania z katalogu: id katalogu -> {state, error, done, total}
+  dictCat: null,       // katalog słowników z KOReadera (GET /api/admin/dict-catalog, ładowany raz)
+  dictView: "lib",     // zakładka wewnętrzna „Słowników”: "lib" | "cat" | "dev"
+  dictQ: "", dictIn: "", dictOut: "", dictOrigin: "", dictOnly: false, // filtry katalogu
+  dictShown: 50,       // ile wierszy katalogu jest narysowanych („Pokaż więcej”)
+  dictMsg: null,       // komunikat {ok, text}
+  dictBusy: false,     // trwa wgrywanie
   plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
   addSheet: null,      // arkusz „Dodaj wtyczkę”: patrz newSheet()
   plugFlash: null,     // Set katalogów świeżo dodanych wtyczek: wiersz macierzy podświetlony przez kilka sekund (TASK-54)
@@ -128,7 +136,7 @@ function icon(name) {
   return s.firstChild;
 }
 
-// Widoki: [id, etykieta, licznik?]. Kolejność = skróty Alt+1…7. „Aplikacja”
+// Widoki: [id, etykieta, licznik?]. Kolejność = skróty Alt+1…9. „Aplikacja”
 // (dawne „Ustawienia” w stopce paska) to zwykła zakładka; „Ustawienia czytników”
 // to dawne „Wspólne ustawienia” — dwie różne rzeczy, więc dwie różne nazwy.
 // TASK-33: „Wtyczki” to jedna strona (macierz + arkusz „Dodaj wtyczkę”, patrz
@@ -142,6 +150,7 @@ const VIEWS = [
   ["wspolne", "Ustawienia czytników", st => st.values.filter(v => !v.deleted).length],
   ["wtyczki", "Wtyczki"],
   ["czcionki", "Czcionki", st => (st.fonts || []).length],
+  ["slowniki", "Słowniki", () => (S.dicts || []).length],
   ["jak", "Jak to działa"],
   ["ustawienia", "Aplikacja"],
 ];
@@ -344,6 +353,8 @@ async function refresh() {
     const plugSet = S.tab === "wtyczki" && S.plugView === PLUGSET; // Wtyczki → Ustawienia wtyczek (TASK-26)
     if (S.tab === "wspolne") await valLoadFull();
     if (plugSet) await padLoadFull(); // pełny padmap (565 znaków) przekracza podgląd 400 znaków
+    await dictsLoad(); // lekka lista + zadania; licznik w nawigacji i zakładka „Słowniki”
+    if (S.tab === "slowniki") await dictCatLoad();
     if (S.tab === "czcionki") {
       try { S.fontCat = (await api("GET", "/api/admin/font-catalog")).families; } catch (e) { S.fontCat = S.fontCat || null; S.error = e.message; }
     }
@@ -816,7 +827,7 @@ function main() {
     st.pending.map(pairBanner),
     S.error && h("p", { class: "err" }, S.error),
     { urzadzenia: devicesTab, grupy: groupsTab, konta: accountsTab, wspolne: valuesTab,
-      wtyczki: pluginsTab, czcionki: fontsTab, jak: howTab, ustawienia: ustawieniaTab }[S.tab]());
+      wtyczki: pluginsTab, czcionki: fontsTab, slowniki: dictsTab, jak: howTab, ustawienia: ustawieniaTab }[S.tab]());
 }
 
 function pairBanner(p) {
@@ -3189,6 +3200,15 @@ const HOW_TOPICS = [
       h("li", {}, "Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Limit to 40 MB na plik i 150 MB pobrań na jedną synchronizację."),
       h("li", {}, "Czcionka wysłana z czytnika czeka na Twoją akceptację w panelu, zanim trafi na inne urządzenia."),
       h("li", {}, "W zakładce „Czytniki” możesz wyłączyć rodzinę na wybranym czytniku. Dostaje ją wtedy tylko reszta, a ten czytnik usuwa jej pliki (tylko te od koligilo) przy następnej synchronizacji."))]],
+  ["dicts", "Słowniki", "Słowniki", () => [
+    h("p", {}, "Słowniki StarDict (te, których używa KOReader w oknie tłumaczenia) to zwykłe pliki, więc koligilo rozsyła je jako dane, nie jako kod. Możesz je wgrać (archiwum zip, tar.gz, tar.bz2, tar.zst albo luźne pliki .ifo, .idx i .dict.dz) albo pobrać z katalogu, który pochodzi z listy samego KOReadera."),
+    h("p", {}, "Pobiera Twój serwer, w chwili kliknięcia, i robi to w tle (duże słowniki mają dziesiątki MB). Adresy z katalogu często wskazują „najnowsze wydanie”, więc zawartość może się zmienić od ostatniego razu. Serwer sprawdza, że to naprawdę StarDict, a pliki spoza słownika wycina, w tym .lua: KOReader uruchamia je jako kod, a kod koligilo instaluje wyłącznie za potwierdzeniem na czytniku."),
+    h("p", {}, "Czytnik dostaje słowniki dopiero wtedy, gdy sam na to pozwolisz: ", h("b", {}, "Menu → Narzędzia → koligilo → Zgody → Synchronizuj słowniki"), ". Zgodę da się włączyć tylko na czytniku, nigdy z panelu."),
+    h("ul", {},
+      h("li", {}, "Słowniki trafiają do katalogu data/dict/koligilo i są widoczne w KOReaderze po jego ponownym uruchomieniu. Słowników dodanych ręcznie koligilo nie rusza."),
+      h("li", {}, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu. Limit to 300 MB na słownik i 150 MB pobrań na jedną synchronizację, więc duży zestaw dociąga się w kilku."),
+      h("li", {}, "Nowa wersja słownika o tej samej nazwie zastępuje starą na czytnikach. „Aktualizuj” w katalogu pobiera go ponownie."),
+      h("li", {}, "Kolejność słowników i wyłączone słowniki to osobna grupa „Słowniki” w „Co synchronizować”; ta zakładka dostarcza same pliki."))]],
   ["kopad", "Gamepad (KOPad)", "KOPad", () => [
     h("p", {}, "Zakładka „Przyciski”: wybierz układ pada, który Cię interesuje, i ustaw, jaką rolę pełni każda kontrolka. Role mają nazwy z Xboksa, tak jak w dokumentacji KOPada (np. „A” to dolny przycisk). Zapisujemy tylko różnice względem domyślnego mapowania układu."),
     h("p", {}, "Który układ ma pad na danym urządzeniu, wybierasz na nim samym (menu KOPada → „Gamepad layout (this device)”); włączenie KOPada też zostaje lokalne. Krzyżak, drążki, Guide, L3 i R3 nie są przemapowywane."),
@@ -3221,7 +3241,7 @@ function howFacts() {
     h("p", { class: "muted small" }, rule));
 }
 // „?” przy nagłówku widoku (TASK-34) prowadzi do tematu w „Jak to działa”. Widoki bez wpisu go nie mają.
-const HOW_HELP = { urzadzenia: "pair", grupy: "conf", wspolne: "conf", konta: "books", wtyczki: "plug", czcionki: "fonts" };
+const HOW_HELP = { urzadzenia: "pair", grupy: "conf", wspolne: "conf", konta: "books", wtyczki: "plug", czcionki: "fonts", slowniki: "dicts" };
 function helpMark(topic) {
   const t = HOW_TOPICS.find(x => x[0] === topic)[1];
   return h("button", {
@@ -4790,6 +4810,291 @@ function fontsTab() {
     h("div", { id: "fontpanel", role: "tabpanel", "aria-labelledby": "fonttab-" + cur }, body));
 }
 
+// ------------------------------------------------ zakładka: słowniki (TASK-55, PC-020)
+//
+// Słowniki StarDict trafiają na czytniki, które w menu koligilo włączyły „Synchronizuj słowniki”.
+// Jak czcionki: dane, nie kod, jedna zgoda i tylko na czytniku. Źródła: wgranie z panelu albo
+// katalog z listy KOReadera — serwer pobiera wtedy plik sam, w tle (to minuty i dziesiątki MB,
+// więc POST tylko startuje zadanie, a panel odpytuje /api/admin/dicts co 2 s, dopóki któreś trwa).
+// Logika bez DOM (filtry, stan czytnika, postęp) jest w web/dicts.js.
+
+const DICT_SRC = { upload: "wgrany z panelu", "katalog": "z katalogu KOReadera" };
+const DICT_VIEWS = [["lib", "Biblioteka"], ["cat", "Katalog"], ["dev", "Czytniki"]];
+const DICT_PAGE = 50;
+const DICT_ARCHIVE = /\.(zip|tar|tgz|tar\.gz|tar\.bz2|tar\.zst)$/i;
+
+let langNames = null;
+try { langNames = new Intl.DisplayNames(["pl"], { type: "language" }); } catch { /* stare przeglądarki: zostają kody */ }
+function langName(code) {
+  if (!code) return "";
+  // Nieznany kod przeglądarka oddaje w postaci kodu (czasem skróconego do 2 liter) — wtedy zostaje nasz.
+  try { const n = langNames && langNames.of(code); return n && !/^[a-z]{2,3}$/i.test(n) ? n : code; } catch { return code; }
+}
+const fmtCount = n => Number(n).toLocaleString("pl");
+const hasWords = n => `${fmtCount(n)} ${plPl(n, "hasło", "hasła", "haseł")}`;
+
+async function dictsLoad() {
+  try {
+    const r = await api("GET", "/api/admin/dicts");
+    const done = Dicts.finished(S.dictJobs, r.jobs);
+    S.dicts = r.dicts || [];
+    S.dictJobs = r.jobs || {};
+    const got = done.map(id => S.dicts.find(d => d.source === "katalog" && d.source_ref === id)).filter(Boolean);
+    if (got.length) S.dictMsg = { ok: true, text: `Pobrano: ${got.map(d => d.title || d.name).join(", ")}. Trafi na czytniki przy ich następnej synchronizacji.` };
+  } catch (e) {
+    if (S.tab === "slowniki") S.error = e.message; // starszy serwer bez słowników nie psuje innych zakładek
+  }
+  dictPollSync();
+}
+
+async function dictCatLoad() {
+  if (S.dictCat) return;
+  try { S.dictCat = (await api("GET", "/api/admin/dict-catalog")).dicts; } catch (e) { S.error = e.message; }
+}
+
+// Odpytywanie co 2 s, dopóki któreś pobieranie trwa i jesteśmy w tej zakładce. Nie przerysowuje,
+// gdy ktoś pisze w polu (szukajka) — postęp dogoni po wyjściu z pola.
+let dictPollTimer = null;
+function dictPollStop() { if (dictPollTimer) { clearInterval(dictPollTimer); dictPollTimer = null; } }
+function dictPollSync() {
+  const want = S.tab === "slowniki" && Dicts.running(S.dictJobs);
+  if (!want) return dictPollStop();
+  if (dictPollTimer) return;
+  dictPollTimer = setInterval(async () => {
+    if (S.tab !== "slowniki") return dictPollStop();
+    await dictsLoad();
+    const a = document.activeElement;
+    if (!(a && a.tagName === "INPUT" && a.type !== "checkbox")) render();
+  }, 2000);
+}
+
+async function startDictJob(c) {
+  S.dictMsg = null;
+  try {
+    const r = await api("POST", `/api/admin/dict-catalog/${c.id}`);
+    S.dictJobs = { ...S.dictJobs, [c.id]: r.job };
+  } catch (e) { S.dictMsg = { ok: false, text: `Nie udało się zacząć pobierania „${c.name}”: ${e.message}` }; }
+  dictPollSync();
+  render();
+}
+
+// Wgranie: jedno archiwum albo komplet luźnych plików StarDict w jednym żądaniu (tak woła serwer);
+// kilka archiwów naraz idzie osobnymi żądaniami.
+async function uploadDicts(files) {
+  files = [...(files || [])];
+  if (!files.length) { S.dictMsg = { ok: false, text: "Wybierz archiwum słownika albo pliki .ifo, .idx i .dict.dz." }; return render(); }
+  const archives = files.filter(f => DICT_ARCHIVE.test(f.name));
+  if (files.length > 1 && archives.length && archives.length < files.length) {
+    S.dictMsg = { ok: false, text: "Wybierz albo archiwa (po jednym na słownik), albo luźne pliki jednego słownika — nie oba naraz." };
+    return render();
+  }
+  // Luźne pliki muszą tworzyć komplet — inaczej serwer zgłosiłby tylko „nierozpoznany format”.
+  if (!archives.length) {
+    const has = re => files.some(f => re.test(f.name));
+    if (!has(/\.ifo$/i) || !has(/\.idx(\.gz)?$/i) || !has(/\.dict(\.dz)?$/i)) {
+      S.dictMsg = { ok: false, text: "Luźne pliki słownika muszą być razem: .ifo, .idx i .dict.dz (albo .dict). Wybierz je wszystkie naraz albo wgraj archiwum." };
+      return render();
+    }
+  }
+  const name = (document.getElementById("f-dict-name")?.value || "").trim();
+  const batches = archives.length ? files.map(f => [f]) : [files];
+  S.dictBusy = true; S.dictMsg = null; render();
+  const done = [], bad = [];
+  for (const b of batches) {
+    try {
+      const fd = new FormData();
+      for (const f of b) fd.append("file", f);
+      if (name && batches.length === 1) fd.append("name", name);
+      const r = await apiUpload("/api/admin/dicts", fd);
+      done.push(r.dict.title || r.dict.name);
+    } catch (e) { bad.push(`${b.length === 1 ? b[0].name : "pliki słownika"}: ${e.message}`); }
+  }
+  S.dictBusy = false;
+  S.dictMsg = bad.length
+    ? { ok: false, text: (done.length ? `Wgrano ${done.length}. ` : "") + "Nie udało się: " + bad.join("; ") }
+    : { ok: true, text: `Wgrano: ${done.join(", ")}. Trafi na czytniki przy ich następnej synchronizacji.` };
+  await refresh();
+}
+
+async function deleteDict(d) {
+  if (!confirm(`Usunąć słownik „${d.title || d.name}” z panelu?\n\nCzytniki, które go mają, usuną jego pliki (tylko te od koligilo) przy najbliższej synchronizacji. Słowników dodanych ręcznie to nie dotyczy.`)) return;
+  try {
+    await api("DELETE", `/api/admin/dicts/${d.sha256}`);
+    S.dictMsg = { ok: true, text: `Usunięto „${d.title || d.name}”.` };
+  } catch (e) { S.dictMsg = { ok: false, text: `Nie udało się usunąć: ${e.message}` }; }
+  return refresh();
+}
+
+function dictSentence(dicts, active) {
+  const devs = S.state.devices || [];
+  const p = [];
+  const zip = active.reduce((n, d) => n + d.size, 0), un = active.reduce((n, d) => n + d.unpacked, 0);
+  p.push(active.length ? `${active.length} ${plPl(active.length, "słownik", "słowniki", "słowników")} · ${fmtSize(zip)} w panelu, ${fmtSize(un)} na czytniku` : "brak słowników w panelu");
+  const noc = devs.filter(d => !d.dicts_allowed).length;
+  if (noc) p.push(`${noc} ${plPl(noc, "czytnik bez zgody", "czytniki bez zgody", "czytników bez zgody")}`);
+  const run = Object.values(S.dictJobs).filter(j => j.state !== "błąd").length;
+  if (run) p.push(`${run} ${plPl(run, "pobieranie trwa", "pobierania trwają", "pobierań trwa")}`);
+  return h("p", { class: "muted", id: "dict-sentence" }, p.join(" · "));
+}
+
+function showDictView(id) { S.dictView = id; S.dictMsg = null; render(); document.getElementById("dicttab-" + id)?.focus(); }
+function dictTablist(cur, counts) {
+  return h("div", { class: "tabs", role: "tablist", "aria-label": "Słowniki" },
+    DICT_VIEWS.map(([id, label], i) => h("button", {
+      type: "button", role: "tab", id: "dicttab-" + id, "aria-selected": String(cur === id),
+      "aria-controls": "dictpanel", tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
+      onclick: () => showDictView(id),
+      onkeydown: ev => {
+        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
+        if (d == null && !home && !end) return;
+        ev.preventDefault();
+        showDictView(DICT_VIEWS[home ? 0 : end ? DICT_VIEWS.length - 1 : (i + d + DICT_VIEWS.length) % DICT_VIEWS.length][0]);
+      },
+    }, label, counts[id] != null && ` (${counts[id]})`)));
+}
+
+function dictDropzone() {
+  const over = (ev, on) => { ev.preventDefault(); ev.currentTarget.classList.toggle("over", on); };
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Wgraj słownik"),
+    h("div", { class: "dropzone", id: "f-dict-drop",
+      ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
+      ondrop: ev => { over(ev, false); uploadDicts(ev.dataTransfer.files); } },
+      h("p", {}, h("b", {}, S.dictBusy ? "Wgrywam…" : "Przeciągnij tu archiwum słownika albo jego pliki")),
+      h("p", { class: "muted small" }, "albo"),
+      h("button", { type: "button", class: "primary", id: "b-dict-pick", disabled: S.dictBusy, onclick: () => document.getElementById("f-dict-files").click() }, "Wybierz pliki…"),
+      h("input", { type: "file", id: "f-dict-files", multiple: true, hidden: true, "aria-label": "Pliki słownika",
+        accept: ".zip,.tar,.tgz,.gz,.bz2,.zst,.ifo,.idx,.dict,.dz,.syn,.css",
+        onchange: ev => uploadDicts(ev.target.files) })),
+    h("label", { class: "field", style: "margin:10px 0 0" },
+      h("span", {}, "Nazwa katalogu na czytniku (opcjonalnie)"),
+      h("input", { type: "text", id: "f-dict-name", maxlength: 96, placeholder: "domyślnie z nazwy pliku", style: "max-width:26em" })),
+    h("p", { class: "muted small", style: "margin-bottom:0" }, "Archiwum zip, tar.gz, tar.bz2 albo tar.zst jednego słownika (do 300 MB) albo luźne pliki StarDict: .ifo, .idx, .dict.dz (i .syn). Pliki spoza słownika, w tym .lua, są pomijane. ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")));
+}
+
+function dictRow(d) {
+  return h("li", { class: "row" },
+    h("div", { class: "grow" },
+      h("b", {}, d.title || d.name),
+      h("div", { class: "muted small" },
+        [d.title && d.title !== d.name ? d.name : null, d.words > 0 ? hasWords(d.words) : null,
+          `${fmtSize(d.size)} (${fmtSize(d.unpacked)} po rozpakowaniu)`, DICT_SRC[d.source] || d.source,
+          d.added && new Date(d.added).toLocaleDateString("pl")].filter(Boolean).join(" · ")),
+      d.dropped > 0 && h("div", { class: "dwarn small" }, `⚠ Pominięto ${d.dropped} ${plPl(d.dropped, "plik", "pliki", "plików")} spoza słownika (m.in. .lua — KOReader wykonuje je jako kod).`)),
+    h("button", { type: "button", class: "danger", onclick: () => deleteDict(d) }, "Usuń"));
+}
+
+function dictLibraryPane(dicts) {
+  const list = [...dicts].sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, "pl"));
+  return [
+    dictDropzone(),
+    h("section", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
+      list.length === 0
+        ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Wgraj plik albo pobierz słownik z katalogu.")
+        : h("ul", { class: "plain" }, list.map(dictRow)))];
+}
+
+function dictCatalogRow(c, have, job) {
+  const busy = job && job.state !== "błąd", failed = job && job.state === "błąd";
+  const pair = c.lang_in === c.lang_out ? langName(c.lang_in) : `${langName(c.lang_in)} → ${langName(c.lang_out)}`;
+  const origin = (Dicts.ORIGINS.find(o => o[0] === c.origin) || [0, c.origin])[1];
+  return h("li", { class: "row", "data-dict": c.id },
+    h("div", { class: "grow" },
+      h("b", {}, c.name), have && h("span", { class: "badge" }, " pobrany"),
+      h("div", { class: "muted small" }, [pair, c.entries > 0 ? hasWords(c.entries) : null, c.license, origin].filter(Boolean).join(" · ")),
+      busy && h("div", { class: "small", role: "status" },
+        job.state === "pobieranie" && job.total > 0 && h("progress", { max: job.total, value: job.done, "aria-label": `Pobieranie: ${c.name}`, style: "width:12em;margin-right:8px" }),
+        Dicts.jobText(job, fmtSize)),
+      failed && h("div", { class: "err small", role: "alert" }, `Nie udało się: ${job.error}`)),
+    h("button", { type: "button", disabled: busy, onclick: () => startDictJob(c) },
+      busy ? "Pobieram…" : failed ? "Spróbuj ponownie" : have ? "Aktualizuj" : "Pobierz"));
+}
+
+function dictFilterBar(cat) {
+  const sel = (id, label, key, val, set) => h("select", { id, "aria-label": label, onchange: ev => { set(ev.target.value); S.dictShown = DICT_PAGE; render(); document.getElementById(id)?.focus(); } },
+    h("option", { value: "" }, label),
+    Dicts.langCounts(cat, key).map(([code, n]) => h("option", { value: code, selected: code === val }, `${langName(code)} (${n})`)));
+  return h("div", { class: "row", style: "gap:8px;flex-wrap:wrap;margin:6px 0 10px" },
+    h("input", { type: "search", id: "f-dictq", "aria-label": "Szukaj słownika", placeholder: "Szukaj słownika, języka…", value: S.dictQ, style: "flex:1 1 14em",
+      oninput: ev => {
+        const pos = ev.target.selectionStart;
+        S.dictQ = ev.target.value; S.dictShown = DICT_PAGE; render();
+        const el = document.getElementById("f-dictq");
+        if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+      } }),
+    sel("f-dict-in", "Z języka", "lang_in", S.dictIn, v => { S.dictIn = v; }),
+    sel("f-dict-out", "Na język", "lang_out", S.dictOut, v => { S.dictOut = v; }),
+    h("select", { id: "f-dict-origin", "aria-label": "Pochodzenie", onchange: ev => { S.dictOrigin = ev.target.value; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-origin")?.focus(); } },
+      h("option", { value: "" }, "Każde pochodzenie"),
+      Dicts.ORIGINS.map(([id, label]) => h("option", { value: id, selected: id === S.dictOrigin }, label))),
+    h("label", { class: "row", style: "font-weight:400;gap:4px" },
+      h("input", { type: "checkbox", id: "f-dict-only", checked: S.dictOnly, onchange: ev => { S.dictOnly = ev.target.checked; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-only")?.focus(); } }),
+      "tylko pobrane"));
+}
+
+function dictCatalogPane() {
+  const cat = S.dictCat;
+  if (!cat) return h("p", { class: "loading" }, "Wczytuję katalog…");
+  const haveIds = new Set((S.dicts || []).filter(d => d.source === "katalog").map(d => d.source_ref));
+  const hits = Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName);
+  const shown = hits.slice(0, S.dictShown);
+  const filtered = S.dictQ || S.dictIn || S.dictOut || S.dictOrigin || S.dictOnly;
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Katalog słowników"),
+    h("p", { class: "muted small", style: "margin-top:0" }, "Lista pochodzi z KOReadera; pliki pobiera Twój serwer w chwili kliknięcia — wersje „latest” mogą się zmienić; serwer sprawdza format i nie instaluje plików .lua ani innych spoza słownika. ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")),
+    dictFilterBar(cat),
+    h("p", { class: "muted small", id: "dict-count", role: "status" },
+      filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)}` : `${fmtCount(cat.length)} słowników`,
+      filtered && h("button", { type: "button", class: "linkbtn", style: "margin-left:8px",
+        onclick: () => { S.dictQ = ""; S.dictIn = ""; S.dictOut = ""; S.dictOrigin = ""; S.dictOnly = false; S.dictShown = DICT_PAGE; render(); } }, "Wyczyść filtry")),
+    hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
+      : h("ul", { class: "plain" }, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id]))),
+    hits.length > shown.length && h("p", {},
+      h("button", { type: "button", id: "b-dict-more", onclick: () => { S.dictShown += DICT_PAGE; render(); } },
+        `Pokaż więcej (${fmtCount(hits.length - shown.length)} ${plPl(hits.length - shown.length, "została", "zostały", "zostało")})`)));
+}
+
+function dictDeviceRow(d, active) {
+  const st = Dicts.deviceState(d, active);
+  let state, cls = "muted small";
+  const names = list => list.slice(0, 5).join(", ") + (list.length > 5 ? ` i ${list.length - 5} ${plPl(list.length - 5, "inny", "inne", "innych")}` : "");
+  if (st.kind === "no-consent") state = `bez zgody — na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki`;
+  else if (st.kind === "empty") state = "zgoda jest, w panelu nie ma jeszcze słowników";
+  else if (st.kind === "waiting") state = "zgoda jest, czeka na pierwszą synchronizację";
+  else if (st.kind === "ok") { state = `wszystkie (${st.have}) zainstalowane`; cls = "ok small"; }
+  else {
+    state = `zainstalowane ${st.have} z ${st.total}`;
+    if (st.missing.length) state += `; brakuje: ${names(st.missing)}`;
+    if (st.stale.length) state += `; do aktualizacji: ${names(st.stale)}`;
+    state += " — reszta przy następnej synchronizacji (do 150 MB na raz)";
+  }
+  return h("li", {}, h("b", {}, d.name), " — ", h("span", { class: cls }, state));
+}
+
+function dictDevicesPane(active) {
+  const devs = S.state.devices;
+  return h("section", { class: "card" },
+    h("h3", { style: "margin-top:0" }, "Czytniki"),
+    h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu."),
+    devs.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
+      : h("ul", { class: "plain" }, devs.map(d => dictDeviceRow(d, active))));
+}
+
+function dictsTab() {
+  const dicts = S.dicts || [];
+  const active = dicts.filter(d => d.active && d.approved);
+  const cur = DICT_VIEWS.some(([id]) => id === S.dictView) ? S.dictView : "lib";
+  const body = cur === "lib" ? dictLibraryPane(dicts) : cur === "cat" ? dictCatalogPane() : dictDevicesPane(active);
+  return h("div", {},
+    dictSentence(dicts, active),
+    dictTablist(cur, { lib: dicts.length, dev: S.state.devices.length }),
+    S.dictMsg && h("p", { class: S.dictMsg.ok ? "ok" : "err", role: "status" }, S.dictMsg.text),
+    h("div", { id: "dictpanel", role: "tabpanel", "aria-labelledby": "dicttab-" + cur }, body));
+}
+
 const TABS = VIEWS.map(v => v[0]);
 
 function showTab(id) {
@@ -4797,7 +5102,7 @@ function showTab(id) {
   S.tab = id;
   history.replaceState(null, "", "#" + id);
   if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; }
-  if (id === "konta" || id === "wtyczki" || id === "czcionki") return refresh();
+  if (id === "konta" || id === "wtyczki" || id === "czcionki" || id === "slowniki") return refresh();
   render();
 }
 
@@ -4806,7 +5111,7 @@ function showTab(id) {
 if (location.hash === "#galeria") { S.tab = "wtyczki"; S.addSheet = newSheet("galeria"); }
 else if (TABS.includes(location.hash.slice(1)) || location.hash === "#ustawienia") S.tab = location.hash.slice(1);
 
-// Skróty: Alt+1…7 — widoki; „/” — wyszukiwarka galerii (arkusz „Dodaj wtyczkę”); Esc — zamyka arkusz; Tab krąży w arkuszu.
+// Skróty: Alt+1…9 — widoki; „/” — wyszukiwarka galerii (arkusz „Dodaj wtyczkę”); Esc — zamyka arkusz; Tab krąży w arkuszu.
 document.addEventListener("keydown", ev => {
   const inNav = document.getElementById("nav").contains(ev.target);
   const navReady = !document.getElementById("shell").classList.contains("bare");
