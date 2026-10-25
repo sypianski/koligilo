@@ -68,7 +68,7 @@ const S = {
   dicts: null,         // /api/admin/dicts → słowniki StarDict w magazynie (TASK-55)
   dictJobs: {},        // trwające i nieudane pobrania z katalogu: id katalogu -> {state, error, done, total}
   dictCat: null,       // katalog słowników z KOReadera (GET /api/admin/dict-catalog, ładowany raz)
-  dictView: "lib",     // zakładka wewnętrzna „Słowników”: "lib" | "cat" | "dev"
+  dictSheet: false,    // arkusz „Dodaj słownik” (katalog), TASK-58
   dictQ: "", dictIn: "", dictOut: "", dictOrigin: "", dictOnly: false, // filtry katalogu
   dictShown: 50,       // ile wierszy katalogu jest narysowanych („Pokaż więcej”)
   dictPick: new Set(), // zaznaczone w katalogu (id) — „Pobierz zaznaczone”, TASK-58
@@ -4820,7 +4820,6 @@ function fontsTab() {
 // Logika bez DOM (filtry, stan czytnika, postęp) jest w web/dicts.js.
 
 const DICT_SRC = { upload: "wgrany z panelu", "katalog": "z katalogu KOReadera" };
-const DICT_VIEWS = [["lib", "Biblioteka"], ["cat", "Katalog"], ["dev", "Czytniki"]];
 const DICT_PAGE = 50;
 const DICT_ARCHIVE = /\.(zip|tar|tgz|tar\.gz|tar\.bz2|tar\.zst)$/i;
 
@@ -4936,12 +4935,12 @@ async function deleteDict(d) {
 // pobierania z postępem, błędy zadań i ostatni komunikat (S.dictMsg — pamiętany tylko w tej karcie przeglądarki).
 // Brak „Anuluj”: serwer nie umie przerwać pobierania. Kolejka serwera (po dwa naraz) nie odróżnia czekających
 // od aktywnych — wszystkie mają stan „pobieranie”.
-function dictJobBar() {
+function dictJobBar(inSheet) {
   const jobs = Object.entries(S.dictJobs || {}), cat = S.dictCat || [];
   const nameOf = id => (cat.find(c => c.id === id) || {}).name || id;
   const run = jobs.filter(([, j]) => j.state !== "błąd"), bad = jobs.filter(([, j]) => j.state === "błąd");
   if (!run.length && !bad.length && !S.dictMsg) return null;
-  return h("div", { class: "djobs", id: "dict-jobs", role: "status" },
+  return h("div", { class: "djobs", id: inSheet ? "dict-jobs-sheet" : "dict-jobs", role: "status" },
     run.length > 0 && h("div", {}, h("b", {}, "⬇ Pobieranie"), ` — ${run.length} ${plPl(run.length, "słownik", "słowniki", "słowników")}`),
     run.slice(0, 3).map(([id, j]) => h("div", { class: "small djob" },
       j.state === "pobieranie" && j.total > 0 && h("progress", { max: j.total, value: j.done, "aria-label": `Pobieranie: ${nameOf(id)}` }),
@@ -4949,7 +4948,7 @@ function dictJobBar() {
     run.length > 3 && h("div", { class: "muted small" }, `i ${run.length - 3} ${plPl(run.length - 3, "inny", "inne", "innych")}`),
     bad.map(([id, j]) => h("div", { class: "err small", role: "alert" }, `Nie udało się: ${nameOf(id)} — ${j.error}`)),
     S.dictMsg && h("div", { class: "row" },
-      h("span", { class: S.dictMsg.ok ? "ok" : "err" }, (S.dictMsg.ok ? "✓ Ostatnio: " : "") + S.dictMsg.text),
+      h("span", { class: S.dictMsg.ok ? "ok" : "err" }, (S.dictMsg.ok ? "✓ " : "") + S.dictMsg.text),
       h("button", { type: "button", class: "linkbtn", onclick: () => { S.dictMsg = null; render(); } }, "Ukryj")));
 }
 
@@ -4965,40 +4964,26 @@ function dictTiles(dicts, active) {
     tile(devs.length ? `${ok} z ${devs.length}` : "0", devs.length ? plPl(devs.length, "czytnik ze zgodą", "czytniki ze zgodą", "czytników ze zgodą") : "czytników"));
 }
 
-function showDictView(id) { S.dictView = id; render(); document.getElementById("dicttab-" + id)?.focus(); }
-function dictTablist(cur, counts) {
-  return h("div", { class: "tabs", role: "tablist", "aria-label": "Słowniki" },
-    DICT_VIEWS.map(([id, label], i) => h("button", {
-      type: "button", role: "tab", id: "dicttab-" + id, "aria-selected": String(cur === id),
-      "aria-controls": "dictpanel", tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
-      onclick: () => showDictView(id),
-      onkeydown: ev => {
-        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
-        if (d == null && !home && !end) return;
-        ev.preventDefault();
-        showDictView(DICT_VIEWS[home ? 0 : end ? DICT_VIEWS.length - 1 : (i + d + DICT_VIEWS.length) % DICT_VIEWS.length][0]);
-      },
-    }, label, counts[id] != null && ` (${counts[id]})`)));
-}
-
-function dictDropzone() {
+// Wgrywanie własnego słownika (TASK-58): ostatni wiersz listy w panelu, nie karta nad nią — wgrywa się rzadko,
+// a pobiera z katalogu. Nazwa katalogu na czytniku i opis formatów są w rozwijanym „Nazwa i formaty”.
+function dictUploadRow() {
   const over = (ev, on) => { ev.preventDefault(); ev.currentTarget.classList.toggle("over", on); };
-  return h("section", { class: "card" },
-    h("h3", { style: "margin-top:0" }, "Wgraj słownik"),
-    h("div", { class: "dropzone", id: "f-dict-drop",
-      ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
-      ondrop: ev => { over(ev, false); uploadDicts(ev.dataTransfer.files); } },
-      h("p", {}, h("b", {}, S.dictBusy ? "Wgrywam…" : "Przeciągnij tu archiwum słownika albo jego pliki")),
-      h("p", { class: "muted small" }, "albo"),
-      h("button", { type: "button", class: "primary", id: "b-dict-pick", disabled: S.dictBusy, onclick: () => document.getElementById("f-dict-files").click() }, "Wybierz pliki…"),
+  return h("div", { class: "dropzone dzrow", id: "f-dict-drop",
+    ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
+    ondrop: ev => { over(ev, false); uploadDicts(ev.dataTransfer.files); } },
+    h("div", { class: "row", style: "justify-content:center" },
+      h("b", {}, S.dictBusy ? "Wgrywam…" : "＋ Upuść tu archiwum słownika albo jego pliki"),
+      h("button", { type: "button", id: "b-dict-pick", disabled: S.dictBusy, onclick: () => document.getElementById("f-dict-files").click() }, "Wybierz pliki…"),
       h("input", { type: "file", id: "f-dict-files", multiple: true, hidden: true, "aria-label": "Pliki słownika",
         accept: ".zip,.tar,.tgz,.gz,.bz2,.zst,.ifo,.idx,.dict,.dz,.syn,.css",
         onchange: ev => uploadDicts(ev.target.files) })),
-    h("label", { class: "field", style: "margin:10px 0 0" },
-      h("span", {}, "Nazwa katalogu na czytniku (opcjonalnie)"),
-      h("input", { type: "text", id: "f-dict-name", maxlength: 96, placeholder: "domyślnie z nazwy pliku", style: "max-width:26em" })),
-    h("p", { class: "muted small", style: "margin-bottom:0" }, "Archiwum zip, tar.gz, tar.bz2 albo tar.zst jednego słownika (do 300 MB) albo luźne pliki StarDict: .ifo, .idx, .dict.dz (i .syn). Pliki spoza słownika, w tym .lua, są pomijane. ",
-      h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")));
+    h("details", { class: "small dzdet" },
+      h("summary", {}, "Nazwa i formaty"),
+      h("label", { class: "field", style: "margin:8px 0 0" },
+        h("span", {}, "Nazwa katalogu na czytniku (opcjonalnie)"),
+        h("input", { type: "text", id: "f-dict-name", maxlength: 96, placeholder: "domyślnie z nazwy pliku", style: "max-width:26em" })),
+      h("p", { class: "muted small", style: "margin-bottom:0" }, "Archiwum zip, tar.gz, tar.bz2 albo tar.zst jednego słownika (do 300 MB) albo luźne pliki StarDict: .ifo, .idx, .dict.dz (i .syn). Pliki spoza słownika, w tym .lua, są pomijane. ",
+        h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›"))));
 }
 
 function dictRow(d) {
@@ -5013,15 +4998,14 @@ function dictRow(d) {
     h("button", { type: "button", class: "danger", onclick: () => deleteDict(d) }, "Usuń"));
 }
 
-function dictLibraryPane(dicts) {
+function dictLibrary(dicts) {
   const list = [...dicts].sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, "pl"));
-  return [
-    dictDropzone(),
-    h("section", { class: "card" },
-      h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
-      list.length === 0
-        ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Wgraj plik albo pobierz słownik z katalogu.")
-        : h("ul", { class: "plain" }, list.map(dictRow)))];
+  return h("section", { class: "card", id: "dict-library" },
+    h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
+    list.length === 0
+      ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Pobierz słownik z katalogu („＋ Dodaj słownik”) albo wgraj plik poniżej.")
+      : h("ul", { class: "plain" }, list.map(dictRow)),
+    dictUploadRow());
 }
 
 function dictCatalogRow(c, have, job) {
@@ -5072,7 +5056,7 @@ function dictFilterBar(cat) {
       "tylko pobrane"));
 }
 
-function dictCatalogPane() {
+function dictCatalogPane(inSheet) {
   const cat = S.dictCat;
   if (!cat) return h("p", { class: "loading" }, "Wczytuję katalog…");
   const haveIds = new Set((S.dicts || []).filter(d => d.source === "katalog").map(d => d.source_ref));
@@ -5083,8 +5067,8 @@ function dictCatalogPane() {
   const shown = hits.slice(0, S.dictShown);
   const picks = cat.filter(c => S.dictPick.has(c.id) && !(S.dictJobs[c.id] && S.dictJobs[c.id].state !== "błąd"));
   const langs = new Set(); for (const c of cat) { langs.add(c.lang_in); langs.add(c.lang_out); }
-  return h("section", { class: "card" },
-    h("h3", { style: "margin-top:0" }, "Katalog słowników"),
+  return h(inSheet ? "div" : "section", { class: inSheet ? "" : "card" },
+    !inSheet && h("h3", { style: "margin-top:0" }, "Katalog słowników"),
     h("p", { class: "muted small", style: "margin-top:0" }, "Lista pochodzi z KOReadera; pliki pobiera Twój serwer w chwili kliknięcia — wersje „latest” mogą się zmienić; serwer sprawdza format i nie instaluje plików .lua ani innych spoza słownika. ",
       h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")),
     dictFilterBar(cat),
@@ -5144,16 +5128,32 @@ function dictDevicesBlock(active) {
           `Bez zgody: ${noc.map(d => d.name).join(", ")}. Zgodę daje się na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki.`)]);
 }
 
+// Arkusz „Dodaj słownik” (TASK-58): katalog z filtrami i wyborem wielu słowników; pasek zadań widać też w nim,
+// bo arkusz zasłania stronę, a pobieranie startuje właśnie stąd. Zostaje otwarty po „Pobierz zaznaczone”.
+function openDictSheet() { S.dictSheet = true; render(); document.getElementById("f-dictq")?.focus(); }
+function closeDictSheet() { S.dictSheet = false; render(); document.getElementById("b-dict-add")?.focus(); }
+function dictSheet() {
+  const bar = dictJobBar(true);
+  return h("div", { class: "sheet-back", onmousedown: ev => { if (ev.target === ev.currentTarget) closeDictSheet(); } },
+    h("div", { class: "sheet addsheet tall", role: "dialog", "aria-modal": "true", "aria-labelledby": "dsheet-title" },
+      h("header", { class: "sheet-head" },
+        h("h2", { id: "dsheet-title" }, "Dodaj słownik"),
+        h("button", { type: "button", id: "dsh-close", "aria-label": "Zamknij", onclick: closeDictSheet }, "×")),
+      bar && h("div", { class: "sheet-src" }, bar),
+      h("div", { class: "sheet-body" }, dictCatalogPane(true))));
+}
+
 function dictsTab() {
   const dicts = S.dicts || [];
   const active = dicts.filter(d => d.active && d.approved);
-  const cur = DICT_VIEWS.some(([id]) => id === S.dictView) ? S.dictView : "lib";
-  const body = cur === "lib" ? dictLibraryPane(dicts) : cur === "cat" ? dictCatalogPane() : dictDevicesBlock(active);
   return h("div", {},
     dictTiles(dicts, active),
-    dictJobBar(),
-    dictTablist(cur, { lib: dicts.length, dev: S.state.devices.length }),
-    h("div", { id: "dictpanel", role: "tabpanel", "aria-labelledby": "dicttab-" + cur }, body));
+    dictJobBar(false),
+    h("div", { class: "row", style: "margin:0 0 14px" },
+      h("button", { type: "button", class: "primary", id: "b-dict-add", onclick: openDictSheet }, "＋ Dodaj słownik")),
+    dictLibrary(dicts),
+    dictDevicesBlock(active),
+    S.dictSheet && dictSheet());
 }
 
 const TABS = VIEWS.map(v => v[0]);
@@ -5162,7 +5162,7 @@ function showTab(id) {
   const changed = S.tab !== id;
   S.tab = id;
   history.replaceState(null, "", "#" + id);
-  if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; }
+  if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; S.dictSheet = false; }
   if (id === "konta" || id === "wtyczki" || id === "czcionki" || id === "slowniki") return refresh();
   render();
 }
@@ -5182,8 +5182,9 @@ document.addEventListener("keydown", ev => {
     showTab(TABS[digit[1] - 1]);
     return;
   }
-  if (S.addSheet && S.tab === "wtyczki") {
-    if (ev.key === "Escape" && !S.addSheet.busy) { ev.preventDefault(); closeAddSheet(); return; }
+  const dsheet = S.dictSheet && S.tab === "slowniki";
+  if (dsheet || (S.addSheet && S.tab === "wtyczki")) {
+    if (ev.key === "Escape" && (dsheet || !S.addSheet.busy)) { ev.preventDefault(); if (dsheet) closeDictSheet(); else closeAddSheet(); return; }
     if (ev.key === "Tab") {
       const sheet = document.querySelector(".sheet");
       const f = sheet ? [...sheet.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]')] : [];
