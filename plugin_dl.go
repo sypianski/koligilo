@@ -76,15 +76,21 @@ func selfUpdateInfo() map[string]any {
 	if err != nil {
 		return nil
 	}
-	meta, err := pluginFS.ReadFile("plugin/koligilo.koplugin/_meta.lua")
-	if err != nil {
-		return nil
-	}
-	ver := parsePluginMeta(string(meta)).Version
+	ver := embeddedPluginVersion()
 	if ver == "" {
 		return nil
 	}
 	return map[string]any{"version": ver, "sha256": sha, "size": len(b), "url": "/koligilo.koplugin.zip"}
+}
+
+// embeddedPluginVersion to wersja z _meta.lua wbudowanego pluginu ("" gdy nieczytelna).
+// Panel porównuje z nią wersje pluginów na czytnikach (TASK-49).
+func embeddedPluginVersion() string {
+	meta, err := pluginFS.ReadFile("plugin/koligilo.koplugin/_meta.lua")
+	if err != nil {
+		return ""
+	}
+	return parsePluginMeta(string(meta)).Version
 }
 
 func servePluginZip(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,11 @@ type Device struct {
 	FontInventory []InstalledFont `json:"font_inventory,omitempty"`
 	FontReportAt  *time.Time      `json:"font_report_at,omitempty"`
 	FontsOff      []string        `json:"fonts_off,omitempty"` // rodziny wyłączone dla tego czytnika (TASK-38); domyślnie wszystkie włączone
+
+	// Wtyczka koligilo na czytniku (TASK-49). Oba pola zgłasza wyłącznie czytnik przy
+	// synchronizacji; SelfUpdateAllowed to zgoda z menu (PC-019), panel jej nie ustawia.
+	PluginVersion     string `json:"plugin_version,omitempty"`
+	SelfUpdateAllowed bool   `json:"self_update_allowed"`
 }
 
 // Screen to ekran czytnika widziany przez KOReadera (piksele i ppi). Panel buduje
@@ -86,6 +92,24 @@ func (st *Store) SetScreen(d *Device, s *Screen) error {
 	}
 	c := *s
 	d.Screen = &c
+	return st.saveLocked()
+}
+
+var pluginVersionRe = regexp.MustCompile(`^\d{1,4}\.\d{1,5}\.\d{1,6}$`)
+
+// SetPluginInfo zapamiętuje wersję wtyczki koligilo i zgodę na jej samoaktualizację,
+// zgłoszone przez czytnik. Dane są niezaufane: zły format wersji = puste pole, a stary
+// plugin bez parametrów zeruje oba pola (nigdy nie psuje stanu).
+func (st *Store) SetPluginInfo(d *Device, version string, selfUpdate bool) error {
+	if !pluginVersionRe.MatchString(version) {
+		version = ""
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if d.PluginVersion == version && d.SelfUpdateAllowed == selfUpdate {
+		return nil
+	}
+	d.PluginVersion, d.SelfUpdateAllowed = version, selfUpdate
 	return st.saveLocked()
 }
 

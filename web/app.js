@@ -997,6 +997,33 @@ function healthCell(d) {
   return h("span", { class: "hcell", title: x.title }, h("span", { class: "hdot " + x.k, "aria-hidden": "true" }), h("span", { class: "hword " + x.k }, x.text));
 }
 
+// TASK-49: wersja wtyczki koligilo na czytniku. Porównanie liczbowe po X.Y.Z (0.10.0 > 0.9.9),
+// nie tekstowe; nierozpoznany numer nie jest uznawany za starszy.
+function verParts(v) {
+  const m = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})$/.exec(v || "");
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+function verOlder(a, b) {
+  const x = verParts(a), y = verParts(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
+// Zgoda na samoaktualizację pochodzi tylko z menu czytnika (PC-019) — panel jej nie ustawia, więc tu wyłącznie opis.
+function pluginCell(d) {
+  const cur = S.state?.server_plugin_version, v = d.plugin_version;
+  const allowed = !!d.self_update_allowed;
+  const consent = h("span", {
+    class: "muted small", style: "display:block",
+    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → „Pozwól aktualizować koligilo”.",
+  }, allowed ? "aktualizacja: pozwolona na czytniku" : "aktualizacja: niepozwolona na czytniku");
+  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent);
+  const old = verOlder(v, cur);
+  return h("span", {},
+    v, old && h("span", { class: "badge warn", title: `Na serwerze jest wersja ${cur}.` }, "nieaktualna"),
+    consent);
+}
+
 // TASK-29: urządzenia jako tabela — łatwo porównać wersje KOReadera i kiedy kto się synchronizował.
 // W wąskim oknie (≤ 620 px) wiersz rozpada się na „kartę” z etykietami (labelCells, jak tabele wtyczek).
 // Zmiana nazwy i „Zapomnij” otwierają pasek pod wierszem (S.devEdit), a nie systemowe okno:
@@ -1010,7 +1037,7 @@ function devicesTable(devs) {
   const th = t => h("th", { scope: "col" }, t);
   return h("div", { class: "card matrix-wrap", style: "margin-bottom:var(--card-gap);padding:0" },
     labelCells(h("table", { class: "matrix devtable", "aria-label": "Urządzenia" },
-      h("thead", {}, h("tr", {}, th("Nazwa"), th("Platforma · model"), th("KOReader"), th("Ostatnia synchronizacja"), th("Wysłał / pobrał"),
+      h("thead", {}, h("tr", {}, th("Nazwa"), th("Platforma · model"), th("KOReader"), th("Wtyczka"), th("Ostatnia synchronizacja"), th("Wysłał / pobrał"),
         h("th", { scope: "col" }, h("span", { class: "sr" }, "Akcje")))),
       h("tbody", {}, rows))));
 }
@@ -1025,6 +1052,7 @@ function deviceRow(d) {
     h("td", {}, h("b", { class: "dn" }, d.name)),
     h("td", { class: "muted" }, [d.platform, d.model].filter(Boolean).join(" · ") || "?"),
     h("td", {}, d.ko_version || "?"),
+    h("td", {}, pluginCell(d)),
     h("td", {}, healthCell(d)),
     h("td", {}, ls ? `${ls.sent} / ${ls.received}` : "—"),
     h("td", {}, h("div", { class: "dact" }, act("rename", "Zmień nazwę", ""), act("forget", "Zapomnij", "danger"))));
@@ -1035,7 +1063,7 @@ function deviceEditRow(d) {
   const cancel = h("button", { type: "button", id: "f-devcancel", onclick: devEditCancel }, "Anuluj");
   const onkey = ev => { if (ev.key === "Escape") { ev.preventDefault(); devEditCancel(); } };
   if (E.mode === "rename") {
-    return h("tr", { class: "x" }, h("td", { colspan: "6", onkeydown: onkey },
+    return h("tr", { class: "x" }, h("td", { colspan: "7", onkeydown: onkey },
       h("form", { class: "row", onsubmit: ev => { ev.preventDefault(); devRenameSave(d); } },
         h("label", { for: "f-devname", class: "dlabel" }, "Nowa nazwa (np. „Kobo w sypialni”)"),
         h("input", { type: "text", id: "f-devname", value: E.name, autocomplete: "off", style: "max-width:300px",
@@ -1044,7 +1072,7 @@ function deviceEditRow(d) {
         cancel,
         E.error && h("span", { class: "err", role: "alert" }, E.error))));
   }
-  return h("tr", { class: "x" }, h("td", { colspan: "6", onkeydown: onkey },
+  return h("tr", { class: "x" }, h("td", { colspan: "7", onkeydown: onkey },
     h("div", { class: "row" },
       h("div", { style: "flex:1;min-width:240px" }, h("b", {}, `Zapomnieć „${d.name}”?`), " ",
         "Urządzenie przestanie się synchronizować. Jego ustawienia zostaną takie, jakie są. Żeby je znowu połączyć, trzeba będzie sparować je od nowa."),

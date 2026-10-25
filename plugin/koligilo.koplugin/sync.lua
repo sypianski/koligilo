@@ -757,6 +757,15 @@ function Sync.versionNewer(new, cur)
     return false
 end
 
+--- Czy po wybudzeniu urządzenia warto po cichu zsynchronizować (TASK-44). Wszystkie
+-- warunki naraz: sparowany, auto_sync włączone, sieć JUŻ jest (nigdy nie włączamy Wi-Fi),
+-- była już jakaś synchronizacja (pierwsza tylko ręcznie) i minął próg od ostatniej.
+function Sync.shouldSyncOnResume(paired, auto_sync, online, last_sync, now, min_interval)
+    if not paired or not auto_sync or not online then return false end
+    if type(last_sync) ~= "number" or type(now) ~= "number" then return false end
+    return now - last_sync >= (min_interval or 0)
+end
+
 --- Wskazanie aktualizacji od serwera (remote.self_update) → {version, sha256, url,
 -- size} albo nil. Drugi wynik: powód, gdy wskazanie jest wadliwe (nil bez powodu =
 -- wszystko w porządku, tylko nie ma nic nowszego).

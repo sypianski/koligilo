@@ -72,3 +72,58 @@ func TestVersionMatchesPluginMeta(t *testing.T) {
 		t.Errorf("_meta.lua: %v, main.go Version: %s — podbij oba naraz", info["version"], Version)
 	}
 }
+
+// TASK-49: czytnik zgłasza wersję wtyczki i zgodę na samoaktualizację; panel dostaje je
+// w state razem z wersją wtyczki wbudowanej w serwer.
+func TestPluginVersionReported(t *testing.T) {
+	e := newPluginEnv(t)
+	d, tok, _ := e.s.st.Provision("Kobo", "", "", "")
+	state := func() (map[string]any, map[string]any) {
+		rec := e.do(e.admin, "GET", "/api/admin/state", nil, "")
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		devs, _ := out["devices"].([]any)
+		if len(devs) != 1 {
+			t.Fatalf("urządzenia: %v", out["devices"])
+		}
+		return out, devs[0].(map[string]any)
+	}
+	sync := func(q string) {
+		if rec := e.do(tok, "GET", "/api/v1/sync"+q, nil, ""); rec.Code != 200 {
+			t.Fatalf("sync%s: %d", q, rec.Code)
+		}
+	}
+
+	// stary plugin: bez parametrów — pola puste, nic się nie psuje
+	sync("")
+	out, dev := state()
+	if _, has := dev["plugin_version"]; has || dev["self_update_allowed"] != false {
+		t.Errorf("bez parametrów: %v", dev)
+	}
+	// AC2: wersja wbudowanego pluginu = _meta.lua (= Version, pilnuje TestVersionMatchesPluginMeta)
+	if out["server_plugin_version"] != selfUpdateInfo()["version"] || out["server_plugin_version"] == "" {
+		t.Errorf("server_plugin_version: %v", out["server_plugin_version"])
+	}
+
+	sync("?plugin_version=0.8.1&self_update=1")
+	_, dev = state()
+	if dev["plugin_version"] != "0.8.1" || dev["self_update_allowed"] != true {
+		t.Errorf("z parametrami: %v", dev)
+	}
+	if !e.s.st.S.Devices[d.ID].SelfUpdateAllowed {
+		t.Error("zgoda nie zapamiętana")
+	}
+	// wersja bez zgody: zgoda cofnięta
+	sync("?plugin_version=0.10.0")
+	_, dev = state()
+	if dev["plugin_version"] != "0.10.0" || dev["self_update_allowed"] != false {
+		t.Errorf("cofnięta zgoda: %v", dev)
+	}
+	// dane z czytnika są niezaufane: zły format = puste pole
+	for _, bad := range []string{"1.2", "1.2.3.4", "abc", "1.2.3-beta", "12345.1.1", "1.2.3%0A", "%3Cscript%3E"} {
+		sync("?plugin_version=" + bad)
+		if _, dev = state(); dev["plugin_version"] != nil {
+			t.Errorf("zła wersja %q przyjęta: %v", bad, dev["plugin_version"])
+		}
+	}
+}

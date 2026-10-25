@@ -155,6 +155,10 @@ func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := s.st.SetPluginInfo(d, r.URL.Query().Get("plugin_version"), r.URL.Query().Get("self_update") == "1"); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
 	entries := []Entry{}
 	groups := []string{}
 	for _, g := range Catalog {
@@ -281,18 +285,19 @@ func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 	s.st.mu.Unlock()
 	sort.Slice(vals, func(i, j int) bool { return vals[i].ID < vals[j].ID })
 	writeJSON(w, 200, map[string]any{
-		"version":        Version,
-		"public_url":     s.public(),
-		"moved_to":       s.st.MovedTo(),
-		"devices":        devs,
-		"pending":        s.st.Pending(),
-		"catalog":        Catalog,
-		"categories":     Categories,
-		"never":          NeverSynced,
-		"values":         vals,
-		"favorites":      s.st.Favorites(),
-		"shared_plugins": s.st.SharedPluginList(),
-		"fonts":          s.st.ListFonts(),
+		"version":               Version,
+		"server_plugin_version": embeddedPluginVersion(),
+		"public_url":            s.public(),
+		"moved_to":              s.st.MovedTo(),
+		"devices":               devs,
+		"pending":               s.st.Pending(),
+		"catalog":               Catalog,
+		"categories":            Categories,
+		"never":                 NeverSynced,
+		"values":                vals,
+		"favorites":             s.st.Favorites(),
+		"shared_plugins":        s.st.SharedPluginList(),
+		"fonts":                 s.st.ListFonts(),
 	})
 }
 

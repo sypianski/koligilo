@@ -27,6 +27,7 @@ local shown = {}
 local function widget(kind) return { new = function(_, o) o.kind = kind; return o end } end
 local served = {} -- url → treść ZIP-a
 local broadcast, broadcast_fail = {}, false
+local scheduled = {} -- UIManager:scheduleIn: { secs, f }
 local P = package.preload
 P["ui/event"] = function() return { new = function(_, name) return { name = name } end } end
 P["ui/widget/confirmbox"] = function() return widget("confirm") end
@@ -36,11 +37,12 @@ P["datastorage"] = function() return { getDataDir = function() return DATA end, 
 P["device"] = function() return { model = "Test" } end
 P["json"] = function() return { encode = function() return "{}" end, decode = function() return {} end } end
 P["luasettings"] = function() return {} end
-P["ui/network/manager"] = function() return { runWhenOnline = function(_, f) f() end } end
+local online = true
+P["ui/network/manager"] = function() return { runWhenOnline = function(_, f) f() end, isOnline = function() return online end } end
 P["ui/uimanager"] = function() return {
     show = function(_, w) shown[#shown + 1] = w end, close = function() end, forceRePaint = function() end,
     broadcastEvent = function(_, e) if broadcast_fail then error("boom") end; broadcast[#broadcast + 1] = e.name end,
-    scheduleIn = function() end, askForRestart = function(_, t) shown[#shown + 1] = { kind = "restart", text = t } end,
+    scheduleIn = function(_, secs, f) scheduled[#scheduled + 1] = { secs = secs, f = f } end, askForRestart = function(_, t) shown[#shown + 1] = { kind = "restart", text = t } end,
 } end
 P["ui/widget/container/widgetcontainer"] = function() return { extend = function(_, o) return o end } end
 P["socket.http"] = function() return { request = function(req)
@@ -131,6 +133,7 @@ local K = setmetatable({ settings = {
     saveSetting = function(_, k, v) settings_data[k] = v end,
     delSetting = function(_, k) settings_data[k] = nil end,
     flush = function() end, isTrue = function(_, k) return settings_data[k] == true end,
+    nilOrTrue = function(_, k) return settings_data[k] == nil or settings_data[k] == true end,
 } }, { __index = Koligilo })
 
 ---------------------------------------------------------------- ZIP-y testowe
@@ -479,6 +482,35 @@ K:mergeSharedData(0)
 check("merge: za zgodą — statystyki i słowniczek, po kolei", #broadcast == 2 and broadcast[1] == "SyncBookStats" and broadcast[2] == "SyncVocabBuilder")
 broadcast_fail = true
 check("merge: wyjątek w cudzej wtyczce nie wychodzi na zewnątrz", pcall(K.mergeSharedData, K, 0))
+
+-- cicha synchronizacja po wybudzeniu (TASK-44)
+local synced = 0
+K.sync = function(_, silent) if silent then synced = synced + 1 end end
+local function resume_scheduled() local n = #scheduled; K:onResume(); return #scheduled - n end
+settings_data.last_sync, settings_data.auto_sync, online = nil, nil, true
+check("resume: bez last_sync nic nie planuje", resume_scheduled() == 0)
+settings_data.last_sync = os.time() - 60
+check("resume: przed progiem nic nie planuje", resume_scheduled() == 0)
+settings_data.last_sync = os.time() - 3600
+online = false
+check("resume: bez sieci nic nie planuje (i nie włącza Wi-Fi)", resume_scheduled() == 0)
+online = true
+settings_data.auto_sync = false
+check("resume: auto_sync wyłączone — nic nie planuje", resume_scheduled() == 0)
+settings_data.auto_sync = nil
+local tok = settings_data.token; settings_data.token = nil
+check("resume: niesparowany — nic nie planuje", resume_scheduled() == 0)
+settings_data.token = tok
+check("resume: spełnione warunki planują jedno wywołanie z opóźnieniem", resume_scheduled() == 1 and scheduled[#scheduled].secs > 0)
+check("resume: kolejne wybudzenie w oczekiwaniu nie dubluje", resume_scheduled() == 0)
+online = false
+scheduled[#scheduled].f()
+check("resume: po zwłoce bez sieci synchronizacja nie rusza", synced == 0)
+online = true
+check("resume: po zwłoce znów można zaplanować", resume_scheduled() == 1)
+scheduled[#scheduled].f()
+check("resume: po zwłoce cicha synchronizacja", synced == 1)
+K.sync = nil
 
 sh("rm -rf " .. q(TMP))
 print(string.format("%d ok, %d fail", passed, failed))

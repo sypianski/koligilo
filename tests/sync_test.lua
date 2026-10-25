@@ -391,5 +391,14 @@ check("merge: za zgodą i bez zmian — statystyki i słowniczek",
     deep_eq(Sync.mergeEvents(true, 0), { "SyncBookStats", "SyncVocabBuilder" }) and #Sync.mergeEvents(true, nil) == 2)
 check("merge: po zmianie ustawień czeka na restart", #Sync.mergeEvents(true, 3) == 0)
 
+-- cicha synchronizacja po wybudzeniu (TASK-44) -----------------------------------
+local R = Sync.shouldSyncOnResume
+check("resume: wszystko gra, próg dokładnie osiągnięty", R(true, true, true, 1000, 1900, 900) == true)
+check("resume: o sekundę przed progiem", R(true, true, true, 1000, 1899, 900) == false)
+check("resume: brak last_sync (pierwsza synchronizacja tylko ręcznie)", R(true, true, true, nil, 5000, 900) == false)
+check("resume: brak sieci", R(true, true, false, 1000, 9000, 900) == false)
+check("resume: auto_sync wyłączone", R(true, false, true, 1000, 9000, 900) == false)
+check("resume: niesparowany", R(false, true, true, 1000, 9000, 900) == false)
+
 print(string.format("%d ok, %d fail", passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -35,6 +35,7 @@ local DISCOVERY_PORT = 47470
 -- kluczem "rendezvous" w settings/koligilo.lua (np. własny serwer).
 local DEFAULT_RENDEZVOUS = "https://koligilo.sypian.ski"
 local AUTO_SYNC_MIN_INTERVAL = 15 * 60 -- s, auto-sync po Wi-Fi nie częściej
+local RESUME_SYNC_DELAY = 8 -- s, po wybudzeniu sieć bywa jeszcze niestabilna
 local PLUGIN_MAX_ZIP = 25 * 1024 * 1024       -- serwer przyjmuje do 20 MB
 local PLUGIN_MAX_UNPACKED = 100 * 1024 * 1024 -- jak pluginMaxUnpacked w Go
 local PLUGIN_MAX_FILES = 5000
@@ -1397,6 +1398,8 @@ function Koligilo:sync(silent, after_move)
     if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
     local self_update_allowed = self.settings:isTrue("self_update_allowed")
     if self_update_allowed then query[#query + 1] = "self_update=1" end
+    -- wersja wtyczki: panel pokaże czytnik ze starą wtyczką (TASK-49); tylko poprawny X.Y.Z
+    if Sync.versionParse(self.selfVersion) then query[#query + 1] = "plugin_version=" .. self.selfVersion end
     -- ekran: żeby panel mógł pokazać podgląd strony także dla modelu, którego nie zna
     local ok_screen, screen = pcall(function()
         local scr = Device.screen
@@ -1571,6 +1574,23 @@ function Koligilo:onNetworkConnected()
     if os.time() - last < AUTO_SYNC_MIN_INTERVAL then return end
     -- chwila oddechu: sieć dopiero wstała, inne pluginy też się synchronizują
     UIManager:scheduleIn(5, function() self:sync(true) end)
+end
+
+-- Cicha synchronizacja po wybudzeniu (TASK-44): tylko gdy sieć JUŻ jest — nigdy nie
+-- włączamy Wi-Fi ani nie otwieramy okien (poza oknem podejrzanej synchronizacji).
+function Koligilo:shouldResumeSync()
+    return Sync.shouldSyncOnResume(self:isPaired(), self.settings:nilOrTrue("auto_sync"), NetworkMgr:isOnline(),
+        self.settings:readSetting("last_sync"), os.time(), AUTO_SYNC_MIN_INTERVAL)
+end
+
+function Koligilo:onResume()
+    if self._resume_pending or not self:shouldResumeSync() then return end
+    self._resume_pending = true
+    UIManager:scheduleIn(RESUME_SYNC_DELAY, function()
+        self._resume_pending = false
+        -- po zwłoce decyzja od nowa: sieć mogła zniknąć, a onNetworkConnected zdążyć z synchronizacją
+        if self:shouldResumeSync() then self:sync(true) end
+    end)
 end
 
 return Koligilo
