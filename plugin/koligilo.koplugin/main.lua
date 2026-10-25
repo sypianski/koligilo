@@ -286,6 +286,30 @@ function Koligilo:addToMainMenu(menu_items)
                         })
                     end,
                 })
+                -- Scalanie wspólnych baz (TASK-42): koligilo tylko wysyła KOReaderowi zdarzenia
+                -- „synchronizuj statystyki/słowniczek”; konto i folder ustawia się w panelu, a bez
+                -- nich zdarzenia nic nie robią. Zgoda stąd, bo to wysyła dane czytania do chmury.
+                table.insert(items, {
+                    text = _("Scalaj statystyki i słowniczek po synchronizacji"),
+                    checked_func = function() return self.settings:isTrue("merge_after_sync") end,
+                    keep_menu_open = true,
+                    callback = function(touchmenu_instance)
+                        if self.settings:isTrue("merge_after_sync") then
+                            self.settings:delSetting("merge_after_sync")
+                            self.settings:flush()
+                            return
+                        end
+                        UIManager:show(ConfirmBox:new{
+                            text = _("Po każdej synchronizacji koligilo scalać też statystyki czytania i słowniczek ze wspólną bazą na koncie w chmurze (Statystyki czytania → Synchronizacja w chmurze oraz Kreator słownictwa → Synchronizacja w chmurze)?\n\nDziała tylko tam, gdzie konto i folder są ustawione (w panelu koligilo albo w KOReaderze). Scalanie jest ciche i nie przerywa czytania; koligilo nic nie wysyła samo — robi to wbudowana synchronizacja KOReadera."),
+                            ok_text = _("Włącz"),
+                            ok_callback = function()
+                                self.settings:makeTrue("merge_after_sync")
+                                self.settings:flush()
+                                if touchmenu_instance then touchmenu_instance:updateItems() end
+                            end,
+                        })
+                    end,
+                })
                 table.insert(items, {
                     text = _("Wyślij czcionkę na serwer…"),
                     sub_item_table_func = function() return self:sendFontMenu() end,
@@ -1512,6 +1536,9 @@ function Koligilo:sync(silent, after_move)
         if font_res.deferred > 0 then font_text = font_text .. " " .. T(_("Kolejne (%1) pobiorą się przy następnej synchronizacji."), font_res.deferred) end
         if #font_res.failures > 0 then font_text = font_text .. "\n\n" .. _("Nie udało się:") .. "\n" .. table.concat(font_res.failures, "\n") end
     end
+    -- Wspólne bazy (statystyki, słowniczek): zdarzenia bez argumentu = ciche scalanie KOReadera.
+    self:mergeSharedData(changed)
+
     if changed > 0 then
         UIManager:askForRestart(T(_("koligilo pobrał %1 zmienionych ustawień z innych urządzeń. KOReader musi się uruchomić ponownie, aby je zastosować."), changed)
             .. (font_text and ("\n\n" .. font_text) or ""))
@@ -1522,6 +1549,17 @@ function Koligilo:sync(silent, after_move)
             or _("Wszystko aktualne — nic do wysłania ani pobrania.")
         if skipped > 0 then text = text .. "\n\n" .. T(_("Pominięto %1 ustawień, których nie da się przenieść (szczegóły w crash.log)."), skipped) end
         UIManager:show(InfoMessage:new{ text = text, timeout = 4 })
+    end
+end
+
+-- Wyjątek w cudzej wtyczce (statystyki, słowniczek) nie może zepsuć synchronizacji.
+function Koligilo:mergeSharedData(changed)
+    local events = Sync.mergeEvents(self.settings:isTrue("merge_after_sync"), changed)
+    if #events == 0 then return end
+    local Event = require("ui/event")
+    for _i, name in ipairs(events) do
+        local ok, err = pcall(function() UIManager:broadcastEvent(Event:new(name)) end)
+        if not ok then logger.warn("koligilo: scalanie " .. name, err) end
     end
 end
 

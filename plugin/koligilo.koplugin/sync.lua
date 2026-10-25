@@ -791,4 +791,15 @@ function Sync.screenParam(w, h, dpi, color)
     return string.format("%dx%d@%d%s", w, h, dpi, color and ",c" or "")
 end
 
+--- Zdarzenia KOReadera, którymi po synchronizacji koligilo scala się wspólne bazy
+--- (statystyki czytania i słowniczek). Wysłane BEZ argumentu uruchamiają ciche scalanie
+--- (statistics.koplugin / vocabbuilder.koplugin: `interactive` = nil), więc nie zasłaniają
+--- strony. Bez ustawionego konta w chmurze oba zdarzenia nic nie robią.
+--- Tylko za zgodą z czytnika (`allowed`) i tylko gdy synchronizacja nie zmieniła ustawień:
+--- po zmianach KOReader i tak prosi o restart, a scalanie ruszy przy następnej synchronizacji.
+function Sync.mergeEvents(allowed, changed)
+    if not allowed or (changed or 0) > 0 then return {} end
+    return { "SyncBookStats", "SyncVocabBuilder" }
+end
+
 return Sync

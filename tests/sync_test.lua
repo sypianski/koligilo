@@ -385,5 +385,11 @@ check("screen: brak danych", Sync.screenParam(nil, 1872, 227) == nil and Sync.sc
 check("screen: poza zakresem", Sync.screenParam(100, 1872, 227) == nil and Sync.screenParam(1404, 1872, 5) == nil
     and Sync.screenParam(1404, 99999, 227) == nil)
 
+-- scalanie wspólnych baz po synchronizacji (TASK-42) ----------------------------
+check("merge: bez zgody nic", #Sync.mergeEvents(false, 0) == 0 and #Sync.mergeEvents(nil, 0) == 0)
+check("merge: za zgodą i bez zmian — statystyki i słowniczek",
+    deep_eq(Sync.mergeEvents(true, 0), { "SyncBookStats", "SyncVocabBuilder" }) and #Sync.mergeEvents(true, nil) == 2)
+check("merge: po zmianie ustawień czeka na restart", #Sync.mergeEvents(true, 3) == 0)
+
 print(string.format("%d ok, %d fail", passed, failed))
 os.exit(failed == 0 and 0 or 1)

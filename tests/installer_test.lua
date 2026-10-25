@@ -26,7 +26,9 @@ sh("mkdir -p " .. q(ROOT) .. " " .. q(TMP .. "/src"))
 local shown = {}
 local function widget(kind) return { new = function(_, o) o.kind = kind; return o end } end
 local served = {} -- url → treść ZIP-a
+local broadcast, broadcast_fail = {}, false
 local P = package.preload
+P["ui/event"] = function() return { new = function(_, name) return { name = name } end } end
 P["ui/widget/confirmbox"] = function() return widget("confirm") end
 P["ui/widget/infomessage"] = function() return widget("info") end
 P["ui/widget/inputdialog"] = function() return widget("input") end
@@ -37,6 +39,7 @@ P["luasettings"] = function() return {} end
 P["ui/network/manager"] = function() return { runWhenOnline = function(_, f) f() end } end
 P["ui/uimanager"] = function() return {
     show = function(_, w) shown[#shown + 1] = w end, close = function() end, forceRePaint = function() end,
+    broadcastEvent = function(_, e) if broadcast_fail then error("boom") end; broadcast[#broadcast + 1] = e.name end,
     scheduleIn = function() end, askForRestart = function(_, t) shown[#shown + 1] = { kind = "restart", text = t } end,
 } end
 P["ui/widget/container/widgetcontainer"] = function() return { extend = function(_, o) return o end } end
@@ -465,6 +468,17 @@ check("self: w tym samym procesie kopia starej wersji zostaje", self_leftovers()
 shown = {}
 check("self: po podmianie brak kolejnych okien", K:handleSelfUpdate(self_zip("0.9.5"), false, 0) == false and #shown == 0)
 
+-- scalanie wspólnych baz po synchronizacji (TASK-42)
+settings_data.merge_after_sync = nil
+K:mergeSharedData(0)
+check("merge: bez zgody żadne zdarzenie", #broadcast == 0)
+settings_data.merge_after_sync = true
+K:mergeSharedData(2)
+check("merge: po zmianie ustawień czeka na restart", #broadcast == 0)
+K:mergeSharedData(0)
+check("merge: za zgodą — statystyki i słowniczek, po kolei", #broadcast == 2 and broadcast[1] == "SyncBookStats" and broadcast[2] == "SyncVocabBuilder")
+broadcast_fail = true
+check("merge: wyjątek w cudzej wtyczce nie wychodzi na zewnątrz", pcall(K.mergeSharedData, K, 0))
 
 sh("rm -rf " .. q(TMP))
 print(string.format("%d ok, %d fail", passed, failed))

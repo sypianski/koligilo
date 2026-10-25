@@ -339,7 +339,7 @@ async function refresh() {
     if (S.tab === "czcionki") {
       try { S.fontCat = (await api("GET", "/api/admin/font-catalog")).families; } catch (e) { S.fontCat = S.fontCat || null; S.error = e.message; }
     }
-    if (S.tab === "konta") {
+    if (S.tab === "konta" || plugSet) { // „Ustawienia wtyczek” podpowiadają brak klucza Rosetty (TASK-42)
       try { S.acc = await api("GET", "/api/admin/accounts"); } catch (e) { S.acc = null; S.error = e.message; }
     }
     // lista wtyczek, aktualizacje i galeria są potrzebne tylko w pozostałych zakładkach —
@@ -1808,8 +1808,8 @@ function targetsBody() {
         "Włącz statystyki i/lub słowniczek, wskaż konto i folder. Folder ma być ten sam dla wszystkich czytników (np. /koreader) i najlepiej już istnieć na koncie."),
       h("li", {}, h("b", {}, "Zapisz. "),
         "Czytniki z włączoną grupą „Synchronizacja statystyk i słowniczka” dostaną ustawienie przy najbliższej synchronizacji koligilo (Menu → Narzędzia → koligilo → Synchronizuj teraz)."),
-      h("li", {}, h("b", {}, "Na czytniku uruchom scalanie. "),
-        "KOReader nie robi tego sam. Statystyki: Statystyki czytania → Synchronizuj teraz. Słowniczek: Kreator słownictwa → Synchronizacja w chmurze → Synchronizuj teraz. Możesz też przypisać gest „Statystyki czytania: synchronizuj” (Ustawienia → Gesty).")),
+      h("li", {}, h("b", {}, "Na czytniku włącz scalanie. "),
+        "KOReader sam z siebie nie scala tych baz. Najprościej raz na każdym czytniku zaznaczyć w menu koligilo „Scalaj statystyki i słowniczek po synchronizacji” — wtedy dzieje się to po każdej synchronizacji. Ręcznie: Statystyki czytania → Synchronizuj teraz oraz Kreator słownictwa → Synchronizacja w chmurze → Synchronizuj teraz (albo gest „Statystyki czytania: synchronizuj”).")),
     TARGETS.map(([which, label, desc], i) => {
       const d = ds[i], cur = S.acc.targets?.[which];
       return h("div", { class: "tgl" + (d.on ? "" : " off") },
@@ -3547,9 +3547,18 @@ function rosettaSettingsSection() {
     const id = idFor(ROSETTA_FILE, o.key);
     return id && settingRow(o, id, byId.get(id), "");
   }).filter(Boolean);
+  // backend „Model AI” i „Gotowy przekład” (model na brakujące akapity) potrzebują klucza z „Konta”
+  const bid = idFor(ROSETTA_FILE, "backend"), bcv = currentValue(bid && byId.get(bid));
+  const backend = bcv.state === "ok" ? bcv.value : "google";
+  const noKey = S.acc && (backend === "ai" || backend === "aligned") && !S.acc.rosetta?.has_api_key;
   return h("section", { "aria-labelledby": "plugset-rosetta" },
     h("h2", { id: "plugset-rosetta" }, "Rosetta"),
     h("div", { class: "card sgroup rosettaset" },
+      noKey && h("div", { class: "padwarn", role: "alert" },
+        h("p", {}, h("strong", {}, "Brakuje klucza do modelu AI")),
+        h("p", { class: "small" }, backend === "ai" ? "Wybrano tłumaczenie modelem AI, a w „Konta” nie ma zapisanego klucza, więc Rosetta nie przetłumaczy żadnej strony. "
+          : "Akapity, których nie ma w gotowym przekładzie, tłumaczy model AI, a w „Konta” nie ma zapisanego klucza. ",
+          h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = "rosetta"; showTab("konta"); } }, "Dodaj klucz"))),
       h("p", { class: "muted small padintro" },
         "Rosetta tłumaczy stronę na żywo i pokazuje przekład w panelu pod tekstem. Tu ustawiasz język, sposób tłumaczenia i wygląd panelu — wartości trafiają na czytniki, które mają włączoną grupę „Rosetta — ustawienia tłumaczenia”. ",
         on.length ? `Teraz dostają ją: ${on.join(", ")}. ` : "Żaden czytnik jej jeszcze nie dostaje — włącz ją w „Co synchronizować”. ",
