@@ -1328,9 +1328,9 @@ const ACCOUNTS = [
   { id: "cloud", name: "Konta w chmurze", short: "konta w chmurze", plural: true, group: "konta_chmura",
     desc: "To samo co Menu → Chmura w KOReaderze: miejsca, z których czytnik pobiera książki i w których statystyki oraz słowniczek trzymają wspólną bazę. Na czytnikach pojawią się pod tymi samymi nazwami." },
   { id: "targets", name: "Statystyki i słowniczek", short: "statystyki i słowniczek", plural: true, group: "konto_statystyki",
-    desc: "KOReader sam scala te bazy przez konto w chmurze — koligilo tylko ustawia, którego konta i folderu używają. Wszystkie czytniki muszą wskazywać ten sam folder." },
+    desc: "Statystyki czytania i słowniczek (w KOReaderze: Kreator słownictwa) mogą być wspólne dla wszystkich czytników. Tu wybierasz, na którym koncie w chmurze leży ich wspólna baza; scalanie robi KOReader, kiedy każesz mu to zrobić na czytniku." },
   { id: "rosetta", name: "Rosetta — klucze API", short: "Rosetta", group: "rosetta_klucze",
-    desc: "Dostęp do backendu AI używanego przez wtyczkę Rosetta (tłumaczenie na żywo). Klucz to sekret — włączaj tę grupę tylko między urządzeniami, którym ufasz." },
+    desc: "Rosetta tłumaczy strony na żywo. Google Translate działa bez żadnych kluczy; dostęp do modelu AI jest potrzebny tylko wtedy, gdy wybierzesz w ustawieniach wtyczki tłumaczenie „Model AI” (albo „Gotowy przekład” z modelem na brakujące akapity). Klucz to sekret — włączaj tę grupę tylko między urządzeniami, którym ufasz." },
 ];
 
 function hostOf(url) {
@@ -1755,7 +1755,7 @@ function cloudForm(d, cur) {
 
 const TARGETS = [
   ["statystyki", "Statystyki czytania", "Wspólna baza statystyk (czas czytania, strony, kalendarz)."],
-  ["slowniczek", "Słowniczek", "Wspólna lista słówek do powtórek (vocabulary builder)."],
+  ["slowniczek", "Słowniczek", "Wspólna lista słówek do powtórek (w KOReaderze: Kreator słownictwa)."],
 ];
 
 function targetDraft(which) {
@@ -1797,12 +1797,19 @@ function targetsDirtyUI(form, ds) {
 function targetsBody() {
   const list = S.acc.cloud || [];
   if (list.length === 0) {
-    return h("p", { class: "muted" }, "Najpierw dodaj konto w chmurze. ",
+    return h("p", { class: "muted" }, "Najpierw dodaj konto w chmurze — to na nim będą leżeć wspólne pliki. ",
       h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = "cloud"; render(); } }, "Przejdź do kont w chmurze"));
   }
   const ds = TARGETS.map(([which]) => targetDraft(which));
   const dirty = ds.some(targetDirty);
   return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault(); targetsSave(); } },
+    h("ol", { class: "steps tgsteps" },
+      h("li", {}, h("b", {}, "Wybierz, co ma być wspólne. "),
+        "Włącz statystyki i/lub słowniczek, wskaż konto i folder. Folder ma być ten sam dla wszystkich czytników (np. /koreader) i najlepiej już istnieć na koncie."),
+      h("li", {}, h("b", {}, "Zapisz. "),
+        "Czytniki z włączoną grupą „Synchronizacja statystyk i słowniczka” dostaną ustawienie przy najbliższej synchronizacji koligilo (Menu → Narzędzia → koligilo → Synchronizuj teraz)."),
+      h("li", {}, h("b", {}, "Na czytniku uruchom scalanie. "),
+        "KOReader nie robi tego sam. Statystyki: Statystyki czytania → Synchronizuj teraz. Słowniczek: Kreator słownictwa → Synchronizacja w chmurze → Synchronizuj teraz. Możesz też przypisać gest „Statystyki czytania: synchronizuj” (Ustawienia → Gesty).")),
     TARGETS.map(([which, label, desc], i) => {
       const d = ds[i], cur = S.acc.targets?.[which];
       return h("div", { class: "tgl" + (d.on ? "" : " off") },
@@ -1810,17 +1817,27 @@ function targetsBody() {
         h("div", { class: "what" }, h("b", {}, label), h("div", { class: "muted small" }, desc),
           cur?.account < 0 && h("div", { class: "err small" }, "Zapisane konto nie ma już odpowiednika na liście — wybierz konto i zapisz."),
           cur?.broken && h("div", { class: "err small" }, "⚠ Zapisany jest krótkotrwały token — wybierz konto ponownie i zapisz.")),
-        h("select", { "aria-label": "Konto dla: " + label, disabled: !d.on, onchange: ev => { d.account = ev.target.value; targetsDirtyUI(ev.target.form, ds); } },
-          list.map((c, j) => h("option", { value: j, selected: Number(d.account) === j || undefined }, `${c.name} (${CLOUD_TYPES[c.type] || c.type})`))),
-        h("input", { id: `f-t-${which}`, type: "text", value: d.folder, placeholder: "folder, np. /koreader", disabled: !d.on,
-          "aria-label": "Folder dla: " + label, oninput: ev => { d.folder = ev.target.value; targetsDirtyUI(ev.target.form, ds); } }));
+        h("div", { class: "tgfields" },
+          h("label", { class: "tgf" }, h("span", {}, "Konto w chmurze"),
+            h("select", { disabled: !d.on, onchange: ev => { d.account = ev.target.value; targetsDirtyUI(ev.target.form, ds); } },
+              list.map((c, j) => h("option", { value: j, selected: Number(d.account) === j || undefined }, `${c.name} (${CLOUD_TYPES[c.type] || c.type})`)))),
+          h("label", { class: "tgf" }, h("span", {}, "Folder na koncie"),
+            h("input", { id: `f-t-${which}`, type: "text", value: d.folder, placeholder: "np. /koreader", disabled: !d.on,
+              autocomplete: "off", spellcheck: "false", oninput: ev => { d.folder = ev.target.value; targetsDirtyUI(ev.target.form, ds); } }))));
     }),
     h("div", { class: "row", style: "margin-top:10px" },
       h("button", { class: "primary", type: "submit", disabled: !dirty || S.accBusy === "targets" },
         S.accBusy === "targets" ? "Zapisuję…" : "Zapisz zmiany"),
-      h("span", { class: "muted small" }, "Statystyki i słowniczek zapisują się osobno; wyłączony przełącznik usuwa ustawienie z czytników.")),
+      h("span", { class: "muted small" }, "Wyłączony przełącznik usuwa ustawienie z czytników; zapisane na koncie pliki zostają.")),
     accMsg("targets"));
 }
+
+// Gotowe adresy dostawców zgodnych z OpenAI (Rosetta wysyła zapytanie w formacie chat/completions
+// z nagłówkiem Bearer). Przycisk tylko wpisuje adres i przykładowy model do pól — dalej trzeba zapisać.
+const ROSETTA_PRESETS = [
+  { name: "OpenRouter", url: "https://openrouter.ai/api/v1/chat/completions", model: "google/gemini-2.5-flash" },
+  { name: "OpenAI", url: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
+];
 
 function rosettaForm() {
   const cur = S.acc.rosetta;
@@ -1830,13 +1847,26 @@ function rosettaForm() {
   const d = draft("rosetta", () => ({ ...extra, _orig: extra, api_key: "" }));
   return h("form", { class: "accform", onsubmit: ev => { ev.preventDefault();
       accSave("rosetta", "PUT", "/api/admin/accounts/rosetta", { ...changedOnly(d, extraKeys), api_key: d.api_key }); } },
-    field(d, "ai_base_url", "Adres API", { form: "ro", placeholder: "https://api.example.com/v1" }),
-    field(d, "ai_model", "Model", { form: "ro" }),
-    h("div", { class: "grid2" },
-      field(d, "ai_max_tokens", "Limit tokenów", { form: "ro" }),
-      field(d, "ai_temperature", "Temperatura", { form: "ro" })),
-    secretField(d, "api_key", "Klucz API", { form: "ro", saved: cur?.has_api_key }),
+    h("div", { class: "row rpresets" },
+      h("span", { class: "muted small" }, "Szybki start:"),
+      ROSETTA_PRESETS.map(p => h("button", { type: "button", onclick: () => { d.ai_base_url = p.url; d.ai_model = p.model; render(); } }, p.name)),
+      h("span", { class: "muted small" }, "wpisuje adres i przykładowy model — klucz zdobywasz u dostawcy.")),
+    field(d, "ai_base_url", "Adres API", { form: "ro", placeholder: "https://openrouter.ai/api/v1/chat/completions",
+      hint: "Pełny adres, który kończy się na /chat/completions. Zadziała każdy dostawca zgodny z OpenAI. Puste = OpenRouter." }),
+    field(d, "ai_model", "Model", { form: "ro", placeholder: "google/gemini-2.5-flash",
+      hint: "Nazwa modelu dokładnie tak, jak podaje ją dostawca. Puste = google/gemini-2.5-flash." }),
+    secretField(d, "api_key", "Klucz API", { form: "ro", saved: cur?.has_api_key,
+      hint: "Klucz z konta u dostawcy. Trafia na czytniki, które mają włączoną grupę „Rosetta — klucze API”." }),
+    h("details", { class: "rmore" },
+      h("summary", {}, "Więcej opcji (zwykle zostaw puste)"),
+      h("div", { class: "grid2" },
+        field(d, "ai_max_tokens", "Limit tokenów", { form: "ro", placeholder: "4096",
+          hint: "Najdłuższa odpowiedź modelu. Przy długich stronach podnieś." }),
+        field(d, "ai_temperature", "Temperatura", { form: "ro", placeholder: "0.3",
+          hint: "0–2. Niska wartość to wierniejszy, mniej „kreatywny” przekład." }))),
     accActions("rosetta", { cur, path: "/api/admin/accounts/rosetta", confirm: "Usunąć klucze API Rosetty ze wszystkich czytników?" }),
+    h("p", { class: "muted small" }, "Język tłumaczenia, wybór Google/AI i wygląd panelu ustawiasz w ",
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.plugView = PLUGSET; showTab("wtyczki"); } }, "Wtyczki → Ustawienia wtyczek → Rosetta"), "."),
     accMsg("rosetta"));
 }
 
@@ -2265,6 +2295,23 @@ function customEditor(o, id, cur, disabled) {
     h("button", { type: "submit", disabled }, "Ustaw"));
 }
 
+// Wartość tekstowa (kod języka, nazwa czcionki): pole z podpowiedziami (o.suggest = [[wartość, opis]]).
+// Zapis idzie przez ctlSave → luaSerialize, jak każda inna kontrolka.
+function textCtl(o, id, cur, disabled) {
+  const k = id + "~t", list = o.suggest ? "dl-" + id.replace(/\W/g, "_") : null;
+  const shown = S.ctl[k] ?? (typeof cur === "string" ? cur : (o.default ?? ""));
+  const save = () => {
+    const t = String(S.ctl[k] ?? shown).trim();
+    if (!t && !o.allowEmpty) { S.valMsg[id] = { ok: false, text: "wpisz wartość" }; return render(); }
+    ctlSave(id, t, k);
+  };
+  return h("form", { class: "custom", onsubmit: ev => { ev.preventDefault(); save(); } },
+    h("input", { type: "text", list, value: shown, placeholder: o.placeholder, "data-fk": k, "aria-label": o.label,
+      autocomplete: "off", spellcheck: "false", oninput: ev => { S.ctl[k] = ev.target.value; } }),
+    list && h("datalist", { id: list }, o.suggest.map(([v, l]) => h("option", { value: v }, l))),
+    h("button", { type: "submit", disabled }, "Ustaw"));
+}
+
 function switchCtl(label, checked, onchange, fk, disabled, extra) {
   return h("label", { class: "switch", ...extra },
     h("input", { type: "checkbox", role: "switch", checked, disabled, "aria-label": label, "data-fk": fk,
@@ -2386,6 +2433,7 @@ function control(o, id, cv) {
         !known && shown != null && o.values.length > 0 && h("span", { class: "own" }, "własna: " + fmtValue(o, shown)),
         o.custom && customEditor(o, id, shown, disabled));
     }
+    case "text": return textCtl(o, id, cur, disabled);
     case "font": return fontCtl(o, id, cur, disabled);
     case "tweaks": return tweaksCtl(o, id, cur, disabled);
     case "flags": return flagsCtl(o, id, cur, disabled);
@@ -2636,6 +2684,8 @@ function valuesTab() {
   // padmap KOPada ma własny edytor w Wtyczki → „Ustawienia wtyczek” (TASK-26); tu
   // zostaje tylko jako surowa wartość w „Zaawansowane”, ale nie liczy się do znaczka
   if (typeof Padmap !== "undefined") mapped.add(Padmap.ID);
+  // ustawienia Rosetty też mają własną kartę w „Ustawienia wtyczek” (TASK-40)
+  for (const o of ROSETTA_OPTS) { const id = idFor(ROSETTA_FILE, o.key); if (id) mapped.add(id); }
   const unmapped = values.filter(v => !v.deleted && !mapped.has(v.id)).length;
   const hits = searchHits(S.valQ);
   return h("section", {},
@@ -3439,10 +3489,73 @@ function plugDetail() {
 function pluginSettingsPanel() {
   const pad = padmapCard(), acts = padActionsCard();
   return h("div", { class: "plugset" },
+    rosettaSettingsSection(),
     h("section", { "aria-labelledby": "plugset-kopad" },
       h("h2", { id: "plugset-kopad" }, "KOPad"),
       pad || h("p", { class: "muted" }, "Ten serwer nie zna ustawień KOPada."),
       acts));
+}
+
+// --- Rosetta: ustawienia tłumaczenia (TASK-40) ---
+//
+// Grupa katalogu „rosetta_ustawienia” (settings/rosetta.lua) miała dotąd tylko surowe
+// wartości w „Zaawansowane”. Tu te same klucze dostają zwykłe kontrolki (te same co
+// „Ustawienia czytników”: settingRow/control → ctlSave → luaSerialize). Domyślne wartości
+// to domyślne wtyczki (rosetta_config.lua). Klucze API i adres modelu to osobna grupa
+// (sekret) i żyją w „Konta” → Rosetta; formatting_mode, font_size i book__* zostają poza panelem.
+const ROSETTA_FILE = "settings/rosetta.lua";
+const ROSETTA_LANGS = [["auto", "wykryj automatycznie"], ["pl", "polski"], ["en", "angielski"], ["de", "niemiecki"], ["fr", "francuski"],
+  ["es", "hiszpański"], ["it", "włoski"], ["la", "łacina"], ["el", "grecki"], ["ru", "rosyjski"], ["ar", "arabski"], ["fa", "perski"], ["tr", "turecki"]];
+const ROSETTA_OPTS = [
+  { key: "backend", kind: "choice", label: "Skąd bierze się tłumaczenie", default: "google",
+    values: ["google", "ai", "aligned"], labels: ["Google Translate", "Model AI", "Gotowy przekład"],
+    help: ["Google Translate działa od razu i nie wymaga klucza. Model AI tłumaczy z kontekstem (poprzednia i następna strona) i potrzebuje dostępu do modelu — wpisz go w „Konta” → Rosetta.",
+      "„Gotowy przekład” podaje ludzkie tłumaczenie z pliku parallel-aligned.json obok książki (paraligilo); akapity, których w nim brakuje, tłumaczy model AI, więc i tu przyda się klucz."] },
+  { key: "source_lang", kind: "text", label: "Język oryginału", default: "auto", suggest: ROSETTA_LANGS, placeholder: "auto",
+    help: ["Kod języka książki (np. la, el, ar) albo „auto”, żeby wtyczka sama go wykryła."] },
+  { key: "target_lang", kind: "text", label: "Język tłumaczenia", default: "en", suggest: ROSETTA_LANGS, placeholder: "pl",
+    help: ["Kod języka, na który tłumaczysz (np. pl). Wtyczka domyślnie tłumaczy na angielski."] },
+  { key: "auto_translate", kind: "switch", label: "Tłumacz od razu po otwarciu strony", default: true, on: true, off: false,
+    help: ["Wyłączone: panel tłumaczenia pokazuje tekst dopiero po ręcznym wywołaniu tłumaczenia."] },
+  { key: "panel_height_ratio", kind: "choice", label: "Wysokość panelu tłumaczenia", default: 0.5,
+    values: [0.3, 0.4, 0.5, 0.6], labels: ["30%", "40%", "50%", "60%"], custom: { min: 0.2, max: 0.8, step: 0.05 },
+    help: ["Jaką część ekranu zajmuje panel z tłumaczeniem, jako ułamek: 0,5 to połowa ekranu."] },
+  { key: "font_size_percent", kind: "choice", label: "Rozmiar tekstu w panelu", default: 100, unit: "%",
+    values: [70, 80, 90, 100, 110], labels: ["70", "80", "90", "100", "110"], custom: { min: 40, max: 200, step: 5 },
+    help: ["Rozmiar czcionki w panelu jako procent rozmiaru czcionki książki (100 = taki sam)."] },
+  { key: "line_spacing_override", kind: "choice", label: "Interlinia w panelu", default: 0, unit: "%",
+    values: [0, 100, 120, 130, 150], labels: ["jak w książce", "100", "120", "130", "150"], custom: { min: 50, max: 200, step: 5 },
+    help: ["„Jak w książce” zostawia interlinię książki; liczba to własna interlinia w procentach."] },
+  { key: "paragraph_indent_chars", kind: "choice", label: "Wcięcie akapitu w panelu", default: 0, unit: "znaki",
+    values: [0, 2, 4, 6], labels: ["brak", "2", "4", "6"], custom: { min: 0, max: 20, step: 1 },
+    help: ["Ile spacji dopisać na początku każdego akapitu tłumaczenia."] },
+  { key: "font_override", kind: "text", label: "Czcionka panelu", default: "", allowEmpty: true, placeholder: "jak w książce",
+    help: ["Nazwa czcionki dokładnie tak, jak w KOReaderze (np. Alegreya Sans). Puste pole: czcionka książki."] },
+  { key: "anchor_min_confidence", kind: "choice", label: "Próg pewności dopasowania", default: 0,
+    values: [0, 0.5, 0.8], labels: ["pokaż wszystko", "0,5", "0,8"], custom: { min: 0, max: 1, step: 0.05 },
+    help: ["Dotyczy tylko „Gotowego przekładu”: pary akapitów dopasowane z mniejszą pewnością są pomijane. 0 pokazuje każdą parę, także niepewną."] },
+  { key: "clear_cache_on_start", kind: "switch", label: "Czyść pamięć tłumaczeń przy starcie", default: false, on: true, off: false,
+    help: ["Opcja diagnostyczna: po każdym uruchomieniu KOReadera tłumaczenia zapisane na czytniku znikają i wtyczka tłumaczy strony od nowa."] },
+];
+
+function rosettaSettingsSection() {
+  const g = catalogGroup("rosetta_ustawienia");
+  if (!g) return null;
+  const byId = new Map(S.state.values.map(v => [v.id, v]));
+  const on = S.state.devices.filter(d => d.groups && d.groups.rosetta_ustawienia).map(d => d.name);
+  const rows = ROSETTA_OPTS.map(o => {
+    const id = idFor(ROSETTA_FILE, o.key);
+    return id && settingRow(o, id, byId.get(id), "");
+  }).filter(Boolean);
+  return h("section", { "aria-labelledby": "plugset-rosetta" },
+    h("h2", { id: "plugset-rosetta" }, "Rosetta"),
+    h("div", { class: "card sgroup rosettaset" },
+      h("p", { class: "muted small padintro" },
+        "Rosetta tłumaczy stronę na żywo i pokazuje przekład w panelu pod tekstem. Tu ustawiasz język, sposób tłumaczenia i wygląd panelu — wartości trafiają na czytniki, które mają włączoną grupę „Rosetta — ustawienia tłumaczenia”. ",
+        on.length ? `Teraz dostają ją: ${on.join(", ")}. ` : "Żaden czytnik jej jeszcze nie dostaje — włącz ją w „Co synchronizować”. ",
+        "Dostęp do modelu AI (adres, model, klucz) wpisujesz osobno, w „Konta” → Rosetta: ",
+        h("button", { type: "button", class: "linkbtn", onclick: () => { S.accOpen = "rosetta"; showTab("konta"); } }, "przejdź do kluczy"), "."),
+      rows));
 }
 // --- ulubione (TASK-20) ---
 //

@@ -845,9 +845,17 @@ ol.acsteps .grid2 label.field, ol.acsteps label.field { margin: 8px 0; }
 .tgl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--hair); }
 .tgl:first-of-type { border-top: 0; }
 .tgl .what { flex: 1 1 220px; min-width: 0; }
-.tgl select, .tgl input[type="text"] { flex: 0 1 190px; min-width: 120px; }
+.tgfields { flex: 1 1 100%; display: flex; gap: 12px; flex-wrap: wrap; padding-left: 52px; }
+.tgf { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--subtext); flex: 1 1 190px; max-width: 280px; }
+.tgf select, .tgf input[type="text"] { width: 100%; min-width: 0; }
+.tgsteps { margin: 0 0 8px; font-size: 13.5px; }
+.rpresets { align-items: center; gap: 8px; margin-bottom: 4px; }
+.rmore { margin: 10px 0; }
+.rmore > summary { cursor: pointer; color: var(--subtext); font-size: 13px; }
+.rosettaset > .padintro { margin: 0 0 8px; }
 .tgl.off .what b { color: var(--subtext); }
 @media (max-width: 620px) {
+  .tgfields { padding-left: 0; }
   .accb { padding-left: 18px; }
   .acch { padding-inline: 14px; }
 }
