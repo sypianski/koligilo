@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,20 @@ type Device struct {
 	// synchronizacji; SelfUpdateAllowed to zgoda z menu (PC-019), panel jej nie ustawia.
 	PluginVersion     string `json:"plugin_version,omitempty"`
 	SelfUpdateAllowed bool   `json:"self_update_allowed"`
+	// Zgoda na ciche scalanie statystyk i słowniczka po synchronizacji (TASK-42/46) — też tylko
+	// z menu czytnika; panel ją pokazuje, nie ustawia.
+	MergeAfterSync bool `json:"merge_after_sync"`
+
+	// Synchronizacja wstrzymana przez bezpiecznik wtyczki (TASK-50): czytnik wraca przed
+	// wysłaniem czegokolwiek, więc bez tego zgłoszenia panel widziałby go jako „cicho”.
+	// Zgłasza wyłącznie czytnik; czyści je udana synchronizacja (Apply) albo zgłoszenie bez liczby.
+	SyncBlocked *SyncBlocked `json:"sync_blocked,omitempty"`
+}
+
+// SyncBlocked: kiedy czytnik zgłosił wstrzymanie i ile ustawień „zniknęło naraz”.
+type SyncBlocked struct {
+	At    time.Time `json:"at"`
+	Count int       `json:"count"`
 }
 
 // Screen to ekran czytnika widziany przez KOReadera (piksele i ppi). Panel buduje
@@ -97,19 +112,60 @@ func (st *Store) SetScreen(d *Device, s *Screen) error {
 
 var pluginVersionRe = regexp.MustCompile(`^\d{1,4}\.\d{1,5}\.\d{1,6}$`)
 
-// SetPluginInfo zapamiętuje wersję wtyczki koligilo i zgodę na jej samoaktualizację,
-// zgłoszone przez czytnik. Dane są niezaufane: zły format wersji = puste pole, a stary
-// plugin bez parametrów zeruje oba pola (nigdy nie psuje stanu).
-func (st *Store) SetPluginInfo(d *Device, version string, selfUpdate bool) error {
-	if !pluginVersionRe.MatchString(version) {
-		version = ""
+// PluginInfo to dane o wtyczce koligilo zgłaszane przez czytnik w zapytaniu o synchronizację.
+type PluginInfo struct {
+	Version        string
+	SelfUpdate     bool
+	MergeAfterSync bool
+}
+
+// SetPluginInfo zapamiętuje wersję wtyczki koligilo i zgody zgłoszone przez czytnik.
+// Dane są niezaufane: zły format wersji = puste pole, a stary plugin bez parametrów
+// zeruje wszystko (nigdy nie psuje stanu).
+func (st *Store) SetPluginInfo(d *Device, in PluginInfo) error {
+	if !pluginVersionRe.MatchString(in.Version) {
+		in.Version = ""
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if d.PluginVersion == version && d.SelfUpdateAllowed == selfUpdate {
+	if d.PluginVersion == in.Version && d.SelfUpdateAllowed == in.SelfUpdate && d.MergeAfterSync == in.MergeAfterSync {
 		return nil
 	}
-	d.PluginVersion, d.SelfUpdateAllowed = version, selfUpdate
+	d.PluginVersion, d.SelfUpdateAllowed, d.MergeAfterSync = in.Version, in.SelfUpdate, in.MergeAfterSync
+	return st.saveLocked()
+}
+
+var syncBlockedRe = regexp.MustCompile(`^[0-9]{1,7}$`)
+
+// ParseSyncBlocked: liczba ustawień z zapytania `sync_blocked`. Zwraca 0 (= brak zgłoszenia),
+// gdy tekst nie jest liczbą całkowitą z zakresu 1..1000000 — dane z czytnika są niezaufane.
+func ParseSyncBlocked(raw string) int {
+	if !syncBlockedRe.MatchString(raw) {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 1000000 {
+		return 0
+	}
+	return n
+}
+
+// SetSyncBlocked zapisuje (count > 0) albo czyści (count == 0) zgłoszenie wstrzymanej synchronizacji.
+// Powtórne zgłoszenie tej samej liczby nie odświeża czasu: „od kiedy” ma zostać pierwszym zgłoszeniem.
+func (st *Store) SetSyncBlocked(d *Device, count int) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if count <= 0 {
+		if d.SyncBlocked == nil {
+			return nil
+		}
+		d.SyncBlocked = nil
+		return st.saveLocked()
+	}
+	if d.SyncBlocked != nil && d.SyncBlocked.Count == count {
+		return nil
+	}
+	d.SyncBlocked = &SyncBlocked{At: time.Now(), Count: count}
 	return st.saveLocked()
 }
 
@@ -459,6 +515,7 @@ func (st *Store) Apply(d *Device, set map[string]*string, received int, note str
 	}
 	d.LastSeen = now
 	d.LastSync = &SyncReport{At: now, Sent: len(set) - len(rejected), Received: received, Note: clip(note, 200)}
+	d.SyncBlocked = nil // udana synchronizacja (TASK-50)
 	return rejected, st.saveLocked()
 }
 

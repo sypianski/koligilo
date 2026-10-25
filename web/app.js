@@ -986,6 +986,13 @@ async function pairUSB(r) {
 const QUIET_DAYS = 7;
 function syncHealth(d) {
   const ls = d.last_sync;
+  // TASK-50: bezpiecznik wtyczki wstrzymał synchronizację; znika po pierwszej udanej (serwer czyści zgłoszenie)
+  const sb = d.sync_blocked;
+  if (sb && sb.count > 0) {
+    const n = sb.count, w = n === 1 ? "ustawienie" : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? "ustawienia" : "ustawień";
+    return { k: "stop", text: `wstrzymana: zniknęło ${n} ${w}`,
+      title: `Wtyczka wstrzymała synchronizację ${ago(sb.at)}: ${n} ${w} zniknęło naraz z tego czytnika. Nic nie zostało wysłane ani zmienione. Zmień ustawienia pojedynczo albo wyłącz ich grupy.` };
+  }
   if (!ls) return { k: "na", text: "jeszcze nie synchronizował", title: "Połączony " + ago(d.paired_at) };
   const days = Math.floor((Date.now() - new Date(ls.at)) / 86400000);
   if (days >= QUIET_DAYS) return { k: "warn", text: `cicho od ${days} dni`, title: "Ostatnia synchronizacja: " + ago(ls.at) };
@@ -1015,13 +1022,18 @@ function pluginCell(d) {
   const allowed = !!d.self_update_allowed;
   const consent = h("span", {
     class: "muted small", style: "display:block",
-    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → „Pozwól aktualizować koligilo”.",
+    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody → „Pozwól aktualizować koligilo”.",
   }, allowed ? "aktualizacja: pozwolona na czytniku" : "aktualizacja: niepozwolona na czytniku");
-  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent);
+  // TASK-46: to samo dla scalania statystyk i słowniczka (zgoda z menu czytnika → Zgody)
+  const merge = h("span", {
+    class: "muted small", style: "display:block",
+    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody.",
+  }, d.merge_after_sync ? "scalanie statystyk: włączone na czytniku" : "scalanie statystyk: wyłączone na czytniku");
+  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent, merge);
   const old = verOlder(v, cur);
   return h("span", {},
     v, old && h("span", { class: "badge warn", title: `Na serwerze jest wersja ${cur}.` }, "nieaktualna"),
-    consent);
+    consent, merge);
 }
 
 // TASK-29: urządzenia jako tabela — łatwo porównać wersje KOReadera i kiedy kto się synchronizował.
@@ -1840,7 +1852,7 @@ function targetsBody() {
       h("li", {}, h("b", {}, "Zapisz. "),
         "Czytniki z włączoną grupą „Synchronizacja statystyk i słowniczka” dostaną ustawienie przy najbliższej synchronizacji koligilo (Menu → Narzędzia → koligilo → Synchronizuj teraz)."),
       h("li", {}, h("b", {}, "Na czytniku włącz scalanie. "),
-        "KOReader sam z siebie nie scala tych baz. Najprościej raz na każdym czytniku zaznaczyć w menu koligilo „Scalaj statystyki i słowniczek po synchronizacji” — wtedy dzieje się to po każdej synchronizacji. Ręcznie: Statystyki czytania → Synchronizuj teraz oraz Kreator słownictwa → Synchronizacja w chmurze → Synchronizuj teraz (albo gest „Statystyki czytania: synchronizuj”).")),
+        "KOReader sam z siebie nie scala tych baz. Najprościej raz na każdym czytniku zaznaczyć w menu koligilo (Zgody) „Scalaj statystyki i słowniczek po synchronizacji” — wtedy dzieje się to po każdej synchronizacji. Ręcznie: Statystyki czytania → Synchronizuj teraz oraz Kreator słownictwa → Synchronizacja w chmurze → Synchronizuj teraz (albo gest „Statystyki czytania: synchronizuj”).")),
     TARGETS.map(([which, label, desc], i) => {
       const d = ds[i], cur = S.acc.targets?.[which];
       return h("div", { class: "tgl" + (d.on ? "" : " off") },
@@ -3088,7 +3100,7 @@ const HOW_TOPICS = [
     h("p", {}, "W panelu przypisujesz czytnikowi wtyczki, ale instaluje je dopiero sam czytnik. Najpierw włączasz na nim „Pozwól instalować wtyczki”, potem potwierdzasz każdą instalację i aktualizację. Wtyczka to program z pełnym dostępem do czytnika, więc koligilo nigdy nie instaluje jej bez Twojej zgody na czytniku.")]],
   ["fonts", "Czcionki", "Czcionki", () => [
     h("p", {}, "Czcionki to zwykłe pliki (TTF, OTF), więc koligilo rozsyła je jako dane, nie jako kod. Wgrywasz je w panelu albo dodajesz z katalogu polecanych: serwer pobiera je wtedy sam, z przypiętych adresów autorów, i odrzuca plik o innej sumie niż w katalogu."),
-    h("p", {}, "Czytnik dostaje czcionki dopiero wtedy, gdy sam na to pozwolisz: ", h("b", {}, "Menu → Narzędzia → koligilo → Synchronizuj czcionki"), ". Zgodę da się włączyć tylko na czytniku, nigdy z panelu."),
+    h("p", {}, "Czytnik dostaje czcionki dopiero wtedy, gdy sam na to pozwolisz: ", h("b", {}, "Menu → Narzędzia → koligilo → Zgody → Synchronizuj czcionki"), ". Zgodę da się włączyć tylko na czytniku, nigdy z panelu."),
     h("ul", {},
       h("li", {}, "Pliki trafiają do katalogu fonts/koligilo i pojawiają się w KOReaderze po jego ponownym uruchomieniu. Czcionek dodanych ręcznie koligilo nie rusza."),
       h("li", {}, "Nowy plik o tej samej nazwie zastępuje poprzedni na czytnikach. Limit to 40 MB na plik i 150 MB pobrań na jedną synchronizację."),
@@ -3233,7 +3245,7 @@ function stepsCard() {
     h("h3", { id: "steps3-title" }, "Jak dodać wtyczki na czytnik — trzy kroki"),
     h("ol", { class: "steps" },
       h("li", {}, h("b", {}, "Na czytniku pozwól na wtyczki. "),
-        `${MENU_PATH} → Pozwól instalować wtyczki. Raz na każdy czytnik — z panelu się tego nie da.`),
+        `${MENU_PATH} → Zgody → Pozwól instalować wtyczki. Raz na każdy czytnik — z panelu się tego nie da.`),
       h("li", {}, h("b", {}, "W panelu wybierz wtyczki. "),
         "„＋ Dodaj wtyczkę”: z galerii, z pliku ZIP albo z magazynu, a potem zaznacz czytniki. Panel tylko wskazuje, co ma być zainstalowane."),
       h("li", {}, h("b", {}, "Na czytniku zatwierdź. "),
@@ -3276,7 +3288,7 @@ const PLUG_STATE = {
   ok: { g: "✓", text: "zainstalowana" },
   upd: { g: "↑", text: "nowsza wersja czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
   wait: { g: "…", text: "czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
-  consent: { g: "!", text: "czytnik jeszcze nie pozwolił na wtyczki", hint: `Na czytniku: ${MENU_PATH} → Pozwól instalować wtyczki.` },
+  consent: { g: "!", text: "czytnik jeszcze nie pozwolił na wtyczki", hint: `Na czytniku: ${MENU_PATH} → Zgody → Pozwól instalować wtyczki.` },
   rm: { g: "−", text: "usunięcie czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
   rejected: { g: "✕", text: "odrzucona na czytniku", hint: "Przypisz ją ponownie albo usuń z czytnika." },
   err: { g: "✕", text: "błąd na czytniku" },
@@ -3498,7 +3510,7 @@ function newDeviceCard(d) {
     h("ol", { class: "checklist" },
       h("li", {}, mark(d.plugins_allowed),
         h("div", {}, h("b", {}, d.plugins_allowed ? "Czytnik pozwolił na wtyczki" : "Na czytniku pozwól na wtyczki"),
-          !d.plugins_allowed && h("div", { class: "muted small" }, `${MENU_PATH} → Pozwól instalować wtyczki.`))),
+          !d.plugins_allowed && h("div", { class: "muted small" }, `${MENU_PATH} → Zgody → Pozwól instalować wtyczki.`))),
       h("li", {}, mark(picked),
         h("div", {}, h("b", {}, picked ? `Wybrane wtyczki: ${targets.map(pluginTitle).join(", ")}` : "W panelu wybierz wtyczki"),
           !picked && h("div", { class: "row", style: "margin-top:6px" },
@@ -4411,7 +4423,7 @@ function fontDeviceRow(d, active) {
   const have = active.filter(f => inv.get(f.file) === f.sha256).length;
   const reported = d.font_report_at && !d.font_report_at.startsWith("0001");
   let state, cls = "muted small";
-  if (!d.fonts_allowed) state = `bez zgody — na czytniku: ${MENU_PATH} → Synchronizuj czcionki`;
+  if (!d.fonts_allowed) state = `bez zgody — na czytniku: ${MENU_PATH} → Zgody → Synchronizuj czcionki`;
   else if (!active.length) state = "zgoda jest, w panelu nie ma jeszcze czcionek";
   else if (!reported) state = "zgoda jest, czeka na pierwszą synchronizację";
   else if (have === active.length) { state = `wszystkie (${have}) zainstalowane`; cls = "ok small"; }

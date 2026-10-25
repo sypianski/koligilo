@@ -811,4 +811,27 @@ function Sync.mergeEvents(allowed, changed)
     return { "SyncBookStats", "SyncVocabBuilder" }
 end
 
+--- Zapamiętane wstrzymanie synchronizacji (TASK-50): `{at, deleted}` w ustawieniach wtyczki.
+--- Zwraca liczbę ustawień do zgłoszenia serwerowi (całkowitą 1..1000000) albo nil — zepsuty
+--- albo ręcznie zmieniony wpis nie może wyprodukować śmieci w zapytaniu.
+function Sync.blockedCount(rec)
+    if type(rec) ~= "table" then return nil end
+    local n = rec.deleted
+    if type(n) ~= "number" or n ~= math.floor(n) or n < 1 or n > 1000000 then return nil end
+    return n
+end
+
+--- Wpis do zapamiętania, gdy bezpiecznik wstrzyma synchronizację (`deleted` = ile ustawień zniknęło).
+function Sync.blockedRecord(deleted, now)
+    local rec = { at = now, deleted = deleted }
+    if not Sync.blockedCount(rec) then return nil end
+    return rec
+end
+
+--- Czy pokazać jednorazową informację o zgodach (TASK-46): raz, i nigdy w cichej synchronizacji
+--- (nie zasłaniamy czytania oknem, którego nikt nie zamawiał).
+function Sync.consentsHintDue(already_shown, silent)
+    return not already_shown and not silent
+end
+
 return Sync

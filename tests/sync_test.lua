@@ -400,5 +400,19 @@ check("resume: brak sieci", R(true, true, false, 1000, 9000, 900) == false)
 check("resume: auto_sync wyłączone", R(true, false, true, 1000, 9000, 900) == false)
 check("resume: niesparowany", R(false, true, true, 1000, 9000, 900) == false)
 
+-- wstrzymana synchronizacja zgłaszana do panelu (TASK-50) -------------------------
+check("blocked: poprawny wpis", Sync.blockedCount({ at = 100, deleted = 7 }) == 7 and Sync.blockedCount({ deleted = 1000000 }) == 1000000)
+check("blocked: brak wpisu", Sync.blockedCount(nil) == nil and Sync.blockedCount("7") == nil and Sync.blockedCount({}) == nil)
+check("blocked: liczba poza zakresem albo nie całkowita", Sync.blockedCount({ deleted = 0 }) == nil and Sync.blockedCount({ deleted = -2 }) == nil
+    and Sync.blockedCount({ deleted = 1000001 }) == nil and Sync.blockedCount({ deleted = 2.5 }) == nil and Sync.blockedCount({ deleted = "7" }) == nil)
+local br = Sync.blockedRecord(5, 1234)
+check("blocked: nowy wpis", br and br.at == 1234 and br.deleted == 5 and Sync.blockedCount(br) == 5)
+check("blocked: zła liczba nie daje wpisu", Sync.blockedRecord(0, 1) == nil and Sync.blockedRecord(nil, 1) == nil and Sync.blockedRecord(1.5, 1) == nil)
+
+-- jednorazowa informacja o zgodach (TASK-46) ---------------------------------------
+check("hint zgód: pierwszy raz, nie cicho", Sync.consentsHintDue(false, false) == true and Sync.consentsHintDue(nil, nil) == true)
+check("hint zgód: nie w cichej synchronizacji", Sync.consentsHintDue(false, true) == false)
+check("hint zgód: tylko raz", Sync.consentsHintDue(true, false) == false)
+
 print(string.format("%d ok, %d fail", passed, failed))
 os.exit(failed == 0 and 0 or 1)

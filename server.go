@@ -151,11 +151,29 @@ func (s *Server) pairPoll(w http.ResponseWriter, r *http.Request) {
 // --- synchronizacja ---
 
 func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
+	// Lekkie zgłoszenie wstrzymanej synchronizacji (TASK-50): tylko zapis liczby, bez wartości,
+	// i bez dotykania reszty stanu (brak plugin_version itd. nie może zerować danych o wtyczce).
+	if r.URL.Query().Get("report_only") == "1" {
+		if err := s.st.SetSyncBlocked(d, ParseSyncBlocked(r.URL.Query().Get("sync_blocked"))); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
 	if err := s.st.SetScreen(d, ParseScreen(r.URL.Query().Get("screen"))); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := s.st.SetPluginInfo(d, r.URL.Query().Get("plugin_version"), r.URL.Query().Get("self_update") == "1"); err != nil {
+	q := r.URL.Query()
+	if err := s.st.SetPluginInfo(d, PluginInfo{Version: q.Get("plugin_version"), SelfUpdate: q.Get("self_update") == "1",
+		MergeAfterSync: q.Get("merge_after_sync") == "1"}); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	// Bez `sync_blocked` zgłoszenie jest czyszczone: ta synchronizacja idzie dalej (a jeśli bezpiecznik
+	// znów ją wstrzyma, wtyczka od razu zgłosi to osobnym żądaniem report_only).
+	if err := s.st.SetSyncBlocked(d, ParseSyncBlocked(q.Get("sync_blocked"))); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}

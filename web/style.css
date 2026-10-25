@@ -679,7 +679,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 .hdot.ok { background: var(--st-ok); border-color: var(--st-ok); }
 .hdot.warn { background: transparent; border-color: var(--st-warn); }
 .hdot.na { background: transparent; border-style: dashed; }
-.hword.warn { color: var(--st-warn); font-weight: 600; }
+.hdot.stop { background: var(--st-warn); border-color: var(--st-warn); border-radius: 2px; } /* kwadrat = wstrzymana (TASK-50) */
+.hword.warn, .hword.stop { color: var(--st-warn); font-weight: 600; }
 .hword.na { font-style: italic; }
 
 /* podgląd strony przy pasku zakładek u góry */

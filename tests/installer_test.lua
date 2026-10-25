@@ -42,10 +42,13 @@ P["ui/network/manager"] = function() return { runWhenOnline = function(_, f) f()
 P["ui/uimanager"] = function() return {
     show = function(_, w) shown[#shown + 1] = w end, close = function() end, forceRePaint = function() end,
     broadcastEvent = function(_, e) if broadcast_fail then error("boom") end; broadcast[#broadcast + 1] = e.name end,
+    nextTick = function() end,
     scheduleIn = function(_, secs, f) scheduled[#scheduled + 1] = { secs = secs, f = f } end, askForRestart = function(_, t) shown[#shown + 1] = { kind = "restart", text = t } end,
 } end
 P["ui/widget/container/widgetcontainer"] = function() return { extend = function(_, o) return o end } end
+local requested = {} -- adresy żądań HTTP, po kolei
 P["socket.http"] = function() return { request = function(req)
+    requested[#requested + 1] = req.url
     local body = served[req.url]
     if not body then return 1, 404, {}, "404" end
     req.sink(body); req.sink(nil)
@@ -53,7 +56,10 @@ P["socket.http"] = function() return { request = function(req)
 end } end
 P["socket"] = function() return { skip = function(n, ...) return select(n + 1, ...) end } end
 P["socketutil"] = function() return { set_timeout = function() end, reset_timeout = function() end } end
-P["ltn12"] = function() return {} end
+P["ltn12"] = function() return {
+    sink = { table = function(t) return function(c) if c then t[#t + 1] = c end; return 1 end end },
+    source = { string = function(str) return str end },
+} end
 P["logger"] = function() return { warn = function() end } end
 P["gettext"] = function() return function(s) return s end end
 P["libs/libkoreader-lfs"] = function() return {
@@ -132,6 +138,7 @@ local K = setmetatable({ settings = {
     readSetting = function(_, k) return settings_data[k] end,
     saveSetting = function(_, k, v) settings_data[k] = v end,
     delSetting = function(_, k) settings_data[k] = nil end,
+    makeTrue = function(_, k) settings_data[k] = true end,
     flush = function() end, isTrue = function(_, k) return settings_data[k] == true end,
     nilOrTrue = function(_, k) return settings_data[k] == nil or settings_data[k] == true end,
 } }, { __index = Koligilo })
@@ -511,6 +518,78 @@ check("resume: po zwłoce znów można zaplanować", resume_scheduled() == 1)
 scheduled[#scheduled].f()
 check("resume: po zwłoce cicha synchronizacja", synced == 1)
 K.sync = nil
+
+-- wstrzymana synchronizacja trafia do panelu (TASK-50)
+settings_data.sync_blocked = nil
+requested = {}
+served["http://srv/api/v1/sync?report_only=1&sync_blocked=7"] = "{}"
+check("blocked: zgłoszenie przyjęte", K:reportBlocked("http://srv", "tok", 7) == true)
+check("blocked: lekkie żądanie report_only", requested[1] == "http://srv/api/v1/sync?report_only=1&sync_blocked=7" and #requested == 1, requested[1])
+check("blocked: zapamiętane w ustawieniach", type(settings_data.sync_blocked) == "table" and settings_data.sync_blocked.deleted == 7
+    and type(settings_data.sync_blocked.at) == "number")
+-- serwer nie odpowiada: zapamiętane zostaje, żeby poszło z najbliższą synchronizacją
+settings_data.sync_blocked = nil
+check("blocked: błąd sieci = false, wpis zostaje", K:reportBlocked("http://srv", "tok", 9) == false and settings_data.sync_blocked.deleted == 9)
+check("blocked: powtórzenie odświeża wpis", K:reportBlocked("http://srv", "tok", 11) == false and settings_data.sync_blocked.deleted == 11)
+check("blocked: zła liczba niczego nie zapisuje", K:reportBlocked("http://srv", "tok", 0) == false and settings_data.sync_blocked.deleted == 11)
+
+-- zgody w jednym miejscu (TASK-46)
+local menu = {}
+K:addToMainMenu(menu)
+local top = menu.koligilo.sub_item_table_func()
+local consents, direct
+for _i, it in ipairs(top) do
+    if it.text == "Zgody (co wolno koligilo na tym czytniku)" then consents = it end
+    if it.text and (it.text:find("Pozwól") or it.text:find("czcionki") or it.text:find("Scalaj")) and it.checked_func then direct = true end
+end
+check("zgody: jedna pozycja w menu głównym, bez przełączników na wierzchu", consents and consents.sub_item_table_func and not direct)
+local citems = consents and consents.sub_item_table_func() or {}
+local keys = {}
+for _i, it in ipairs(citems) do
+    local k
+    for _j, name in ipairs({ "self_update_allowed", "plugins_allowed", "fonts_allowed", "merge_after_sync" }) do
+        settings_data[name] = true
+        if it.checked_func() then k = k or name end
+        settings_data[name] = nil
+    end
+    keys[#keys + 1] = k
+end
+check("zgody: te same cztery klucze ustawień", table.concat(keys, ",") == "self_update_allowed,plugins_allowed,fonts_allowed,merge_after_sync", table.concat(keys, ","))
+-- włączenie nadal wymaga potwierdzenia w ConfirmBox (nic nie włącza się samo)
+shown = {}
+citems[2].callback(nil)
+check("zgody: wtyczki wciąż pytają o zgodę oknem", #shown == 1 and shown[1].kind == "confirm" and not settings_data.plugins_allowed
+    and tostring(shown[1].text):find("pełnym dostępem"))
+shown[1].ok_callback()
+check("zgody: po potwierdzeniu zgoda zapisana", settings_data.plugins_allowed == true)
+settings_data.plugins_allowed = nil
+-- zgłoszenie w zapytaniu sync (serwer odpowiada 404 → synchronizacja kończy się cicho, ale GET widać)
+-- wcześniejszy test samoaktualizacji zostawił restart_pending (upvalue main.lua): zdejmujemy go
+for i = 1, 60 do
+    local name = debug.getupvalue(Koligilo.sync, i)
+    if name == "restart_pending" then debug.setupvalue(Koligilo.sync, i, false) break end
+end
+local function sync_query(setup)
+    settings_data.merge_after_sync, settings_data.sync_blocked = nil, nil
+    setup()
+    requested = {}
+    K:sync(true)
+    return requested[1] or ""
+end
+local base_q = sync_query(function() end)
+check("query: zapytanie w ogóle poszło", base_q:find("/api/v1/sync?", 1, true), base_q)
+check("query: bez zgody brak merge_after_sync", not base_q:find("merge_after_sync", 1, true))
+check("query: za zgodą merge_after_sync=1", sync_query(function() settings_data.merge_after_sync = true end):find("merge_after_sync=1", 1, true))
+check("query: zapamiętane wstrzymanie idzie w pełnym GET", sync_query(function() settings_data.sync_blocked = { at = 1, deleted = 7 } end):find("sync_blocked=7", 1, true))
+check("query: zepsuty wpis wstrzymania nie trafia do zapytania", not sync_query(function() settings_data.sync_blocked = { at = 1, deleted = "x&y" } end):find("sync_blocked", 1, true))
+settings_data.merge_after_sync, settings_data.sync_blocked = nil, nil
+-- jednorazowa informacja, gdzie są zgody
+shown = {}
+check("hint: cicha synchronizacja nie pokazuje", K:showConsentsHint(true) == false and #shown == 0 and not settings_data.consents_hint_shown)
+check("hint: pierwszy raz pokazuje, nic nie włącza", K:showConsentsHint(false) == true and #shown == 1 and settings_data.consents_hint_shown == true
+    and not settings_data.plugins_allowed and not settings_data.fonts_allowed and not settings_data.self_update_allowed and not settings_data.merge_after_sync
+    and tostring(shown[1].text):find("Zgody"))
+check("hint: tylko raz", K:showConsentsHint(false) == false and #shown == 1)
 
 sh("rm -rf " .. q(TMP))
 print(string.format("%d ok, %d fail", passed, failed))

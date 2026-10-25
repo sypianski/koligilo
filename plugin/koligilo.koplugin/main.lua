@@ -161,6 +161,138 @@ function Koligilo:isPaired()
     return self.settings:readSetting("token") ~= nil
 end
 
+-- Zgody (TASK-46): wtyczki, czcionki, samoaktualizacja i scalanie baz. Każda ma dawne
+-- okno z opisem ryzyka i wciąż daje się włączyć wyłącznie tutaj, nigdy z panelu (PC-004).
+function Koligilo:consentItems()
+    local items = {}
+    -- Samoaktualizacja koligilo (TASK-39, PC-019): zgoda tylko stąd, a każdą
+    -- aktualizację i tak potwierdza się osobno, z numerami wersji.
+    table.insert(items, {
+        text_func = function() return T(_("Pozwól aktualizować koligilo (teraz %1)"), self.selfVersion or "?") end,
+        checked_func = function() return self.settings:isTrue("self_update_allowed") end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            local function tell_server()
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(true) end)
+                end
+            end
+            if self.settings:isTrue("self_update_allowed") then
+                self.settings:delSetting("self_update_allowed")
+                self.settings:flush()
+                tell_server()
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Pozwolić koligilo sprawdzać na serwerze, czy jest nowsza wersja koligilo, i proponować jej instalację na tym czytniku?\n\nSama aktualizacja nigdy nie rusza się bez Twojego potwierdzenia w oknie z numerami wersji. To program z pełnym dostępem do czytnika, więc zgadzaj się tylko, jeśli ufasz swojemu serwerowi koligilo."),
+                ok_text = _("Pozwól"),
+                ok_callback = function()
+                    self.settings:makeTrue("self_update_allowed")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server()
+                end,
+            })
+        end,
+    })
+    -- Zgoda na wtyczki tylko tutaj, na czytniku — nigdy z panelu (PC-004).
+    table.insert(items, {
+        text = _("Pozwól instalować wtyczki"),
+        checked_func = function() return self.settings:isTrue("plugins_allowed") end,
+        keep_menu_open = true,
+        -- Zgoda przychodzi asynchronicznie z ConfirmBox, a menu
+        -- przerysowuje ptaszek zaraz po powrocie z callbacku —
+        -- trzeba je odświeżyć ręcznie po „Pozwól”.
+        callback = function(touchmenu_instance)
+            -- Serwer poznaje zgodę tylko z GET /api/v1/sync, więc
+            -- bez synchronizacji panel dalej pokazywałby stary stan.
+            local function tell_server()
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(true) end)
+                end
+            end
+            if self.settings:isTrue("plugins_allowed") then
+                self.settings:delSetting("plugins_allowed")
+                self.settings:flush()
+                tell_server()
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Pozwolić koligilo instalować, aktualizować i usuwać wtyczki przypisane temu czytnikowi w panelu?\n\nWtyczki to programy z pełnym dostępem do czytnika. Każdą zmianę i tak trzeba będzie potwierdzić tutaj, a koligilo nigdy nie rusza wtyczek zainstalowanych ręcznie ani wbudowanych."),
+                ok_text = _("Pozwól"),
+                ok_callback = function()
+                    self.settings:makeTrue("plugins_allowed")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server()
+                end,
+            })
+        end,
+    })
+    -- Czcionki (TASK-36, PC-018): to dane, nie kod, więc zgoda jest jedna,
+    -- a pliki instalują się bez pytania o każdy — ale też tylko stąd.
+    table.insert(items, {
+        text = _("Synchronizuj czcionki"),
+        checked_func = function() return self.settings:isTrue("fonts_allowed") end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            local function tell_server()
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(true) end)
+                end
+            end
+            if self.settings:isTrue("fonts_allowed") then
+                self.settings:delSetting("fonts_allowed")
+                self.settings:flush()
+                tell_server()
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Pozwolić koligilo pobierać czcionki z serwera do katalogu fonts/koligilo i usuwać stamtąd te, które zniknęły z panelu?\n\nCzcionki instalują się bez pytania o każdą. Pliki są sprawdzane sumą sha256, a koligilo nigdy nie rusza czcionek dodanych ręcznie."),
+                ok_text = _("Pozwól"),
+                ok_callback = function()
+                    self.settings:makeTrue("fonts_allowed")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server()
+                end,
+            })
+        end,
+    })
+    -- Scalanie wspólnych baz (TASK-42): koligilo tylko wysyła KOReaderowi zdarzenia
+    -- „synchronizuj statystyki/słowniczek”; konto i folder ustawia się w panelu, a bez
+    -- nich zdarzenia nic nie robią. Zgoda stąd, bo to wysyła dane czytania do chmury.
+    table.insert(items, {
+        text = _("Scalaj statystyki i słowniczek po synchronizacji"),
+        checked_func = function() return self.settings:isTrue("merge_after_sync") end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            local function tell_server()
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(true) end)
+                end
+            end
+            if self.settings:isTrue("merge_after_sync") then
+                self.settings:delSetting("merge_after_sync")
+                self.settings:flush()
+                tell_server()
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Po każdej synchronizacji koligilo scalać też statystyki czytania i słowniczek ze wspólną bazą na koncie w chmurze (Statystyki czytania → Synchronizacja w chmurze oraz Kreator słownictwa → Synchronizacja w chmurze)?\n\nDziała tylko tam, gdzie konto i folder są ustawione (w panelu koligilo albo w KOReaderze). Scalanie jest ciche i nie przerywa czytania; koligilo nic nie wysyła samo — robi to wbudowana synchronizacja KOReadera."),
+                ok_text = _("Włącz"),
+                ok_callback = function()
+                    self.settings:makeTrue("merge_after_sync")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server()
+                end,
+            })
+        end,
+    })
+    return items
+end
+
 function Koligilo:addToMainMenu(menu_items)
     menu_items.koligilo = {
         text = _("koligilo — synchronizacja ustawień"),
@@ -193,123 +325,10 @@ function Koligilo:addToMainMenu(menu_items)
                         self.settings:flush()
                     end,
                 })
-                -- Samoaktualizacja koligilo (TASK-39, PC-019): zgoda tylko stąd, a każdą
-                -- aktualizację i tak potwierdza się osobno, z numerami wersji.
+                -- Wszystkie zgody w jednym miejscu (TASK-46). Zgoda zawsze zostaje na czytniku (PC-004).
                 table.insert(items, {
-                    text_func = function() return T(_("Pozwól aktualizować koligilo (teraz %1)"), self.selfVersion or "?") end,
-                    checked_func = function() return self.settings:isTrue("self_update_allowed") end,
-                    keep_menu_open = true,
-                    callback = function(touchmenu_instance)
-                        local function tell_server()
-                            if NetworkMgr:isOnline() then
-                                UIManager:nextTick(function() self:sync(true) end)
-                            end
-                        end
-                        if self.settings:isTrue("self_update_allowed") then
-                            self.settings:delSetting("self_update_allowed")
-                            self.settings:flush()
-                            tell_server()
-                            return
-                        end
-                        UIManager:show(ConfirmBox:new{
-                            text = _("Pozwolić koligilo sprawdzać na serwerze, czy jest nowsza wersja koligilo, i proponować jej instalację na tym czytniku?\n\nSama aktualizacja nigdy nie rusza się bez Twojego potwierdzenia w oknie z numerami wersji. To program z pełnym dostępem do czytnika, więc zgadzaj się tylko, jeśli ufasz swojemu serwerowi koligilo."),
-                            ok_text = _("Pozwól"),
-                            ok_callback = function()
-                                self.settings:makeTrue("self_update_allowed")
-                                self.settings:flush()
-                                if touchmenu_instance then touchmenu_instance:updateItems() end
-                                tell_server()
-                            end,
-                        })
-                    end,
-                })
-                -- Zgoda na wtyczki tylko tutaj, na czytniku — nigdy z panelu (PC-004).
-                table.insert(items, {
-                    text = _("Pozwól instalować wtyczki"),
-                    checked_func = function() return self.settings:isTrue("plugins_allowed") end,
-                    keep_menu_open = true,
-                    -- Zgoda przychodzi asynchronicznie z ConfirmBox, a menu
-                    -- przerysowuje ptaszek zaraz po powrocie z callbacku —
-                    -- trzeba je odświeżyć ręcznie po „Pozwól”.
-                    callback = function(touchmenu_instance)
-                        -- Serwer poznaje zgodę tylko z GET /api/v1/sync, więc
-                        -- bez synchronizacji panel dalej pokazywałby stary stan.
-                        local function tell_server()
-                            if NetworkMgr:isOnline() then
-                                UIManager:nextTick(function() self:sync(true) end)
-                            end
-                        end
-                        if self.settings:isTrue("plugins_allowed") then
-                            self.settings:delSetting("plugins_allowed")
-                            self.settings:flush()
-                            tell_server()
-                            return
-                        end
-                        UIManager:show(ConfirmBox:new{
-                            text = _("Pozwolić koligilo instalować, aktualizować i usuwać wtyczki przypisane temu czytnikowi w panelu?\n\nWtyczki to programy z pełnym dostępem do czytnika. Każdą zmianę i tak trzeba będzie potwierdzić tutaj, a koligilo nigdy nie rusza wtyczek zainstalowanych ręcznie ani wbudowanych."),
-                            ok_text = _("Pozwól"),
-                            ok_callback = function()
-                                self.settings:makeTrue("plugins_allowed")
-                                self.settings:flush()
-                                if touchmenu_instance then touchmenu_instance:updateItems() end
-                                tell_server()
-                            end,
-                        })
-                    end,
-                })
-                -- Czcionki (TASK-36, PC-018): to dane, nie kod, więc zgoda jest jedna,
-                -- a pliki instalują się bez pytania o każdy — ale też tylko stąd.
-                table.insert(items, {
-                    text = _("Synchronizuj czcionki"),
-                    checked_func = function() return self.settings:isTrue("fonts_allowed") end,
-                    keep_menu_open = true,
-                    callback = function(touchmenu_instance)
-                        local function tell_server()
-                            if NetworkMgr:isOnline() then
-                                UIManager:nextTick(function() self:sync(true) end)
-                            end
-                        end
-                        if self.settings:isTrue("fonts_allowed") then
-                            self.settings:delSetting("fonts_allowed")
-                            self.settings:flush()
-                            tell_server()
-                            return
-                        end
-                        UIManager:show(ConfirmBox:new{
-                            text = _("Pozwolić koligilo pobierać czcionki z serwera do katalogu fonts/koligilo i usuwać stamtąd te, które zniknęły z panelu?\n\nCzcionki instalują się bez pytania o każdą. Pliki są sprawdzane sumą sha256, a koligilo nigdy nie rusza czcionek dodanych ręcznie."),
-                            ok_text = _("Pozwól"),
-                            ok_callback = function()
-                                self.settings:makeTrue("fonts_allowed")
-                                self.settings:flush()
-                                if touchmenu_instance then touchmenu_instance:updateItems() end
-                                tell_server()
-                            end,
-                        })
-                    end,
-                })
-                -- Scalanie wspólnych baz (TASK-42): koligilo tylko wysyła KOReaderowi zdarzenia
-                -- „synchronizuj statystyki/słowniczek”; konto i folder ustawia się w panelu, a bez
-                -- nich zdarzenia nic nie robią. Zgoda stąd, bo to wysyła dane czytania do chmury.
-                table.insert(items, {
-                    text = _("Scalaj statystyki i słowniczek po synchronizacji"),
-                    checked_func = function() return self.settings:isTrue("merge_after_sync") end,
-                    keep_menu_open = true,
-                    callback = function(touchmenu_instance)
-                        if self.settings:isTrue("merge_after_sync") then
-                            self.settings:delSetting("merge_after_sync")
-                            self.settings:flush()
-                            return
-                        end
-                        UIManager:show(ConfirmBox:new{
-                            text = _("Po każdej synchronizacji koligilo scalać też statystyki czytania i słowniczek ze wspólną bazą na koncie w chmurze (Statystyki czytania → Synchronizacja w chmurze oraz Kreator słownictwa → Synchronizacja w chmurze)?\n\nDziała tylko tam, gdzie konto i folder są ustawione (w panelu koligilo albo w KOReaderze). Scalanie jest ciche i nie przerywa czytania; koligilo nic nie wysyła samo — robi to wbudowana synchronizacja KOReadera."),
-                            ok_text = _("Włącz"),
-                            ok_callback = function()
-                                self.settings:makeTrue("merge_after_sync")
-                                self.settings:flush()
-                                if touchmenu_instance then touchmenu_instance:updateItems() end
-                            end,
-                        })
-                    end,
+                    text = _("Zgody (co wolno koligilo na tym czytniku)"),
+                    sub_item_table_func = function() return self:consentItems() end,
                 })
                 table.insert(items, {
                     text = _("Wyślij czcionkę na serwer…"),
@@ -1398,6 +1417,8 @@ function Koligilo:sync(silent, after_move)
     if fonts_allowed then query[#query + 1] = "fonts_allowed=1" end
     local self_update_allowed = self.settings:isTrue("self_update_allowed")
     if self_update_allowed then query[#query + 1] = "self_update=1" end
+    -- zgoda na scalanie statystyk i słowniczka: panel tylko ją pokazuje (TASK-46)
+    if self.settings:isTrue("merge_after_sync") then query[#query + 1] = "merge_after_sync=1" end
     -- wersja wtyczki: panel pokaże czytnik ze starą wtyczką (TASK-49); tylko poprawny X.Y.Z
     if Sync.versionParse(self.selfVersion) then query[#query + 1] = "plugin_version=" .. self.selfVersion end
     -- ekran: żeby panel mógł pokazać podgląd strony także dla modelu, którego nie zna
@@ -1407,6 +1428,9 @@ function Koligilo:sync(silent, after_move)
             scr.isColorScreen and scr:isColorScreen())
     end)
     if ok_screen and screen then query[#query + 1] = "screen=" .. screen end
+    -- wcześniejsze wstrzymanie, którego nie udało się zgłosić osobnym żądaniem (TASK-50)
+    local blocked = Sync.blockedCount(self.settings:readSetting("sync_blocked"))
+    if blocked then query[#query + 1] = "sync_blocked=" .. blocked end
     local code, remote, neterr = request("GET", server .. "/api/v1/sync"
         .. (#query > 0 and ("?" .. table.concat(query, "&")) or ""), token)
     -- TASK-15: dane przeniesiono na inny serwer — ten sam token, nowy adres.
@@ -1437,6 +1461,8 @@ function Koligilo:sync(silent, after_move)
     local plan = Sync.plan(remote.entries, files, base, remote)
 
     if Sync.suspicious(plan, base) then
+        -- panel ma wiedzieć, dlaczego ten czytnik milczy (TASK-50)
+        self:reportBlocked(server, token, #plan.delete)
         -- pokazujemy zawsze, także w trybie cichym: to coś podejrzanego
         UIManager:show(InfoMessage:new{ text = T(_("koligilo wstrzymał synchronizację: wyglądało na to, że %1 ustawień zniknęło naraz z tego urządzenia. Nic nie zostało wysłane ani zmienione.\n\nJeśli to zamierzone, zmień ustawienia pojedynczo albo wyłącz ich grupy w panelu."), #plan.delete) })
         return
@@ -1485,6 +1511,7 @@ function Koligilo:sync(silent, after_move)
     if body.plugins and body.plugins.results then
         self.settings:delSetting("plugin_results")
     end
+    self.settings:delSetting("sync_blocked") -- udana synchronizacja (serwer sam czyści zgłoszenie przy zapisie)
     for _i, id in ipairs(resp and resp.rejected or {}) do
         plan.base[id] = base[id] -- serwer nie przyjął — spróbujemy znowu
     end
@@ -1553,6 +1580,34 @@ function Koligilo:sync(silent, after_move)
         if skipped > 0 then text = text .. "\n\n" .. T(_("Pominięto %1 ustawień, których nie da się przenieść (szczegóły w crash.log)."), skipped) end
         UIManager:show(InfoMessage:new{ text = text, timeout = 4 })
     end
+    self:showConsentsHint(silent)
+end
+
+-- Jednorazowa informacja po pierwszej niecichej synchronizacji, gdzie są zgody (TASK-46).
+-- Niczego nie włącza — tylko mówi, że wszystko jest domyślnie wyłączone i gdzie to zmienić.
+function Koligilo:showConsentsHint(silent)
+    if not Sync.consentsHintDue(self.settings:isTrue("consents_hint_shown"), silent) then return false end
+    self.settings:makeTrue("consents_hint_shown")
+    self.settings:flush()
+    UIManager:show(InfoMessage:new{ text = _("Zgody koligilo: instalowanie wtyczek, czcionki, aktualizacja koligilo i scalanie statystyk są na tym czytniku domyślnie wyłączone. Nic nie zostało włączone.\n\nGdybyś chciał z nich skorzystać, włączysz je tu: Menu → Narzędzia → koligilo → Zgody. Panel koligilo ich nie włącza — zgodę zawsze daje się na czytniku.") })
+    return true
+end
+
+-- Wstrzymanie przez bezpiecznik (TASK-50): najpierw zapamiętujemy je w ustawieniach (gdyby
+-- zgłoszenie się nie udało, pójdzie z najbliższą synchronizacją, która dojdzie do serwera),
+-- potem zgłaszamy lekkim żądaniem `report_only` — bez wartości i bez ruszania reszty stanu.
+-- Zwraca true, gdy serwer przyjął zgłoszenie. Błąd sieci nie może zepsuć niczego innego.
+function Koligilo:reportBlocked(server, token, count)
+    local rec = Sync.blockedRecord(count, os.time())
+    if not rec then return false end
+    self.settings:saveSetting("sync_blocked", rec)
+    self.settings:flush()
+    local ok, code = pcall(request, "GET", server .. "/api/v1/sync?report_only=1&sync_blocked=" .. rec.deleted, token)
+    if not ok or code ~= 200 then
+        logger.warn("koligilo: zgłoszenie wstrzymanej synchronizacji", ok and code or "wyjątek")
+        return false
+    end
+    return true
 end
 
 -- Wyjątek w cudzej wtyczce (statystyki, słowniczek) nie może zepsuć synchronizacji.
