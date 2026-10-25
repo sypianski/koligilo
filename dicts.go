@@ -36,9 +36,10 @@ import (
 // to StarDict (.ifo + .idx + .dict[.dz]), i zawsze oddaje czytnikowi ZIP, który
 // instalator wtyczek już umie rozpakować (libarchive w KOReaderze).
 //
-// UWAGA: pliki .lua są wycinane. KOReader wykonuje <słownik>.lua leżący obok
-// .ifo jako kod (fix_html_func), a kod wolno instalować tylko za potwierdzeniem
-// na czytniku (PC-004) — tu go nie ma, więc zostałby tylko tą drogą.
+// UWAGA: zostają tylko znane typy plików słownika (dictKeepExt), reszta jest
+// pomijana. KOReader wykonuje <słownik>.lua leżący obok .ifo jako kod
+// (fix_html_func), a kod wolno instalować tylko za potwierdzeniem na czytniku
+// (PC-004) — tu go nie ma, więc zostałby tylko tą drogą.
 
 const (
 	dictMaxZip      = 300 << 20 // znormalizowany ZIP jednego słownika
@@ -52,12 +53,12 @@ const (
 
 type DictFile struct {
 	SHA256    string    `json:"sha256"`
-	Name      string    `json:"name"`     // katalog na czytniku: data/dict/koligilo/<Name>
-	Title     string    `json:"title"`    // bookname z .ifo (to widzi użytkownik w KOReaderze)
-	Words     int64     `json:"words"`    // wordcount z .ifo (0 = brak)
-	Size      int64     `json:"size"`     // rozmiar ZIP-a
-	Unpacked  int64     `json:"unpacked"` // rozmiar po rozpakowaniu (miejsce na czytniku)
-	Dropped   int       `json:"dropped,omitempty"`
+	Name      string    `json:"name"`                 // katalog na czytniku: data/dict/koligilo/<Name>
+	Title     string    `json:"title"`                // bookname z .ifo (to widzi użytkownik w KOReaderze)
+	Words     int64     `json:"words"`                // wordcount z .ifo (0 = brak)
+	Size      int64     `json:"size"`                 // rozmiar ZIP-a
+	Unpacked  int64     `json:"unpacked"`             // rozmiar po rozpakowaniu (miejsce na czytniku)
+	Dropped   int       `json:"dropped,omitempty"`    // pominięte pliki spoza słownika (m.in. .lua)
 	Source    string    `json:"source"`               // upload | katalog
 	SourceRef string    `json:"source_ref,omitempty"` // id pozycji katalogu
 	Approved  bool      `json:"approved"`
@@ -141,6 +142,12 @@ func cleanArchivePath(raw string) (string, bool, error) {
 	for _, e := range parts {
 		if e == "" || e == ".." || e == "." {
 			return "", false, dictErr("niedozwolona ścieżka w archiwum: %q", clip(raw, 80))
+		}
+		// Czytniki trzymają dane na FAT/exFAT/NTFS: tam końcowa kropka lub spacja jest
+		// obcinana ("x.lua." → "x.lua"), a znaki :*?"<>| są zakazane albo podmieniane.
+		// Odrzucamy takie nazwy, żeby filtr rozszerzeń widział to, co trafi na dysk.
+		if strings.HasSuffix(e, ".") || strings.HasSuffix(e, " ") || strings.ContainsAny(e, `:*?"<>|`) {
+			return "", false, dictErr("niedozwolona nazwa w archiwum: %q", clip(raw, 80))
 		}
 		for _, r := range e {
 			if r < 0x20 || r == 0x7f {
@@ -277,6 +284,28 @@ func ifoField(ifo []byte, key string) string {
 	return ""
 }
 
+// dictKeepExt — co z archiwum słownika zostaje. Biała lista, nie czarna: KOReader
+// wykonuje <słownik>.lua jako kod, a wariantów zapisu ".lua" jest za dużo, żeby je
+// wyliczać (wielkość liter, FAT, kompresja). Reszta (README, LICENSE, kod, nieznane
+// formaty) jest pomijana i liczona w DictFile.Dropped.
+var dictKeepExt = map[string]bool{
+	".ifo": true, ".idx": true, ".dict": true, ".syn": true, ".css": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".svg": true, ".webp": true, ".bmp": true,
+	".ogg": true, ".oga": true, ".opus": true, ".mp3": true, ".wav": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".otf": true,
+}
+
+// dictFileKept: czy plik słownika zostaje w znormalizowanym ZIP-ie.
+func dictFileKept(p string) bool {
+	low := strings.ToLower(path.Base(p))
+	for _, suf := range []string{".idx.gz", ".dict.dz", ".syn.dz", ".syn.gz"} {
+		if strings.HasSuffix(low, suf) {
+			return true
+		}
+	}
+	return dictKeepExt[path.Ext(low)]
+}
+
 // zipStoredExt — pliki, które już są skompresowane; nie pakujemy ich drugi raz.
 var zipStoredExt = map[string]bool{".dz": true, ".gz": true, ".zip": true, ".png": true, ".jpg": true,
 	".jpeg": true, ".gif": true, ".ogg": true, ".mp3": true, ".wav": true, ".woff": true, ".woff2": true, ".webp": true}
@@ -306,7 +335,7 @@ func normalizeDict(src, dst, name string) (string, dictMeta, error) {
 		if skip || p == "" {
 			return nil
 		}
-		if strings.EqualFold(path.Ext(p), ".lua") {
+		if !dictFileKept(p) {
 			meta.Dropped++
 			return nil
 		}
@@ -418,7 +447,7 @@ func normalizeDict(src, dst, name string) (string, dictMeta, error) {
 	written := 0
 	err = walk(func(raw string, size int64, r io.Reader) error {
 		p, skip, err := cleanArchivePath(raw)
-		if err != nil || skip || p == "" || strings.EqualFold(path.Ext(p), ".lua") {
+		if err != nil || skip || p == "" || !dictFileKept(p) {
 			return err
 		}
 		p = rel(p)
