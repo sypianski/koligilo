@@ -71,6 +71,9 @@ const S = {
   plugMsg: null,       // komunikat po zapisie przypisań: {ok, text}
   favBusy: null,       // klucz ulubionej w trakcie zapisu
   favOnly: false,      // filtr „Tylko ulubione” w macierzy „Zainstalowane” (TASK-20 AC2)
+  otherQ: "",         // pole „Szukaj wśród” w liście „Ręczne i wbudowane” (TASK-41)
+  otherPart: false,    // filtr „Tylko na części czytników” w tej liście
+  otherOpen: false,    // lista „Ręczne i wbudowane” rozwinięta?
   gallery: null,       // /api/admin/gallery → {repos, total, page, updated_at, note, stale}
   galQ: "",
   galSort: "stars",
@@ -3263,8 +3266,8 @@ function pluginRows() {
   const other = new Map();
   for (const d of devs) for (const p of d.plugin_inventory || []) {
     if (managed.has(p.dir)) continue;
-    if (!other.has(p.dir)) other.set(p.dir, []);
-    other.get(p.dir).push(d.name);
+    if (!other.has(p.dir)) other.set(p.dir, new Set());
+    other.get(p.dir).add(d.id);
   }
   const versions = S.plugins || [];
   const rows = [...managed].sort((a, b) => {
@@ -3275,6 +3278,80 @@ function pluginRows() {
 }
 
 function plugGlyph(k) { return h("span", { class: "pg " + k, "aria-hidden": "true" }, PLUG_STATE[k].g); }
+
+// Skrócone nazwy znaków w legendzie; pełne zdania (PLUG_STATE.text) są w dymkach komórek i w szczegółach wtyczki.
+const PLUG_SHORT = { ok: "jest", upd: "nowsza", wait: "czeka", consent: "brak zgody", manual: "ręczna" };
+const PLUG_ATTN = new Set(["upd", "wait", "consent", "rm", "rejected", "err"]);
+
+// Wiersz „wymaga uwagi”: coś czeka na czytniku albo błąd, jest aktualizacja z galerii
+// albo wersja z czytnika czeka na akceptację w panelu.
+function plugNeedsAttn(dir, devs) {
+  return !!updateFor(dir) || pendingVersions(dir).length > 0 || devs.some(d => PLUG_ATTN.has(plugCell(d, dir).k));
+}
+
+// Jedno zdanie stanu nad tabelą (z tych samych komórek, co macierz; nic nowego w danych).
+function plugSentence(rows, devs) {
+  const cnt = {};
+  for (const dir of rows) for (const d of devs) { const k = plugCell(d, dir).k; cnt[k] = (cnt[k] || 0) + 1; }
+  const p = [], n = k => cnt[k] || 0;
+  if (n("wait")) p.push(`${n("wait")} ${plPl(n("wait"), "wtyczka czeka", "wtyczki czekają", "wtyczek czeka")} na potwierdzenie na czytniku`);
+  if (n("upd")) p.push(`${n("upd")} ${plPl(n("upd"), "aktualizacja czeka", "aktualizacje czekają", "aktualizacji czeka")} na potwierdzenie`);
+  if (n("rm")) p.push(`${n("rm")} ${plPl(n("rm"), "usunięcie czeka", "usunięcia czekają", "usunięć czeka")} na potwierdzenie`);
+  const bad = n("err") + n("rejected");
+  if (bad) p.push(`${bad} ${plPl(bad, "błąd lub odrzucenie", "błędy lub odrzucenia", "błędów lub odrzuceń")} na czytniku`);
+  const nc = devs.filter(d => !d.plugins_allowed).length;
+  if (nc) p.push(`${nc} ${plPl(nc, "czytnik bez zgody", "czytniki bez zgody", "czytników bez zgody")} na wtyczki`);
+  return p.length ? p.join(" · ") + "." : "Wszystko zainstalowane na czytnikach ze zgodą.";
+}
+
+// Macierz wtyczka × czytnik: zwarta (znak i wersja w jednej linii), wiersze z uwagami na górze.
+function pluginTable(rows, devs) {
+  const need = rows.filter(dir => plugNeedsAttn(dir, devs)), rest = rows.filter(dir => !need.includes(dir));
+  const both = need.length > 0 && rest.length > 0;
+  const grp = (label, list) => h("tr", { class: "grp" },
+    h("th", { scope: "colgroup", colspan: String(devs.length + 1) }, `${label} (${list.length})`));
+  return [
+    h("p", { class: "plugsent", id: "plug-sentence" }, plugSentence(rows, devs)),
+    h("div", { class: "matrix-wrap" }, h("table", { class: "matrix pmx dense", "aria-label": "Wtyczki na czytnikach" },
+      h("thead", {}, h("tr", {},
+        h("th", { scope: "col" }, "Wtyczka"),
+        devs.map(d => h("th", { scope: "col", class: "cell" }, d.name,
+          !d.plugins_allowed && h("span", { class: "badge warn", title: CONSENT_SHORT + ". " + PLUG_STATE.consent.hint }, "bez zgody na wtyczki"))))),
+      h("tbody", {},
+        both && grp("Wymaga uwagi na czytniku", need), need.map(dir => pluginMatrixRow(dir, devs)),
+        both && grp("Bez zmian", rest), rest.map(dir => pluginMatrixRow(dir, devs)))))];
+}
+
+// „Ręczne i wbudowane”: koligilo ich nie rusza, lista tylko pokazuje, co zgłosiły czytniki. Nazwy w kolumnach,
+// przy każdej kropki ●/○ w kolejności czytników (kształt, nie kolor), szukanie i filtr „tylko na części”.
+function otherPluginsBlock(other, devs) {
+  const all = [...other].map(([dir, ids]) => ({ dir, ids, label: pluginTitle(dir) }))
+    .sort((a, b) => a.label.localeCompare(b.label, "pl"));
+  const partial = x => x.ids.size < devs.length;
+  const q = S.otherQ.trim().toLowerCase();
+  const hits = all.filter(x => (!S.otherPart || partial(x)) && (!q || (x.label + " " + x.dir).toLowerCase().includes(q)));
+  const nPart = all.filter(partial).length;
+  const dots = x => h("span", { class: "dots", "aria-label": devs.map(d => `${d.name}: ${x.ids.has(d.id) ? "jest" : "brak"}`).join(", "),
+    title: devs.map(d => `${d.name}: ${x.ids.has(d.id) ? "jest" : "brak"}`).join("\n") }, devs.map(d => x.ids.has(d.id) ? "●" : "○").join(""));
+  return h("details", { class: "card otherplug", open: S.otherOpen, ontoggle: ev => { S.otherOpen = ev.target.open; } },
+    h("summary", {}, `Ręczne i wbudowane na czytnikach (${all.length})`),
+    h("p", { class: "muted small" }, "koligilo ich nie rusza — nie aktualizuje ani nie usuwa. Lista tylko pokazuje, co czytniki zgłosiły."),
+    h("div", { class: "row otherbar" },
+      h("input", { type: "search", id: "f-otherq", "aria-label": "Szukaj wśród ręcznych i wbudowanych", placeholder: `Szukaj wśród ${all.length}…`, value: S.otherQ,
+        oninput: ev => {
+          const pos = ev.target.selectionStart;
+          S.otherQ = ev.target.value; render();
+          const el = document.getElementById("f-otherq");
+          if (el) { el.focus(); el.setSelectionRange(pos, pos); }
+        } }),
+      h("button", { type: "button", class: "chip" + (!S.otherPart ? " on" : ""), "aria-pressed": String(!S.otherPart),
+        onclick: () => { S.otherPart = false; render(); } }, `Wszystkie (${all.length})`),
+      h("button", { type: "button", class: "chip" + (S.otherPart ? " on" : ""), "aria-pressed": String(S.otherPart),
+        title: "Wtyczki, których nie ma na wszystkich czytnikach", onclick: () => { S.otherPart = true; render(); } }, `Tylko na części (${nPart})`)),
+    h("p", { class: "muted small" }, "● jest na czytniku, ○ nie ma. Kolejność: " + devs.map(d => d.name).join(", ") + "."),
+    hits.length === 0 ? h("p", { class: "muted" }, q ? `Nic nie pasuje do „${S.otherQ.trim()}”.` : "Brak wtyczek do pokazania.")
+      : h("div", { class: "othercols" }, hits.map(x => h("div", {}, x.label, " ", dots(x)))));
+}
 
 function installedPanel() {
   const devs = S.state.devices, { rows, other } = pluginRows();
@@ -3297,21 +3374,12 @@ function installedPanel() {
       : rows.length === 0
         ? h("p", { class: "muted" }, S.favOnly ? "Brak ulubionych wtyczek w magazynie."
             : "Panel nie ma jeszcze żadnej wtyczki — zacznij od „＋ Dodaj wtyczkę”.")
-        : h("div", { class: "matrix-wrap" }, h("table", { class: "matrix pmx", "aria-label": "Wtyczki na czytnikach" },
-            h("thead", {}, h("tr", {},
-              h("th", { scope: "col" }, "Wtyczka"),
-              devs.map(d => h("th", { scope: "col", class: "cell" }, d.name,
-                !d.plugins_allowed && h("span", { class: "badge warn", title: CONSENT_SHORT + ". " + PLUG_STATE.consent.hint }, "bez zgody na wtyczki"))))),
-            h("tbody", {}, rows.map(dir => pluginMatrixRow(dir, devs))))),
+        : pluginTable(rows, devs),
     S.plugSel && plugDetail(),
     h("div", { class: "legend small muted", "aria-label": "Znaczenie znaków" },
-      ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", {}, plugGlyph(k), PLUG_STATE[k].text.replace(" na czytniku", ""))),
-      h("span", {}, h("b", {}, "⇄ wspólna"), " — trafia do każdego nowego czytnika i do wszystkich obecnych")),
-    other.size > 0 && h("details", { class: "card otherplug" },
-      h("summary", {}, `Ręczne i wbudowane na czytnikach (${other.size})`),
-      h("p", { class: "muted small" }, "koligilo ich nie rusza — nie aktualizuje ani nie usuwa. Lista tylko pokazuje, co czytniki zgłosiły."),
-      h("ul", {}, [...other].sort((a, b) => a[0].localeCompare(b[0])).map(([dir, names]) =>
-        h("li", {}, pluginLabel(dir), " ", h("span", { class: "muted small" }, "— " + names.join(", ")))))),
+      ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", { title: PLUG_STATE[k].text }, plugGlyph(k), PLUG_SHORT[k])),
+      h("span", { title: "Trafia do każdego nowego czytnika i do wszystkich obecnych" }, h("b", {}, "⇄"), " wspólna")),
+    other.size > 0 && otherPluginsBlock(other, devs),
     !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-top:16px" },
       h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),

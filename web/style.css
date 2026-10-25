@@ -460,6 +460,21 @@ button.pmopen:hover { text-decoration: underline; }
 .otherplug { margin-top: 16px; }
 .otherplug summary { cursor: pointer; font-weight: 600; }
 
+/* macierz wtyczek, wariant zwarty (TASK-41): znak i wersja w jednej linii, kolumny czytników dzielą resztę szerokości */
+.plugsent { margin: 0 0 8px; color: var(--ink-2); }
+.pmx.dense th, .pmx.dense td { padding: 5px 8px; }
+.pmx.dense thead th { padding-top: 0; }
+.pmx.dense tbody th:first-child { width: 32%; }
+.pmx.dense td.cell { width: auto; white-space: nowrap; }
+.pmx.dense .pcell { flex-direction: row; align-items: center; gap: 6px; min-width: 0; padding: 3px 8px; }
+.pmx tr.grp th { text-align: left; font-size: 12.5px; font-weight: 700; color: var(--ink-2); background: var(--accent-soft); padding: 4px 8px; }
+/* lista „Ręczne i wbudowane”: szukanie, filtr, kolumny nazw z kropkami */
+.otherbar { gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+.otherbar input { flex: 1 1 14em; max-width: 22em; }
+.othercols { columns: 14em 3; column-gap: 18px; }
+.othercols > div { break-inside: avoid; padding: 2px 0; }
+.dots { letter-spacing: 2px; margin-left: 4px; color: var(--ink); }
+
 /* jedna strona „Wtyczki” (TASK-33): pasek akcji, kartka „Trzy kroki”, arkusz „Dodaj wtyczkę” */
 .plughead { margin: 0 0 14px; gap: 10px; }
 .steps3 { margin: 0 0 16px; }
