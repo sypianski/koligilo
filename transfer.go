@@ -69,6 +69,7 @@ func ExportArchive(st *Store, w io.Writer) error {
 	st.mu.Lock()
 	c := st.S
 	c.AdminHash, c.MovedTo = "", ""
+	c.Dicts = nil // słowniki są duże i wracają z katalogu — nie jadą w archiwum przenosin (PC-020)
 	stateJSON, err := json.MarshalIndent(&c, "", "  ")
 	shas := make([]string, 0, len(st.S.Plugins))
 	for sha := range st.S.Plugins {

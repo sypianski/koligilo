@@ -46,6 +46,11 @@ type Device struct {
 	FontReportAt  *time.Time      `json:"font_report_at,omitempty"`
 	FontsOff      []string        `json:"fonts_off,omitempty"` // rodziny wyłączone dla tego czytnika (TASK-38); domyślnie wszystkie włączone
 
+	// Słowniki (dicts.go, PC-020). DictsAllowed ustawia wyłącznie czytnik.
+	DictsAllowed  bool            `json:"dicts_allowed"`
+	DictInventory []InstalledDict `json:"dict_inventory,omitempty"`
+	DictReportAt  *time.Time      `json:"dict_report_at,omitempty"`
+
 	// Wtyczka koligilo na czytniku (TASK-49). Oba pola zgłasza wyłącznie czytnik przy
 	// synchronizacji; SelfUpdateAllowed to zgoda z menu (PC-019), panel jej nie ustawia.
 	PluginVersion     string `json:"plugin_version,omitempty"`
@@ -206,6 +211,7 @@ type State struct {
 	Values    map[string]*Value         `json:"values"`
 	Plugins   map[string]*PluginVersion `json:"plugins"`         // sha256 → wersja
 	Fonts     map[string]*FontFile      `json:"fonts,omitempty"` // sha256 → plik czcionki (fonts.go)
+	Dicts     map[string]*DictFile      `json:"dicts,omitempty"` // sha256 → słownik StarDict (dicts.go)
 	// Favorites (TASK-20): ulubione wtyczki, wspólne dla panelu na komputerze i
 	// na serwerze — "gh:owner/repo" (galeria) albo "dir:nazwa.koplugin"
 	// (magazyn); prefiks rozróżnia obie przestrzenie nazw. Nie oznacza
@@ -257,6 +263,9 @@ func OpenStore(dir string) (*Store, string, error) {
 	}
 	if st.S.Fonts == nil {
 		st.S.Fonts = map[string]*FontFile{}
+	}
+	if st.S.Dicts == nil {
+		st.S.Dicts = map[string]*DictFile{}
 	}
 	st.S.pending = map[string]*PairRequest{}
 	// Pierwsze uruchomienie: generujemy token administratora i zwracamy go

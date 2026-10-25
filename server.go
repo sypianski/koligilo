@@ -64,6 +64,7 @@ func (s *Server) Routes() *http.ServeMux {
 	s.pluginRoutes(m)
 	s.fontRoutes(m)
 	s.fontCatalogRoutes(m)
+	s.dictRoutes(m)
 	s.galleryRoutes(m)
 	s.transferRoutes(m)
 	m.HandleFunc("GET /koligilo.koplugin.zip", servePluginZip)
@@ -212,6 +213,11 @@ func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
 	if fs := s.st.FontTarget(d, fontsAllowed); fontsAllowed {
 		out["fonts"] = fontsWire(fs)
 	}
+	// Słowniki — tak samo (PC-020).
+	dictsAllowed := r.URL.Query().Get("dicts_allowed") == "1"
+	if ds := s.st.DictTarget(d, dictsAllowed); dictsAllowed {
+		out["dicts"] = dictsWire(ds)
+	}
 	// Aktualizacja samego koligilo — tak samo tylko dla czytnika, który sam zgłosił zgodę
 	// (TASK-39, PC-019). Serwer tylko wskazuje wersję; instaluje wyłącznie czytnik, po potwierdzeniu.
 	if r.URL.Query().Get("self_update") == "1" {
@@ -230,6 +236,7 @@ func (s *Server) syncPost(w http.ResponseWriter, r *http.Request, d *Device) {
 		Note     string            `json:"note"`
 		Plugins  *PluginReport     `json:"plugins"`
 		Fonts    *FontReport       `json:"fonts"`
+		Dicts    *DictReport       `json:"dicts"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "zły JSON"})
@@ -248,6 +255,9 @@ func (s *Server) syncPost(w http.ResponseWriter, r *http.Request, d *Device) {
 	}
 	if err == nil && in.Fonts != nil {
 		err = s.st.ReportFonts(d, in.Fonts)
+	}
+	if err == nil && in.Dicts != nil {
+		err = s.st.ReportDicts(d, in.Dicts)
 	}
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
