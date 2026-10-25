@@ -1085,3 +1085,9 @@ li.row progress { vertical-align: middle; }
 .ftile ul.plain.fam-files { margin: 2px 0 0; }
 ul.plain.fam-files { margin: 6px 0 0 18px; }
 .fsample { font-size: 1.25rem; line-height: 1.35; margin: 4px 0 2px 18px; overflow-wrap: anywhere; }
+/* TASK-58: kafle podsumowania i macierz „słownik × czytnik” */
+.dtiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--card-gap); margin: 6px 0 14px; }
+.dtile { border: 1px solid var(--hair); border-radius: 8px; padding: 8px 14px; display: flex; flex-direction: column; background: var(--surface); min-width: 0; }
+.dtile b { font-size: 1.35rem; line-height: 1.2; }
+@media (max-width: 520px) { .dtiles { grid-template-columns: minmax(0, 1fr); } .dtile { flex-direction: row; align-items: baseline; gap: 10px; } }
+.dictmx td.cell { width: auto; min-width: 7em; font-size: 16px; }

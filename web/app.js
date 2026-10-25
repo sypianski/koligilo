@@ -4925,16 +4925,16 @@ async function deleteDict(d) {
   return refresh();
 }
 
-function dictSentence(dicts, active) {
+// Kafle na górze (TASK-58): słowniki · MB w panelu · czytniki ze zgodą. Trwające pobieranie ma własny pasek (dictJobBar).
+function dictTiles(dicts, active) {
   const devs = S.state.devices || [];
-  const p = [];
-  const zip = active.reduce((n, d) => n + d.size, 0), un = active.reduce((n, d) => n + d.unpacked, 0);
-  p.push(active.length ? `${active.length} ${plPl(active.length, "słownik", "słowniki", "słowników")} · ${fmtSize(zip)} w panelu, ${fmtSize(un)} na czytniku` : "brak słowników w panelu");
-  const noc = devs.filter(d => !d.dicts_allowed).length;
-  if (noc) p.push(`${noc} ${plPl(noc, "czytnik bez zgody", "czytniki bez zgody", "czytników bez zgody")}`);
-  const run = Object.values(S.dictJobs).filter(j => j.state !== "błąd").length;
-  if (run) p.push(`${run} ${plPl(run, "pobieranie trwa", "pobierania trwają", "pobierań trwa")}`);
-  return h("p", { class: "muted", id: "dict-sentence" }, p.join(" · "));
+  const zip = active.reduce((n, d) => n + d.size, 0);
+  const ok = devs.filter(d => d.dicts_allowed).length;
+  const tile = (big, label) => h("div", { class: "dtile" }, h("b", {}, big), h("span", { class: "muted small" }, label));
+  return h("div", { class: "dtiles", id: "dict-tiles", role: "group", "aria-label": "Podsumowanie słowników" },
+    tile(String(active.length), plPl(active.length, "słownik", "słowniki", "słowników")),
+    tile(fmtSize(zip), "w panelu"),
+    tile(devs.length ? `${ok} z ${devs.length}` : "0", devs.length ? plPl(devs.length, "czytnik ze zgodą", "czytniki ze zgodą", "czytników ze zgodą") : "czytników"));
 }
 
 function showDictView(id) { S.dictView = id; S.dictMsg = null; render(); document.getElementById("dicttab-" + id)?.focus(); }
@@ -5057,39 +5057,52 @@ function dictCatalogPane() {
         `Pokaż więcej (${fmtCount(hits.length - shown.length)} ${plPl(hits.length - shown.length, "została", "zostały", "zostało")})`)));
 }
 
-function dictDeviceRow(d, active) {
-  const st = Dicts.deviceState(d, active);
-  let state, cls = "muted small";
-  const names = list => list.slice(0, 5).join(", ") + (list.length > 5 ? ` i ${list.length - 5} ${plPl(list.length - 5, "inny", "inne", "innych")}` : "");
-  if (st.kind === "no-consent") state = `bez zgody — na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki`;
-  else if (st.kind === "empty") state = "zgoda jest, w panelu nie ma jeszcze słowników";
-  else if (st.kind === "waiting") state = "zgoda jest, czeka na pierwszą synchronizację";
-  else if (st.kind === "ok") { state = `wszystkie (${st.have}) zainstalowane`; cls = "ok small"; }
-  else {
-    state = `zainstalowane ${st.have} z ${st.total}`;
-    if (st.missing.length) state += `; brakuje: ${names(st.missing)}`;
-    if (st.stale.length) state += `; do aktualizacji: ${names(st.stale)}`;
-    state += " — reszta przy następnej synchronizacji (do 150 MB na raz)";
-  }
-  return h("li", {}, h("b", {}, d.name), " — ", h("span", { class: cls }, state));
+// Macierz słownik × czytnik (TASK-58): ● jest · ○ czeka na synchronizację · ↻ inna wersja · ⊘ czytnik bez zgody.
+// Niczego tu nie zmieniasz — zgodę na słowniki daje wyłącznie czytnik (menu koligilo → Zgody).
+const DICT_CELL = {
+  ok: ["●", "jest na czytniku"], missing: ["○", "czeka na synchronizację"],
+  stale: ["↻", "czytnik ma starszą wersję"], "no-consent": ["⊘", "czytnik bez zgody na słowniki"],
+};
+function dictMatrix(active, devs) {
+  const rows = [...active].sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, "pl"));
+  const head = h("thead", {}, h("tr", {},
+    h("th", { scope: "col" }, "Słownik"),
+    devs.map(d => {
+      const st = Dicts.deviceState(d, active);
+      const sub = st.kind === "no-consent" ? "bez zgody" : st.kind === "waiting" ? "czeka na pierwszą synchronizację" : `${st.have} z ${st.total}`;
+      return h("th", { scope: "col" }, d.name, h("div", { class: "muted small", style: "font-weight:400" }, sub));
+    })));
+  const body = rows.map(d => h("tr", {},
+    h("th", { scope: "row", title: d.title && d.title !== d.name ? d.title : null }, d.name),
+    devs.map(dev => {
+      const [sym, text] = DICT_CELL[Dicts.cellState(dev, d)];
+      return h("td", { class: "cell", title: text }, h("span", { "aria-hidden": "true" }, sym), h("span", { class: "sr" }, text));
+    })));
+  return h("div", { class: "matrix-wrap" },
+    h("table", { class: "matrix pmx dense dictmx", "aria-label": "Słowniki na czytnikach" }, head, h("tbody", {}, body)));
 }
 
-function dictDevicesPane(active) {
+function dictDevicesBlock(active) {
   const devs = S.state.devices;
-  return h("section", { class: "card" },
-    h("h3", { style: "margin-top:0" }, "Czytniki"),
-    h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu."),
+  const noc = devs.filter(d => !d.dicts_allowed);
+  return h("section", { class: "card", id: "dict-devices" },
+    h("h3", { style: "margin-top:0" }, "Na czytnikach"),
     devs.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
-      : h("ul", { class: "plain" }, devs.map(d => dictDeviceRow(d, active))));
+      : active.length === 0 ? h("p", { class: "muted" }, "W panelu nie ma jeszcze słowników. Każdy czytnik ze zgodą dostanie wszystkie, które dodasz.")
+      : [h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu (do 150 MB na jedną synchronizację)."),
+        dictMatrix(active, devs),
+        h("p", { class: "muted small", style: "margin-bottom:0" }, "● jest na czytniku · ○ czeka na synchronizację · ↻ czytnik ma starszą wersję · ⊘ czytnik bez zgody"),
+        noc.length > 0 && h("p", { class: "muted small", style: "margin-bottom:0" },
+          `Bez zgody: ${noc.map(d => d.name).join(", ")}. Zgodę daje się na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki.`)]);
 }
 
 function dictsTab() {
   const dicts = S.dicts || [];
   const active = dicts.filter(d => d.active && d.approved);
   const cur = DICT_VIEWS.some(([id]) => id === S.dictView) ? S.dictView : "lib";
-  const body = cur === "lib" ? dictLibraryPane(dicts) : cur === "cat" ? dictCatalogPane() : dictDevicesPane(active);
+  const body = cur === "lib" ? dictLibraryPane(dicts) : cur === "cat" ? dictCatalogPane() : dictDevicesBlock(active);
   return h("div", {},
-    dictSentence(dicts, active),
+    dictTiles(dicts, active),
     dictTablist(cur, { lib: dicts.length, dev: S.state.devices.length }),
     S.dictMsg && h("p", { class: S.dictMsg.ok ? "ok" : "err", role: "status" }, S.dictMsg.text),
     h("div", { id: "dictpanel", role: "tabpanel", "aria-labelledby": "dicttab-" + cur }, body));

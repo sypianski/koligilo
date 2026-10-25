@@ -61,6 +61,15 @@ const Dicts = (() => {
     return { kind, have, total: active.length, missing, stale, reported };
   }
 
+  // Komórka macierzy „słownik × czytnik” (TASK-58): ok | stale | missing | no-consent.
+  // dev.dict_inventory to lista {name, sha256} zgłoszona przez czytnik; d to słownik z panelu.
+  function cellState(dev, d) {
+    if (!dev.dicts_allowed) return "no-consent";
+    const got = (dev.dict_inventory || []).find(x => x.name === d.name);
+    if (!got) return "missing";
+    return got.sha256 === d.sha256 ? "ok" : "stale";
+  }
+
   // Zadanie pobierania z serwera: tekst postępu („pobieranie 12,3 z 45,6 MB (27%)”).
   function jobText(job, fmtSize) {
     if (!job) return "";
@@ -79,7 +88,7 @@ const Dicts = (() => {
     return Object.keys(prev || {}).filter(id => prev[id].state !== "błąd" && !(next || {})[id]);
   }
 
-  return { ORIGINS, fold, filterCatalog, langCounts, deviceState, jobText, running, finished };
+  return { ORIGINS, fold, filterCatalog, langCounts, deviceState, cellState, jobText, running, finished };
 })();
 
 if (typeof module !== "undefined") module.exports = Dicts;

@@ -64,5 +64,14 @@ eq("running: pusto", D.running({}), false);
 eq("finished: zniknęło", D.finished({ a: { state: "pobieranie" }, b: { state: "błąd" }, c: { state: "przetwarzanie" } }, { c: { state: "przetwarzanie" } }), ["a"]);
 eq("finished: brak poprzednich", D.finished(undefined, { a: {} }), []);
 
+// macierz słownik × czytnik (TASK-58)
+const dA = { name: "A", sha256: "1" };
+const dev = (allowed, inv) => ({ dicts_allowed: allowed, dict_inventory: inv });
+eq("komórka: jest", D.cellState(dev(true, [{ name: "A", sha256: "1" }]), dA), "ok");
+eq("komórka: inna suma", D.cellState(dev(true, [{ name: "A", sha256: "2" }]), dA), "stale");
+eq("komórka: brak", D.cellState(dev(true, [{ name: "B", sha256: "1" }]), dA), "missing");
+eq("komórka: bez inwentarza", D.cellState(dev(true), dA), "missing");
+eq("komórka: bez zgody", D.cellState(dev(false, [{ name: "A", sha256: "1" }]), dA), "no-consent");
+
 console.log(fail ? `${fail} testów nie przeszło` : "dicts: ok");
 process.exit(fail ? 1 : 0);
