@@ -19,6 +19,7 @@
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 
 :root {
+  --card-gap: 12px; /* odstęp między sąsiednimi kartami (TASK-41) */
   /* papier i tusz */
   --paper: #f7f7f4;      /* karty, pasek zakładek */
   --page: #e6e6e2;       /* tło strony — szarość wygaszonego e-ink */
@@ -286,7 +287,7 @@ table.matrix { width: 100%; border-collapse: collapse; }
 .never li { margin: 3px 0; }
 
 /* ustawienia po ludzku (TASK-22) */
-.sgroup { margin-bottom: 14px; }
+.sgroup { margin-bottom: var(--card-gap); }
 .sgroup h3 { font-size: 15.5px; margin: 0 0 4px; }
 .srow { display: block; padding: 0 8px; margin: 0 -8px; border-top: 1px solid var(--border); border-radius: 6px; }
 /* TASK-32: wiersz zwinięty = kropka, nazwa, wartość tekstem; kontrolka rozwija się pod nim */
@@ -358,7 +359,7 @@ details.adv .vgroup { box-shadow: none; background: var(--field); }
 
 
 /* wspólne wartości */
-.vgroup { margin-bottom: 14px; }
+.vgroup { margin-bottom: var(--card-gap); }
 .vgroup h3 { font-size: 15.5px; margin: 0 0 8px; }
 .vrow { display: grid; grid-template-columns: minmax(180px, 280px) 1fr; gap: 12px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 13px; }
 .vrow .k { font-family: var(--mono); font-size: 12px; word-break: break-all; -webkit-user-select: text; user-select: text; }
@@ -378,7 +379,7 @@ details.adv .vgroup { box-shadow: none; background: var(--field); }
 .prose p, .prose li { margin: 6px 0; }
 
 /* konta */
-.acc { margin-bottom: 14px; }
+.acc { margin-bottom: var(--card-gap); }
 .acc h3 { font-size: 16px; margin: 0 0 4px; }
 .acc h4 { font-size: 14px; margin: 0 0 6px; }
 .acc > p.muted { margin: 0 0 6px; }
@@ -453,11 +454,11 @@ button.pmopen:hover { text-decoration: underline; }
 .pg.manual { border-radius: 4px; border-color: var(--ink-2); color: var(--ink-2); }
 .pg.none { border: 1px dashed var(--hair); color: var(--ink-2); font-weight: 400; }
 .pdstate { margin: 10px 0; }
-.plugdetail { margin-top: 14px; }
+.plugdetail { margin-top: var(--card-gap); }
 .plugdetail > * + * { margin-top: 10px; }
 .legend { display: flex; gap: 6px 16px; flex-wrap: wrap; margin: 12px 0 0; }
 .legend .pg { width: 16px; height: 16px; font-size: 10px; margin-right: 5px; vertical-align: -3px; }
-.otherplug { margin-top: 16px; }
+.otherplug { margin-top: var(--card-gap); }
 .otherplug summary { cursor: pointer; font-weight: 600; }
 
 /* macierz wtyczek, wariant zwarty (TASK-41): znak i wersja w jednej linii, kolumny czytników dzielą resztę szerokości */
@@ -477,13 +478,13 @@ button.pmopen:hover { text-decoration: underline; }
 
 /* jedna strona „Wtyczki” (TASK-33): pasek akcji, kartka „Trzy kroki”, arkusz „Dodaj wtyczkę” */
 .plughead { margin: 0 0 14px; gap: 10px; }
-.steps3 { margin: 0 0 16px; }
+.steps3 { margin: 0 0 var(--card-gap); }
 .steps3 h3 { margin-top: 0; }
 .steps3 .steps { margin-bottom: 8px; }
 .chip.pin { padding: 1px 9px; font-size: 12px; }
 .sharedopt { gap: 8px; align-items: flex-start; font-weight: 400; }
 .shdev.off { opacity: .55; }
-.newdev { margin: 0 0 16px; }
+.newdev { margin: 0 0 var(--card-gap); }
 .checklist { list-style: none; padding: 0; margin: 8px 0 10px; }
 .checklist li { display: flex; gap: 10px; align-items: flex-start; margin: 9px 0; }
 .ckm { font-size: 18px; line-height: 1.25; flex: none; }
@@ -626,9 +627,11 @@ h1, h2, h3, h4 { font-weight: 700; letter-spacing: -.005em; }
 
 /* karty i callouty: ten sam obrys, ta sama szerokość */
 .card, .explain { background: var(--surface); border: 2px solid var(--rule); border-radius: 10px; box-shadow: none; }
-.explain { padding: 14px 20px; margin: 0 0 18px; font-size: 15.5px; line-height: 1.65; }
+.explain { padding: 14px 20px; margin: 0 0 var(--card-gap); font-size: 15.5px; line-height: 1.65; }
 .explain p { max-width: 72ch; }
 .card { padding: 18px 20px; }
+/* jeden odstęp między sąsiednimi kartami w całym panelu (TASK-41); kolumna nie zna własnych marginesów */
+.card + .card { margin-top: var(--card-gap); }
 
 /* przyciski: obrys tuszem, główny — pełny tusz */
 button, .btn { border: 2px solid var(--rule); border-radius: 8px; background: var(--surface); padding: 6px 14px; font-weight: 600; }
@@ -727,7 +730,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px
 /* Wtyczki → Ustawienia wtyczek (TASK-26): sekcja na wtyczkę, nagłówek z nazwą */
 .plugset > section + section { margin-top: 22px; }
 .plugset h2 { font-size: 18px; margin: 2px 0 10px; }
-.padcard { margin-bottom: 14px; }
+.padcard { margin-bottom: var(--card-gap); }
 .padcard h3 { font-size: 15.5px; margin: 0 0 4px; }
 .padintro { max-width: 78ch; margin: 4px 0; }
 .padwarn { border: 2px solid var(--err); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
@@ -1025,7 +1028,14 @@ ul.plain li.row .grow { flex: 1 1 14em; }
 .fchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .fchips button { border-radius: 999px; padding: 3px 12px; }
 .fchips button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
-button.fam-tog { border: 0; background: none; box-shadow: none; padding: 0; font: inherit; text-align: left; color: var(--text); }
-ul.plain li.fam > .row { padding: 0; }
+/* kafelki rodzin w Bibliotece (TASK-41): dwie kolumny, odstęp jak między kartami */
+.ftiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--card-gap); }
+@media (max-width: 640px) { .ftiles { grid-template-columns: minmax(0, 1fr); } }
+.ftile { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; background: var(--surface); }
+.ftile.open { grid-column: 1 / -1; }
+.ftile .fsample { margin: 0; font-size: 1.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftile.open .fsample { white-space: normal; }
+.ftile .row { gap: 8px; }
+.ftile ul.plain.fam-files { margin: 2px 0 0; }
 ul.plain.fam-files { margin: 6px 0 0 18px; }
 .fsample { font-size: 1.25rem; line-height: 1.35; margin: 4px 0 2px 18px; overflow-wrap: anywhere; }

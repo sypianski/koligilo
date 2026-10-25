@@ -634,7 +634,7 @@ function serverTab() {
     explain(local
       ? "Ten komputer jest serwerem koligilo. Czytniki synchronizują się tylko wtedy, gdy jest włączony i widoczny — w tej samej sieci Wi-Fi albo przez Tailscale. Do tego czasu zmiany czekają na czytniku i dojdą przy następnym połączeniu."
       : "Panel pokazuje Twój własny serwer. Dane tego komputera leżą nietknięte — możesz w każdej chwili wrócić do trybu „Ten komputer”."),
-    L.moved_to && h("section", { class: "card", style: "margin-bottom:16px" },
+    L.moved_to && h("section", { class: "card", style: "margin-bottom:var(--card-gap)" },
       h("h3", { style: "margin-top:0" }, "Dane tego komputera przeniesiono"),
       h("p", {}, "Czytniki, które zgłoszą się tutaj, dostają nowy adres: ", h("code", {}, L.moved_to), " — i same się przepinają, bez ponownego łączenia."),
       local && h("button", { disabled: S.srvBusy, onclick: stopRedirect }, "Przestań przekierowywać")),
@@ -906,7 +906,7 @@ function addReaderCard(empty) {
       S.mode === "desktop" && h("p", { class: "muted small" }, "Z kablem USB plugin wgra się sam — zobacz zakładkę ", to("usb", "Kabel USB"), "."),
     ],
   };
-  return h("section", { class: "card", style: "margin-bottom:16px" },
+  return h("section", { class: "card", style: "margin-bottom:var(--card-gap)" },
     h("h3", { style: "margin-top:0" }, empty ? "Połącz pierwszy czytnik" : "Dodaj czytnik"),
     empty && h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik po połączeniu z Wi-Fi sam wysyła swoje zmiany i odbiera zmiany z pozostałych."),
     addTablist(cur),
@@ -1008,7 +1008,7 @@ function devicesTable(devs) {
     if (S.devEdit && S.devEdit.id === d.id) rows.push(deviceEditRow(d));
   }
   const th = t => h("th", { scope: "col" }, t);
-  return h("div", { class: "card matrix-wrap", style: "margin-bottom:16px;padding:0" },
+  return h("div", { class: "card matrix-wrap", style: "margin-bottom:var(--card-gap);padding:0" },
     labelCells(h("table", { class: "matrix devtable", "aria-label": "Urządzenia" },
       h("thead", {}, h("tr", {}, th("Nazwa"), th("Platforma · model"), th("KOReader"), th("Ostatnia synchronizacja"), th("Wysłał / pobrał"),
         h("th", { scope: "col" }, h("span", { class: "sr" }, "Akcje")))),
@@ -3380,7 +3380,7 @@ function installedPanel() {
       ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", { title: PLUG_STATE[k].text }, plugGlyph(k), PLUG_SHORT[k])),
       h("span", { title: "Trafia do każdego nowego czytnika i do wszystkich obecnych" }, h("b", {}, "⇄"), " wspólna")),
     other.size > 0 && otherPluginsBlock(other, devs),
-    !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-top:16px" },
+    !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-top:var(--card-gap)" },
       h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),
       extraFav.map(full => h("div", { class: "row", style: "justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line)" },
@@ -4268,19 +4268,22 @@ function fontSample(g) {
   return el;
 }
 
-function fontFamilyRow(g) {
+// Rodzina jako kafelek (TASK-41): nazwa i odznaka, próbka kroju, meta, „Pliki ▸” i „Usuń”.
+// Otwarty kafelek zajmuje obie kolumny, bo w środku jest lista plików.
+function fontFamilyTile(g) {
   const open = !!S.fontOpen[g.name], n = g.files.length;
   const badge = g.pending.length ? h("span", { class: "badge warn" }, "czeka na akceptację")
     : g.active.length ? h("span", { class: "badge" }, "na czytnikach")
       : h("span", { class: "badge soon", title: "Jest nowsza wersja pliku o tej samej nazwie" }, "zastąpiona");
-  return h("li", { class: "fam" },
-    h("div", { class: "row" },
-      h("button", { type: "button", class: "fam-tog", "aria-expanded": String(open),
-        onclick: () => { S.fontOpen[g.name] = !open; render(); } }, open ? "▾ " : "▸ ", h("b", {}, g.name)),
-      h("span", { class: "muted small grow" }, ` · ${n} ${plPl(n, "plik", "pliki", "plików")} · ${fmtSize(g.size)} · ${g.src}`),
-      badge,
-      h("button", { type: "button", class: "danger", onclick: () => deleteFonts(g.files, g.name) }, n > 1 ? "Usuń rodzinę" : "Usuń")),
+  return h("div", { class: "ftile" + (open ? " open" : "") },
+    h("div", { class: "row" }, h("b", { class: "grow" }, g.name), badge),
     fontSample(g),
+    h("div", { class: "muted small" }, `${n} ${plPl(n, "plik", "pliki", "plików")} · ${fmtSize(g.size)} · ${g.src}`),
+    h("div", { class: "row" },
+      h("button", { type: "button", class: "linkbtn", "aria-expanded": String(open),
+        onclick: () => { S.fontOpen[g.name] = !open; render(); } }, open ? "Pliki ▾" : "Pliki ▸"),
+      h("span", { class: "grow" }),
+      h("button", { type: "button", class: "linkbtn danger", onclick: () => deleteFonts(g.files, g.name) }, n > 1 ? "Usuń rodzinę" : "Usuń")),
     open && h("ul", { class: "plain fam-files" }, g.files.map(f => h("li", { class: "row" },
       h("span", { class: "grow" }, h("b", {}, f.file)),
       h("span", { class: "muted small" }, fmtSize(f.size)),
@@ -4295,7 +4298,7 @@ function fontLibraryPane(fonts) {
       h("h3", { style: "margin-top:0" }, "Czcionki w panelu"),
       groups.length === 0
         ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. Wgraj plik, dodaj kroje z katalogu albo wyślij czcionkę z czytnika (menu koligilo → Wyślij czcionkę na serwer).")
-        : h("ul", { class: "plain" }, groups.map(fontFamilyRow)))];
+        : h("div", { class: "ftiles" }, groups.map(fontFamilyTile)))];
 }
 
 function fontCatalogRow(f, busy, name) {
