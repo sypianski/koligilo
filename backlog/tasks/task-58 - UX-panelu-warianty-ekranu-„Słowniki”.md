@@ -5,6 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-25 19:21'
+updated_date: '2026-10-25 19:42'
 labels:
   - panel
 dependencies: []
@@ -16,3 +17,9 @@ ordinal: 58000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Runda /ux dla zakładki „Słowniki” (TASK-55): Biblioteka · Katalog · Czytniki. Pliki: web/app.js (sekcja Dicts), web/dicts.js, web/style.css. Powiązane: TASK-55, TASK-38 (Czcionki — wzorzec).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Wybór zatwierdzony 2026-10-25 (wybor/slowniki): szata dziś, jedna strona + arkusz, kafle, wgrywanie jako ostatni wiersz listy (na stronie, nie w arkuszu — katalog ma 1772 pozycje), wiersz dziś, katalog: dwa powiązane filtry z języka/na język z zachętą na starcie i wynik od największego, wybór wielu naraz, macierz słownik × czytnik, stały pasek zadań. Kod gotowy lokalnie (1e00e45, d732f7a, 9956826, 764cbab; make test zielony; sprawdzone na kopii panelu w Chromium: arkusz, filtry, pobranie 2 słowników, pasek w arkuszu i na stronie, 390 px bez przewijania poziomego). NIE wdrożone (bump/restart/Mac). Odstępstwa: pasek nie rozróżnia kolejki od aktywnych pobrań (serwer ma jeden stan), bez Anuluj, bez sumy rozmiaru zaznaczonych (katalog go nie zna); ostatni komunikat żyje tylko w karcie przeglądarki.
+<!-- SECTION:NOTES:END -->
