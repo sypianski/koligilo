@@ -86,6 +86,11 @@ func TestCatalogMatches(t *testing.T) {
 		"settings/assistant.lua|provider":          "asystent",
 		"settings/rosetta.lua|font_size":           "rosetta_ustawienia",
 		"settings/rosetta.lua|ai_api_key":          "rosetta_klucze",
+		"settings/opds.lua|servers":                "konto_opds",
+		"settings/opds.lua|downloads":              "", // stan urządzenia — poza katalogiem
+		"settings/opds.lua|pending_syncs":          "", // kolejka urządzenia — poza katalogiem
+		"settings/opds.lua|settings":               "", // ustawienia wtyczki (np. sync_dir) — lokalne
+		"settings/opds.lua#servers":                "", // servers to wpis Key (|), nie Prefix (#)
 		"settings/rosetta.lua|paraligilo_path":     "", // ścieżka urządzenia — celowo poza katalogiem
 		"settings/rosetta.lua|book__x":             "", // klucze per-książka — celowo poza katalogiem
 	}

@@ -27,6 +27,7 @@ const (
 	kosyncFile   = "settings/kosync.lua|settings."
 	wallabagFile = "settings/wallabag.lua|wallabag."
 	cloudID      = "settings/cloudstorage.lua|cs_servers"
+	opdsID       = "settings/opds.lua|servers"
 	rosettaFile  = "settings/rosetta.lua|"
 )
 
@@ -47,6 +48,8 @@ func (s *Server) accountRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/admin/accounts/wallabag", s.admin(s.wallabagDelete))
 	m.HandleFunc("POST /api/admin/accounts/cloud", s.admin(s.cloudSave))
 	m.HandleFunc("DELETE /api/admin/accounts/cloud/{i}", s.admin(s.cloudDelete))
+	m.HandleFunc("POST /api/admin/accounts/opds", s.admin(s.opdsSave))
+	m.HandleFunc("DELETE /api/admin/accounts/opds/{i}", s.admin(s.opdsDelete))
 	m.HandleFunc("PUT /api/admin/accounts/target/{which}", s.admin(s.targetPut))
 	m.HandleFunc("DELETE /api/admin/accounts/target/{which}", s.admin(s.targetDelete))
 	m.HandleFunc("PUT /api/admin/accounts/rosetta", s.admin(s.rosettaPut))
@@ -305,6 +308,15 @@ func (s *Server) accountsGet(w http.ResponseWriter, r *http.Request) {
 		views = append(views, viewCloud(m))
 	}
 	out["cloud"] = views
+	opds, err := s.opdsList()
+	if err != nil {
+		out["opds_error"] = err.Error()
+	}
+	ov := []opdsView{}
+	for _, m := range opds {
+		ov = append(ov, viewOpds(m))
+	}
+	out["opds"] = ov
 	targets := map[string]any{}
 	for which := range syncTargets {
 		t := s.target(which)
@@ -662,6 +674,154 @@ func (s *Server) cloudDelete(w http.ResponseWriter, r *http.Request) {
 	// Cele (statystyki/słowniczek) zostają: mają własną kopię konta i nadal
 	// działają — panel pokaże je jako „konto spoza listy”.
 	s.saveSet(w, map[string]*string{cloudID: lit(items)})
+}
+
+// --- katalogi OPDS (settings/opds.lua|servers) ---
+//
+// Wpis KOReadera: {title, url, username?, password?, raw_names?, sync?} oraz pola
+// lokalne (sync_dir, last_download). Panel zna tylko title/url/username/password;
+// reszta wpisu zostaje nietknięta. downloads/pending_syncs/settings nie wchodzą
+// do katalogu, więc tu ich nie ma.
+
+type opdsView struct {
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Username string `json:"username,omitempty"`
+	HasPass  bool   `json:"has_password"`
+}
+
+func viewOpds(m map[string]any) opdsView {
+	return opdsView{Title: str(m, "title"), URL: str(m, "url"), Username: str(m, "username"),
+		HasPass: str(m, "password") != ""}
+}
+
+func (s *Server) opdsList() ([]map[string]any, error) {
+	v := s.st.Get(opdsID)
+	if v == nil {
+		return nil, nil
+	}
+	x, err := decodeLua(*v)
+	if err != nil {
+		return nil, fmt.Errorf("lista katalogów OPDS jest nieczytelna: %w", err)
+	}
+	l, ok := asList(x)
+	if !ok {
+		return nil, errors.New("lista katalogów OPDS ma nieoczekiwany format")
+	}
+	out := make([]map[string]any, 0, len(l))
+	for _, e := range l {
+		m, ok := e.(map[string]any)
+		if !ok {
+			return nil, errors.New("lista katalogów OPDS ma nieoczekiwany format")
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+type opdsIn struct {
+	Index    int    `json:"index"` // -1 = nowy katalog
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// buildOpds składa wpis katalogu. Nieznane i lokalne pola starego wpisu zostają;
+// puste hasło = bez zmian; wyczyszczony login zdejmuje też hasło (hasło bez loginu
+// nic nie daje). Zmiana adresu zeruje last_download, jak w KOReaderze.
+func buildOpds(in opdsIn, old map[string]any) (map[string]any, error) {
+	e := map[string]any{}
+	for k, v := range old {
+		e[k] = v
+	}
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		return nil, errors.New("nadaj katalogowi nazwę (widać ją w menu OPDS na czytniku)")
+	}
+	raw := strings.TrimSpace(in.URL)
+	if raw == "" {
+		return nil, errors.New("podaj adres katalogu")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw // jak KOReader przy ręcznym dodawaniu
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return nil, errors.New("adres katalogu musi być adresem http:// albo https:// z nazwą serwera")
+	}
+	if u.User != nil {
+		return nil, errors.New("login i hasło wpisz w osobnych polach, nie w adresie")
+	}
+	if old != nil && str(old, "url") != raw {
+		delete(e, "last_download")
+	}
+	e["title"], e["url"] = title, raw
+	if user := strings.TrimSpace(in.Username); user != "" {
+		e["username"] = user
+		if in.Password != "" {
+			e["password"] = in.Password
+		}
+	} else {
+		delete(e, "username")
+		delete(e, "password")
+	}
+	return e, nil
+}
+
+func (s *Server) opdsSave(w http.ResponseWriter, r *http.Request) {
+	var in opdsIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	list, err := s.opdsList()
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	var old map[string]any
+	if in.Index >= 0 {
+		if in.Index >= len(list) {
+			writeJSON(w, 409, map[string]string{"error": "tego katalogu już nie ma — odśwież panel"})
+			return
+		}
+		old = list[in.Index]
+	}
+	e, err := buildOpds(in, old)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	items := make([]any, 0, len(list)+1)
+	for _, m := range list {
+		items = append(items, m)
+	}
+	if old == nil {
+		items = append(items, e)
+	} else {
+		items[in.Index] = e
+	}
+	s.saveSet(w, map[string]*string{opdsID: lit(items)})
+}
+
+func (s *Server) opdsDelete(w http.ResponseWriter, r *http.Request) {
+	i, err := strconv.Atoi(r.PathValue("i"))
+	list, lerr := s.opdsList()
+	if lerr != nil {
+		writeJSON(w, 409, map[string]string{"error": lerr.Error()})
+		return
+	}
+	if err != nil || i < 0 || i >= len(list) {
+		writeJSON(w, 409, map[string]string{"error": "tego katalogu już nie ma — odśwież panel"})
+		return
+	}
+	items := []any{}
+	for j, m := range list {
+		if j != i {
+			items = append(items, m)
+		}
+	}
+	s.saveSet(w, map[string]*string{opdsID: lit(items)})
 }
 
 // --- statystyki i słowniczek ---

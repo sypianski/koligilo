@@ -160,6 +160,13 @@ var Catalog = []Group{
 		Entries: keys("settings/cloudstorage.lua", "cs_servers"),
 	},
 	{
+		ID: "konto_opds", Category: "konta", Name: "Katalogi OPDS",
+		Description: "Lista katalogów z Menu → OPDS (np. Calibre, Project Gutenberg): nazwa, adres i ewentualny login z hasłem. Pobrane pliki i kolejka synchronizacji (downloads, pending_syncs) oraz ustawienia wtyczki zostają na urządzeniu.",
+		Warning:     "Domyślnie wyłączone: KOReader trzyma w tej samej liście także lokalne pola katalogu (folder synchronizacji sync_dir, znacznik last_download), więc po każdym pobraniu lista „zmienia się” i inne czytniki dostają prośbę o restart. Włączaj świadomie.",
+		Secret:      true,
+		Entries:     keys("settings/opds.lua", "servers"),
+	},
+	{
 		ID: "konto_statystyki", Category: "konta", Name: "Synchronizacja statystyk i słowniczka",
 		Description: "Na którym koncie w chmurze i w jakim folderze statystyki czytania i słowniczek (vocabulary builder) trzymają wspólną bazę.",
 		Secret:      true, Default: true,

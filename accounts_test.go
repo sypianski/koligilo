@@ -314,6 +314,109 @@ func TestRosettaAccount(t *testing.T) {
 	}
 }
 
+func TestOpdsAccount(t *testing.T) {
+	hh := newHarness(t)
+	// lokalne i nieznane pola istniejących wpisów (sync_dir, last_download) mają przeżyć edycję
+	seed := []any{
+		map[string]any{"title": "Gutenberg", "url": "https://m.gutenberg.org/ebooks.opds/", "sync": true,
+			"sync_dir": "/sdcard/inbox", "last_download": "x.epub"},
+		map[string]any{"title": "Stary", "url": "http://stary.example/opds"},
+	}
+	if c, out := hh.call("POST", "/api/admin/values", map[string]any{"set": map[string]string{opdsID: *lit(seed)}}); c != 200 {
+		t.Fatalf("zasiew: %d %v", c, out)
+	}
+	for name, in := range map[string]map[string]any{
+		"pusta nazwa":     {"index": -1, "title": " ", "url": "https://a.example/opds"},
+		"pusty adres":     {"index": -1, "title": "A", "url": ""},
+		"schemat ftp":     {"index": -1, "title": "A", "url": "ftp://a.example/opds"},
+		"bez hosta":       {"index": -1, "title": "A", "url": "https:///opds"},
+		"login w adresie": {"index": -1, "title": "A", "url": "https://u:p@a.example/opds"},
+		"zły indeks":      {"index": 9, "title": "A", "url": "https://a.example/opds"},
+	} {
+		want := 400
+		if name == "zły indeks" {
+			want = 409
+		}
+		if c, out := hh.call("POST", "/api/admin/accounts/opds", in); c != want {
+			t.Errorf("%s: %d %v, chcę %d", name, c, out, want)
+		}
+	}
+	// nowy: adres bez schematu dostaje http://, jak w KOReaderze
+	c, out := hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": -1, "title": "Calibre",
+		"url": "calibre.example.com:8080/opds", "username": "ola", "password": "tajne-opds"})
+	if c != 200 {
+		t.Fatalf("dodanie: %d %v", c, out)
+	}
+	list, err := hh.s.opdsList()
+	if err != nil || len(list) != 3 || str(list[2], "url") != "http://calibre.example.com:8080/opds" || str(list[2], "password") != "tajne-opds" {
+		t.Fatalf("lista po dodaniu: %v %v", list, err)
+	}
+	// edycja z pustym hasłem: hasło i pola lokalne zostają
+	c, out = hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": 0, "title": "Gutenberg PL",
+		"url": "https://m.gutenberg.org/ebooks.opds/"})
+	if c != 200 {
+		t.Fatalf("edycja: %d %v", c, out)
+	}
+	c, out = hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": 2, "title": "Calibre",
+		"url": "http://calibre.example.com:8080/opds", "username": "ola"})
+	if c != 200 {
+		t.Fatalf("edycja bez hasła: %d %v", c, out)
+	}
+	list, _ = hh.s.opdsList()
+	if str(list[0], "title") != "Gutenberg PL" || list[0]["sync"] != true || str(list[0], "sync_dir") != "/sdcard/inbox" || str(list[0], "last_download") != "x.epub" {
+		t.Errorf("edycja zgubiła pola lokalne/nieznane: %v", list[0])
+	}
+	if str(list[2], "password") != "tajne-opds" {
+		t.Errorf("puste hasło przy edycji skasowało stare: %v", list[2])
+	}
+	// zmiana adresu zeruje last_download, sync_dir zostaje
+	hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": 0, "title": "Gutenberg PL", "url": "https://gutenberg.example/opds"})
+	list, _ = hh.s.opdsList()
+	if _, ok := list[0]["last_download"]; ok || str(list[0], "sync_dir") != "/sdcard/inbox" {
+		t.Errorf("zmiana adresu: %v", list[0])
+	}
+	// wyczyszczony login zdejmuje też hasło
+	hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": 2, "title": "Calibre", "url": "http://calibre.example.com:8080/opds"})
+	list, _ = hh.s.opdsList()
+	if _, ok := list[2]["password"]; ok {
+		t.Errorf("hasło bez loginu powinno zniknąć: %v", list[2])
+	}
+	hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": 2, "title": "Calibre", "url": "http://calibre.example.com:8080/opds",
+		"username": "ola", "password": "tajne-opds"})
+
+	// GET: bez haseł, z flagą has_password
+	_, acc := hh.call("GET", "/api/admin/accounts", nil)
+	views, _ := acc["opds"].([]any)
+	if len(views) != 3 {
+		t.Fatalf("GET opds = %v", acc["opds"])
+	}
+	if v := views[2].(map[string]any); v["has_password"] != true || v["username"] != "ola" {
+		t.Errorf("widok katalogu z hasłem: %v", v)
+	}
+	if v := views[1].(map[string]any); v["has_password"] != false {
+		t.Errorf("widok katalogu bez hasła: %v", v)
+	}
+	if strings.Contains(mustJSON(acc), "tajne-opds") {
+		t.Error("GET /api/admin/accounts zdradza hasło OPDS")
+	}
+	_, st := hh.call("GET", "/api/admin/state", nil)
+	if strings.Contains(mustJSON(st), "tajne-opds") {
+		t.Error("/api/admin/state zdradza hasło OPDS")
+	}
+
+	// usuwanie
+	if c, _ := hh.call("DELETE", "/api/admin/accounts/opds/7", nil); c != 409 {
+		t.Errorf("usunięcie nieistniejącego: %d, chcę 409", c)
+	}
+	if c, out := hh.call("DELETE", "/api/admin/accounts/opds/1", nil); c != 200 {
+		t.Fatalf("usunięcie: %d %v", c, out)
+	}
+	list, _ = hh.s.opdsList()
+	if len(list) != 2 || str(list[1], "title") != "Calibre" {
+		t.Errorf("po usunięciu: %v", list)
+	}
+}
+
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)

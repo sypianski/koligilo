@@ -77,10 +77,12 @@ func TestAdminValuesSecretNeverLeaks(t *testing.T) {
 	hh.call("PUT", "/api/admin/accounts/wallabag", map[string]string{
 		"server_url": "wb.example.com", "client_id": "id", "client_secret": "cs", "username": "u", "password": "sekretne-haslo"})
 	hh.call("PUT", "/api/admin/accounts/rosetta", map[string]string{"api_key": "sk-tajny-klucz"})
+	hh.call("POST", "/api/admin/accounts/opds", map[string]any{"index": -1, "title": "Calibre",
+		"url": "https://calibre.example.com/opds", "username": "ola", "password": "opds-haslo-xyz"})
 
 	_, st := hh.call("GET", "/api/admin/state", nil)
 	body := mustJSON(st)
-	for _, secret := range []string{"jakub", "sekretne-haslo", "sk-tajny-klucz"} {
+	for _, secret := range []string{"jakub", "sekretne-haslo", "sk-tajny-klucz", "opds-haslo-xyz"} {
 		if contains(body, secret) {
 			t.Errorf("adminState nie może zdradzać treści grupy Secret (znaleziono %q)", secret)
 		}
@@ -95,10 +97,15 @@ func TestAdminValuesSecretNeverLeaks(t *testing.T) {
 		t.Errorf("GET klucza Rosetty: %d %v, chcę 403", c, out)
 	}
 
+	c, out = hh.call("GET", "/api/admin/values/"+opdsID, nil)
+	if c != 403 {
+		t.Errorf("GET listy katalogów OPDS: %d %v, chcę 403", c, out)
+	}
+
 	// /api/admin/accounts też nie może zdradzać sekretów, tylko flagi has_*.
 	_, acc := hh.call("GET", "/api/admin/accounts", nil)
 	accBody := mustJSON(acc)
-	for _, secret := range []string{"sekretne-haslo", "sk-tajny-klucz"} {
+	for _, secret := range []string{"sekretne-haslo", "sk-tajny-klucz", "opds-haslo-xyz"} {
 		if contains(accBody, secret) {
 			t.Errorf("GET /api/admin/accounts zdradza sekret %q", secret)
 		}
@@ -117,7 +124,7 @@ func TestAdminStateMarksSecretGroups(t *testing.T) {
 		t.Fatal("pusty katalog w adminState")
 	}
 	want := map[string]bool{"konto_kosync": true, "konto_wallabag": true, "konta_chmura": true,
-		"konto_statystyki": true, "rosetta_klucze": true}
+		"konto_opds": true, "konto_statystyki": true, "rosetta_klucze": true}
 	got := map[string]bool{}
 	for _, gi := range catalog {
 		g, _ := gi.(map[string]any)

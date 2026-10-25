@@ -37,7 +37,7 @@ const S = {
   rvBusy: false,
   acc: null,           // /api/admin/accounts
   dr: {},              // szkice formularzy kont (przeżywają przerysowanie)
-  accOpen: null,       // rozwinięty wiersz widoku „Konta”: "kosync" | "wallabag" | "cloud" | "targets" | "rosetta" (TASK-31)
+  accOpen: null,       // rozwinięty wiersz widoku „Konta”: "kosync" | "wallabag" | "cloud" | "opds" | "targets" | "rosetta" (TASK-31)
   accMsg: {},          // komunikaty per formularz: {ok, text}
   accBusy: null,       // który formularz się zapisuje
   accTesting: null,    // ścieżka trwającego „Sprawdź połączenie” (TASK-31)
@@ -1383,6 +1383,8 @@ const ACCOUNTS = [
     desc: "Client ID i secret założysz w Wallabagu: Zarządzanie klientami API → Utwórz nowego klienta. Folder pobierania artykułów zostaje osobny na każdym czytniku." },
   { id: "cloud", name: "Konta w chmurze", short: "konta w chmurze", plural: true, group: "konta_chmura",
     desc: "To samo co Menu → Chmura w KOReaderze: miejsca, z których czytnik pobiera książki i w których statystyki oraz słowniczek trzymają wspólną bazę. Na czytnikach pojawią się pod tymi samymi nazwami." },
+  { id: "opds", name: "Katalogi OPDS", short: "katalogi OPDS", plural: true, group: "konto_opds",
+    desc: "To ten sam spis co Menu → OPDS w KOReaderze: katalogi książek (np. Calibre, Project Gutenberg), z których czytnik pobiera pliki. Czytniki dostaną ich nazwy, adresy i loginy z hasłami. Pobrane pliki, kolejka synchronizacji i lokalne foldery zostają na każdym urządzeniu osobno." },
   { id: "targets", name: "Statystyki i słowniczek", short: "statystyki i słowniczek", plural: true, group: "konto_statystyki",
     desc: "Statystyki czytania i słowniczek (w KOReaderze: Kreator słownictwa) mogą być wspólne dla wszystkich czytników. Tu wybierasz, na którym koncie w chmurze leży ich wspólna baza; scalanie robi KOReader, kiedy każesz mu to zrobić na czytniku." },
   { id: "rosetta", name: "Rosetta — klucze API", short: "Rosetta", group: "rosetta_klucze",
@@ -1413,6 +1415,11 @@ function accInfo(id) {
     return { conf: true, warn: broken,
       sum: cloud.map(c => { const t = CLOUD_TYPES[c.type] || c.type; return t === c.name ? c.name : `${c.name} (${t})`; }).join(" · ")
         + (broken ? " · ⚠ wymaga ponownego połączenia" : "") };
+  }
+  if (id === "opds") {
+    const l = a.opds || [];
+    return l.length ? { conf: true, sum: l.map(o => o.title).join(" · ") }
+      : { conf: false, sum: a.opds_error || "nie skonfigurowane" };
   }
   if (id === "targets") {
     const t = a.targets || {};
@@ -1581,7 +1588,7 @@ function accRow(a) {
         onclick: () => { S.accOpen = open ? null : a.id; render(); } }, label)),
     open && h("div", { class: "accb", id: "acc-body-" + a.id },
       h("p", { class: "muted small" }, a.desc),
-      { kosync: kosyncForm, wallabag: wallabagForm, cloud: cloudBody, targets: targetsBody, rosetta: rosettaForm }[a.id]()));
+      { kosync: kosyncForm, wallabag: wallabagForm, cloud: cloudBody, opds: opdsBody, targets: targetsBody, rosetta: rosettaForm }[a.id]()));
 }
 
 function checkboxField(d, key, label) {
@@ -1807,6 +1814,52 @@ function cloudForm(d, cur) {
       h("button", { type: "button", onclick: () => { delete S.dr.cloud; S.accMsg.cloud = null; render(); } }, "Anuluj")));
   applyCloudSteps(form, d, cur);
   return form;
+}
+
+// Katalogi OPDS (TASK-48): prosta lista + formularz nazwa/adres/login/hasło. Pola, których tu nie ma
+// (raw_names, sync, sync_dir…), serwer zostawia w zapisanym wpisie bez zmian.
+function opdsBody() {
+  const list = S.acc.opds || [];
+  const d = S.dr.opds;
+  return h("div", {},
+    S.acc.opds_error && h("p", { class: "err" }, S.acc.opds_error),
+    list.length === 0 && !d && h("p", { class: "muted" }, "Brak katalogów. Dodaj pierwszy — albo zsynchronizuj czytnik, który już je ma."),
+    list.map((o, i) => h("div", { class: "cloudrow" },
+      h("div", { class: "what" },
+        h("b", {}, o.title),
+        h("div", { class: "muted small" }, [hostOf(o.url), o.username].filter(Boolean).join(" · "))),
+      !d && h("div", { class: "row" },
+        h("button", { onclick: () => { S.dr.opds = opdsDraft(o, i); S.accMsg.opds = null; render(); } }, "Edytuj"),
+        h("button", { class: "danger", onclick: () => {
+          if (confirm(`Usunąć katalog „${o.title}” ze wszystkich czytników?`)) accSave("opds", "DELETE", `/api/admin/accounts/opds/${i}`);
+        } }, "Usuń")))),
+    d ? opdsForm(d, list[d.index])
+      : h("div", { class: "row", style: "margin-top:12px" },
+          h("button", { onclick: () => { S.dr.opds = opdsDraft(null, -1); S.accMsg.opds = null; render(); } }, "+ Dodaj katalog")),
+    accMsg("opds"));
+}
+
+function opdsDraft(o, i) {
+  return { index: i, title: o?.title || "", url: o?.url || "", username: o?.username || "", password: "" };
+}
+
+function opdsForm(d, cur) {
+  const isNew = d.index < 0;
+  return h("form", { class: "subform", onsubmit: ev => { ev.preventDefault();
+      accSave("opds", "POST", "/api/admin/accounts/opds", d); } },
+    h("h4", {}, isNew ? "Nowy katalog" : `Edycja: ${cur?.title}`),
+    field(d, "title", "Nazwa", { form: "op", placeholder: "np. Calibre",
+      hint: "Tak katalog będzie się nazywać w menu OPDS na czytnikach." }),
+    field(d, "url", "Adres katalogu", { form: "op", placeholder: "https://calibre.example.com/opds",
+      hint: "Adres http:// albo https://. Bez przedrostka KOReader też dopisuje http://." }),
+    h("div", { class: "grid2" },
+      field(d, "username", "Login", { form: "op", hint: "Zostaw puste, jeśli katalog nie wymaga logowania." }),
+      secretField(d, "password", "Hasło", { form: "op", saved: cur?.has_password,
+        hint: "Po wyczyszczeniu loginu hasło też jest usuwane." })),
+    h("div", { class: "row" },
+      h("button", { class: "primary", type: "submit", disabled: S.accBusy === "opds" },
+        S.accBusy === "opds" ? "Zapisuję…" : "Zapisz katalog"),
+      h("button", { type: "button", onclick: () => { delete S.dr.opds; S.accMsg.opds = null; render(); } }, "Anuluj")));
 }
 
 const TARGETS = [
