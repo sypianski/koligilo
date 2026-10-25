@@ -67,6 +67,8 @@ const S = {
   fontAddedOpen: false, // rozwinięta lista „Dodane” w katalogu
   plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
   addSheet: null,      // arkusz „Dodaj wtyczkę”: patrz newSheet()
+  plugFlash: null,     // Set katalogów świeżo dodanych wtyczek: wiersz macierzy podświetlony przez kilka sekund (TASK-54)
+  plugToast: null,     // komunikat po dodaniu wtyczek (na dole strony, znika sam)
   plugSel: null,       // zaznaczona wtyczka w macierzy „Zainstalowane”: {dir, dev|null} (TASK-33)
   plugMsg: null,       // komunikat po zapisie przypisań: {ok, text}
   favBusy: null,       // klucz ulubionej w trakcie zapisu
@@ -3328,7 +3330,7 @@ function stepsCard() {
       h("li", {}, h("b", {}, "Na czytniku pozwól na wtyczki. "),
         `${MENU_PATH} → Zgody → Pozwól instalować wtyczki. Raz na każdy czytnik — z panelu się tego nie da.`),
       h("li", {}, h("b", {}, "W panelu wybierz wtyczki. "),
-        "„＋ Dodaj wtyczkę”: z galerii, z pliku ZIP albo z magazynu, a potem zaznacz czytniki. Panel tylko wskazuje, co ma być zainstalowane."),
+        "„＋ Dodaj wtyczkę”: z galerii (możesz wybrać kilka naraz), z pliku .zip albo spośród tych, które panel już ma, a potem zaznacz czytniki. Panel tylko wskazuje, co ma być zainstalowane."),
       h("li", {}, h("b", {}, "Na czytniku zatwierdź. "),
         "Wybierz „Synchronizuj teraz” i potwierdź listę wtyczek — dopiero wtedy czytnik je instaluje.")),
     h("p", { class: "muted small" }, "Wtyczka to kod Lua z pełnymi uprawnieniami na czytniku, dlatego koligilo nigdy nie instaluje jej samo."),
@@ -3349,7 +3351,8 @@ function pluginsTab() {
       !S.plugSteps && h("button", { type: "button", id: "b-steps", class: "linkbtn", onclick: () => setSteps(true) }, "Jak to działa? Trzy kroki")),
     S.plugSteps && stepsCard(),
     !S.plugins ? h("p", { class: "loading" }, "Wczytuję wtyczki…") : installedPanel(),
-    S.addSheet && addSheet());
+    S.addSheet && addSheet(),
+    S.plugToast && plugToastBox());
 }
 
 // ------------------------------------------------ zakładka: zainstalowane (TASK-33)
@@ -3636,7 +3639,7 @@ function pluginMatrixRow(dir, devs) {
   const upd = updateFor(dir), pend = pendingVersions(dir);
   const sel = S.plugSel && S.plugSel.dir === dir;
   const shared = !!(S.state.shared_plugins || {})[dir];
-  return h("tr", { class: sel ? "sel" : "" },
+  return h("tr", { class: (sel ? "sel" : "") + (S.plugFlash && S.plugFlash.has(dir) ? " flash" : "") },
     h("th", { scope: "row" },
       h("span", { class: "pmname" }, favStar("dir:" + dir),
         h("button", { type: "button", class: "linkbtn pmopen", "aria-expanded": String(!!(sel && !S.plugSel.dev)),
@@ -3994,10 +3997,13 @@ async function applyGalleryUpdate(u) {
   refresh();
 }
 
-async function uploadPlugin() {
-  const inp = document.getElementById("f-plugin-zip");
-  const file = inp && inp.files && inp.files[0];
-  if (!file) { S.uploadMsg = { ok: false, text: "Wybierz plik ZIP." }; return render(); }
+// Plik .zip z wtyczką (strefa upuszczania w arkuszu): wgrywa się od razu po upuszczeniu albo wyborze
+// pliku, a arkusz przechodzi do kroku 2 z tą wtyczką (wgrana wersja jest od razu zaakceptowana).
+async function uploadPlugin(files) {
+  files = [...(files || [])];
+  const file = files[0];
+  if (!file) { S.uploadMsg = { ok: false, text: "Wybierz plik .zip." }; return render(); }
+  if (!/\.zip$/i.test(file.name)) { S.uploadMsg = { ok: false, text: `„${file.name}” to nie jest plik .zip.` }; return render(); }
   S.uploadBusy = true; S.uploadMsg = null; render();
   let out = null;
   try {
@@ -4010,12 +4016,11 @@ async function uploadPlugin() {
   S.uploadBusy = false;
   const sh = S.addSheet;
   if (out && sh) {
-    // wgrana wersja jest od razu zaakceptowana — przechodzimy do wyboru czytników
-    Object.assign(sh, newSheet("magazyn"), { devices: sh.devices, sha: out.plugin.sha256 });
-    sh.msg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}). Zaznacz czytniki i przypisz.` };
+    Object.assign(sh, newSheet("magazyn"), { devices: sh.devices, picks: sh.picks, shared: sh.shared, sha: out.plugin.sha256, step: 2 });
+    sh.msg = { ok: true, text: `Wgrano „${pluginVerName(out.plugin)}” (${out.plugin.version || out.plugin.sha256.slice(0, 12)}).` + (files.length > 1 ? " Wgrałem tylko pierwszy plik — pozostałe wgraj osobno." : "") };
   }
   await refresh();
-  document.getElementById(out ? "sh-go" : "f-plugin-zip")?.focus();
+  document.getElementById(out ? "sh-go" : "f-plugin-pick")?.focus();
 }
 async function removeDevicePlugin(d, dir) {
   if (!confirm(`Usunąć wtyczkę „${pluginTitle(dir)}” z celu urządzenia „${d.name}”?\n\nPrzy najbliższej synchronizacji czytnik poprosi o potwierdzenie odinstalowania.`)) return;
@@ -4068,23 +4073,27 @@ async function refreshGallery() {
   refresh();
 }
 
-// ------------------------------------------------ arkusz „Dodaj wtyczkę” (TASK-33)
+// ------------------------------------------------ arkusz „Dodaj wtyczkę” (TASK-33, TASK-54)
 //
-// Jeden kreator zamiast trzech miejsc (Galeria, „Wgraj własny ZIP”, lista w karcie
-// czytnika): źródło (galeria / ZIP / magazyn) → wybór wtyczki → czytniki → „Dodaj i
-// przypisz”. To te same wywołania co wcześniej (gallery/install, plugins, devices/{id}/plugins),
-// więc PC-004 bez zmian: przypisanie to stan docelowy, potwierdza czytnik. Przed instalacją
-// wtyczki społeczności pod przyciskiem stoi pełne ostrzeżenie o zewnętrznym kodzie.
+// Kreator w dwóch krokach: 1) źródło (kafle: galeria / własny plik .zip / już w panelu) i wybór
+// wtyczek — z galerii można zaznaczyć kilka naraz — 2) czytniki, ostrzeżenie i „Dodaj”. To te same
+// wywołania co wcześniej (gallery/install, plugins, devices/{id}/plugins, shared-plugins), więc PC-004
+// bez zmian: przypisanie to stan docelowy, a instalację potwierdza czytnik. Przed instalacją wtyczek
+// spoza koligilo stoi pełne ostrzeżenie o zewnętrznym kodzie (jedno na cały wybór).
 // Arkusz mieszka w S.addSheet (przeżywa przerysowania; render() odtwarza przewinięcie i fokus).
+// Wybór z galerii (sh.picks) przeżywa szukanie, zmianę strony i zmianę źródła; z magazynu wybiera się jedną
+// wtyczkę (sh.sha). Instalacje z galerii idą po kolei, a przypisanie to jeden zapis na czytnik ze
+// WSZYSTKIMI nowymi wtyczkami naraz — kolejne zapisy z tego samego stanu urządzenia nadpisywałyby poprzednie.
 
 function newSheet(src) {
-  return { src, repo: null, promoted: false, sha: null, devices: null, shared: false, busy: false, msg: null, candidates: null, path: "" };
+  return { src, picks: [], sha: null, devices: null, shared: false, busy: false, prog: null, msg: null, step: 1 };
 }
 
 function openAddSheet(src, q, devIds) {
   S.addSheet = newSheet(src || "galeria");
   if (devIds) S.addSheet.devices = new Set(devIds);
   if (q != null) { S.galQ = q; S.galPage = 1; }
+  render(); // arkusz od razu; galeria (GitHub) dociąga się w tle
   return refresh().then(() => document.getElementById(S.addSheet && S.addSheet.src === "galeria" ? "f-galq" : "sh-close")?.focus());
 }
 
@@ -4096,7 +4105,7 @@ function closeAddSheet() {
 
 function sheetSrc(id) {
   const sh = S.addSheet;
-  Object.assign(sh, newSheet(id), { devices: sh.devices });
+  Object.assign(sh, newSheet(id), { devices: sh.devices, picks: sh.picks, shared: sh.shared });
   S.uploadMsg = null;
   return refresh().then(() => document.getElementById(id === "galeria" ? "f-galq" : "sh-src-" + id)?.focus());
 }
@@ -4107,20 +4116,45 @@ function sheetDevices(sh) {
   return sh.devices;
 }
 
-function addSheet() {
+// wybrane wtyczki: z galerii (sh.picks) albo jedna z magazynu (sh.sha)
+function sheetPicked(sh) {
+  if (sh.src === "galeria") return sh.picks.map(pk => ({ name: galleryTitle(pk.repo.full_name), pk }));
+  if (sh.src === "magazyn" && sh.sha) {
+    const v = (S.plugins || []).find(x => x.sha256 === sh.sha);
+    return v ? [{ name: pluginVerName(v), v }] : [];
+  }
+  return [];
+}
+const sheetStep2 = sh => sh.step === 2 && sheetPicked(sh).length > 0;
+
+function sheetGoStep(n) {
   const sh = S.addSheet;
-  const srcs = [["galeria", "Z galerii"], ["zip", "Z pliku ZIP"], ["magazyn", "Z magazynu"]];
+  sh.step = n; sh.msg = null;
+  render();
+  document.getElementById(n === 2 ? "sh-go" : "sh-next")?.focus();
+}
+
+const SHEET_SRCS = [["galeria", "Galeria", "Szukasz w katalogu na GitHubie."], ["zip", "Własny plik .zip", "Masz plik .zip z wtyczką."],
+  ["magazyn", "Już w panelu", "Wtyczka jest już w panelu."]];
+
+function sheetTiles(sh) {
+  return h("div", { class: "shtiles", role: "group", "aria-label": "Skąd wziąć wtyczkę" },
+    SHEET_SRCS.map(([id, label, hint]) => h("button", { type: "button", id: "sh-src-" + id, class: "shtile" + (sh.src === id ? " on" : ""),
+      "aria-pressed": String(sh.src === id), disabled: sh.busy, onclick: () => sh.src !== id && sheetSrc(id) },
+      h("b", {}, label), h("span", { class: "muted small" }, hint))));
+}
+
+function addSheet() {
+  const sh = S.addSheet, s2 = sheetStep2(sh);
   return h("div", { class: "sheet-back", onmousedown: ev => { if (ev.target === ev.currentTarget && !sh.busy) closeAddSheet(); } },
-    h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-labelledby": "sheet-title" },
+    h("div", { class: "sheet addsheet" + (sh.src !== "zip" ? " tall" : ""), role: "dialog", "aria-modal": "true", "aria-labelledby": "sheet-title" },
       h("header", { class: "sheet-head" },
         h("h2", { id: "sheet-title" }, "Dodaj wtyczkę"),
         h("button", { type: "button", id: "sh-close", "aria-label": "Zamknij", disabled: sh.busy, onclick: closeAddSheet }, "×")),
-      h("div", { class: "row sheet-src", role: "group", "aria-label": "Skąd wziąć wtyczkę" },
-        srcs.map(([id, label]) => h("button", { type: "button", id: "sh-src-" + id, class: "chip" + (sh.src === id ? " on" : ""),
-          "aria-pressed": String(sh.src === id), disabled: sh.busy, onclick: () => sh.src !== id && sheetSrc(id) }, label))),
+      !s2 && sheetTiles(sh),
       h("div", { class: "sheet-body" },
-        sh.src === "galeria" ? sheetGallery(sh) : sh.src === "zip" ? sheetZip(sh) : sheetStore(sh)),
-      sh.src !== "zip" && sheetFoot(sh)));
+        s2 ? sheetCards(sh) : sh.src === "galeria" ? sheetGallery(sh) : sh.src === "zip" ? sheetZip(sh) : sheetStore(sh)),
+      sheetFoot(sh)));
 }
 
 function sheetGallery(sh) {
@@ -4135,7 +4169,7 @@ function sheetGallery(sh) {
         h("option", { value: "updated", selected: S.galSort === "updated" || undefined }, "ostatnia aktualizacja")),
       h("button", { type: "submit" }, "Szukaj")),
     h("p", { class: "muted small", style: "margin:8px 0 0" },
-      "Wtyczki społeczności to cudzy kod z pełnymi uprawnieniami na czytniku. Pełne ostrzeżenie zobaczysz przed dodaniem."),
+      "Wtyczki spoza koligilo to cudzy kod. Ostrzeżenie pojawi się przed dodaniem. Możesz wybrać kilka wtyczek naraz — wybór zostaje przy szukaniu i zmianie strony."),
     !g ? h("p", { class: "loading" }, "Wczytuję galerię…") : [
       g.note && h("p", { class: "muted small" }, g.note),
       g.stale && h("p", { class: "muted small" }, "Dane mogą być nieaktualne (starsze niż 24 h). ",
@@ -4154,14 +4188,14 @@ function sheetGallery(sh) {
 }
 
 function sheetRepoRow(repo, promoted) {
-  const sh = S.addSheet, on = !!sh.repo && sh.repo.full_name === repo.full_name;
+  const sh = S.addSheet, on = sh.picks.some(p => p.repo.full_name === repo.full_name);
   const versions = galleryVersionsFor(repo), update = galleryUpdateAvailable(repo, versions);
   const id = "sh-r-" + repo.full_name.replace(/\W/g, "_");
   return h("div", { class: "shrow" + (on ? " on" : "") },
     favStar("gh:" + repo.full_name),
     h("div", { class: "grow" },
       h("div", {}, h("b", {}, galleryTitle(repo.full_name)),
-        versions.length > 0 && h("span", { class: "badge" }, "w magazynie"),
+        versions.length > 0 && h("span", { class: "badge" }, "w panelu"),
         update && h("span", { class: "badge warn" }, "nowsza wersja")),
       h("div", { class: "muted small" },
         `${repo.full_name} · ★ ${repo.stars} · aktualizacja ${ago(repo.pushed_at)}` + (repo.latest_release ? ` · release ${repo.latest_release}` : "")),
@@ -4170,30 +4204,35 @@ function sheetRepoRow(repo, promoted) {
       h("a", { href: repo.html_url || `https://github.com/${repo.full_name}`, target: "_blank", rel: "noopener",
         "aria-label": `Repozytorium ${repo.full_name} na GitHubie` }, "GitHub ↗"),
       h("button", { type: "button", id, class: on ? "primary" : "", "aria-pressed": String(on), disabled: sh.busy,
-        onclick: () => sheetPickRepo(repo, promoted) }, on ? "Wybrano" : "Wybierz")));
+        onclick: () => sheetTogglePick(repo, promoted) }, on ? "✓ Wybrano" : "Wybierz")));
 }
 
-function sheetPickRepo(repo, promoted) {
-  const sh = S.addSheet;
-  const same = sh.repo && sh.repo.full_name === repo.full_name;
-  sh.repo = same ? null : repo;
-  sh.promoted = !same && promoted;
-  sh.candidates = null; sh.path = ""; sh.msg = null;
+function sheetTogglePick(repo, promoted) {
+  const sh = S.addSheet, i = sh.picks.findIndex(p => p.repo.full_name === repo.full_name);
+  if (i >= 0) sh.picks.splice(i, 1);
+  else sh.picks.push({ repo, promoted, path: "", candidates: null, err: null });
+  sh.msg = null;
   render();
 }
 
 function sheetZip(sh) {
+  const over = (ev, on) => { ev.preventDefault(); ev.currentTarget.classList.toggle("over", on); };
   return h("div", {},
     h("p", { class: "muted small", style: "margin-top:0" },
-      "ZIP musi zawierać jeden katalog *.koplugin z plikami _meta.lua i main.lua — tak samo jak wtyczka z galerii (do 20 MB). Po wgraniu wybierzesz czytniki."),
-    h("div", { class: "row" },
-      h("input", { type: "file", id: "f-plugin-zip", accept: ".zip", "aria-label": "Plik ZIP wtyczki" }),
-      h("button", { type: "button", class: "primary", disabled: S.uploadBusy, onclick: uploadPlugin }, S.uploadBusy ? "Wgrywam…" : "Wgraj")),
+      "Wgraj plik .zip z jednym katalogiem *.koplugin (do 20 MB). Potem wybierzesz czytniki."),
+    h("div", { class: "dropzone", id: "f-plugin-drop",
+      ondragover: ev => over(ev, true), ondragleave: ev => over(ev, false),
+      ondrop: ev => { over(ev, false); uploadPlugin(ev.dataTransfer.files); } },
+      h("p", {}, h("b", {}, S.uploadBusy ? "Wgrywam…" : "Przeciągnij plik .zip tutaj")),
+      h("p", { class: "muted small" }, "albo wybierz plik — wgra się od razu"),
+      h("button", { type: "button", id: "f-plugin-pick", class: "primary", disabled: S.uploadBusy, onclick: () => document.getElementById("f-plugin-zip").click() }, "Wybierz plik…"),
+      h("input", { type: "file", id: "f-plugin-zip", accept: ".zip", hidden: true, "aria-label": "Plik .zip wtyczki",
+        onchange: ev => uploadPlugin(ev.target.files) })),
     S.uploadMsg && h("p", { class: S.uploadMsg.ok ? "ok" : "err", role: "status" }, S.uploadMsg.text));
 }
 
-// magazyn: wtyczki, które panel już ma i może przypisać (tylko zaakceptowane wersje)
-const SRC_LABEL = { upload: "wgrany plik ZIP", galeria: "z galerii", "urządzenie": "z czytnika" };
+// wtyczki, które panel już ma i może przypisać (tylko zaakceptowane wersje)
+const SRC_LABEL = { upload: "wgrany plik .zip", galeria: "z galerii", "urządzenie": "z czytnika" };
 function sheetStoreDirs() {
   const by = new Map();
   for (const v of (S.plugins || []).filter(x => x.approved)) {
@@ -4206,10 +4245,10 @@ function sheetStoreDirs() {
 
 function sheetStore(sh) {
   const dirs = sheetStoreDirs();
-  if (!S.plugins) return h("p", { class: "loading" }, "Wczytuję magazyn…");
-  if (dirs.length === 0) return h("p", { class: "muted" }, "Magazyn jest pusty — dodaj wtyczkę z galerii albo wgraj ZIP.");
+  if (!S.plugins) return h("p", { class: "loading" }, "Wczytuję wtyczki z panelu…");
+  if (dirs.length === 0) return h("p", { class: "muted" }, "Panel nie ma jeszcze żadnych wtyczek — dodaj wtyczkę z galerii albo wgraj plik .zip.");
   return h("div", {},
-    h("p", { class: "muted small", style: "margin-top:0" }, "Wtyczki, które panel już ma. Wybierz jedną i zaznacz czytniki."),
+    h("p", { class: "muted small", style: "margin-top:0" }, "To wtyczki, które już są w panelu. Wybierz jedną."),
     dirs.map(([dir, vs]) => {
       const cur = vs.find(v => v.sha256 === sh.sha), on = !!cur, id = "sh-s-" + dir.replace(/\W/g, "_");
       return h("div", { class: "shrow" + (on ? " on" : "") },
@@ -4221,93 +4260,180 @@ function sheetStore(sh) {
               `${v.version || v.sha256.slice(0, 12)} · ${SRC_LABEL[v.source] || v.source}${v.source_ref ? " · " + v.source_ref : ""}`)))),
         h("div", { class: "shact" },
           h("button", { type: "button", id, class: on ? "primary" : "", "aria-pressed": String(on), disabled: sh.busy,
-            onclick: () => { sh.sha = on ? null : vs[0].sha256; sh.msg = null; render(); } }, on ? "Wybrano" : "Wybierz")));
+            onclick: () => { sh.sha = on ? null : vs[0].sha256; sh.msg = null; render(); } }, on ? "✓ Wybrano" : "Wybierz")));
     }));
 }
 
+// krok 2, lewa część: karty wybranych wtyczek (z galerii: z „×” i, gdy repozytorium ma kilka katalogów *.koplugin, z wyborem katalogu)
+function sheetCards(sh) {
+  if (sh.src !== "galeria") {
+    const x = sheetPicked(sh)[0], v = x.v;
+    return h("div", {}, h("div", { class: "shcard" }, h("b", {}, x.name),
+      h("div", { class: "muted small" }, `${v.version || v.sha256.slice(0, 12)} · ${SRC_LABEL[v.source] || v.source}`)));
+  }
+  return h("div", {}, sh.picks.map(pk => {
+    const r = pk.repo, name = galleryTitle(r.full_name);
+    return h("div", { class: "shcard" + (pk.err ? " bad" : "") },
+      h("div", { class: "row", style: "flex-wrap:nowrap;align-items:flex-start" },
+        h("div", { class: "grow" },
+          h("div", {}, h("b", {}, name), pk.promoted && h("span", { class: "badge soft" }, "od autora koligilo")),
+          h("div", { class: "muted small" }, `${r.full_name} · ★ ${r.stars}` + (r.latest_release ? ` · release ${r.latest_release}` : "")),
+          h("div", { class: "small shdesc" }, r.description || h("span", { class: "muted" }, "(brak opisu)"))),
+        h("button", { type: "button", class: "shx", "aria-label": `Usuń „${name}” z wyboru`, disabled: sh.busy,
+          onclick: () => sheetTogglePick(r, pk.promoted) }, "×")),
+      pk.candidates && h("label", { class: "field" },
+        h("span", {}, "Wiele katalogów *.koplugin w repozytorium — wybierz jeden:"),
+        h("select", { disabled: sh.busy, onchange: ev => { pk.path = ev.target.value; } },
+          pk.candidates.map(c => h("option", { value: c === "." ? "" : c, selected: (pk.path === (c === "." ? "" : c)) || undefined }, c)))),
+      pk.err && h("p", { class: "err small", role: "alert", style: "margin:6px 0 0" }, pk.err));
+  }));
+}
+
+function sheetBtnLabel(sh, nPlug, nDev) {
+  const w = nPlug > 1 ? `${nPlug} ${plPl(nPlug, "wtyczkę", "wtyczki", "wtyczek")}` : "";
+  if (sh.shared) return w ? `Dodaj ${w} dla wszystkich` : "Dodaj dla wszystkich";
+  if (nDev > 0) return `Dodaj ${w ? w + " " : ""}na ${nDev} ${plPl(nDev, "czytnik", "czytniki", "czytników")}`;
+  return w ? `Dodaj ${w} do panelu` : "Dodaj do panelu";
+}
+
+function sheetDevChips(sh) {
+  const devs = S.state.devices, chosen = sheetDevices(sh);
+  if (devs.length === 0) return h("p", { class: "muted small", style: "margin:0" }, "Brak połączonych czytników — wtyczka trafi tylko do panelu.");
+  const toggle = id => { if (chosen.has(id)) chosen.delete(id); else chosen.add(id); render(); };
+  return h("div", {},
+    h("div", { class: "devchips", role: "group", "aria-label": "Dla których czytników" },
+      h("span", { class: "muted" }, "Dla których czytników:"),
+      devs.map(d => {
+        const on = sh.shared || chosen.has(d.id);
+        return h("button", { type: "button", class: "devchip" + (on ? " on" : "") + (d.plugins_allowed ? "" : " wait"), "aria-pressed": String(on),
+          disabled: sh.busy || sh.shared, title: d.plugins_allowed ? d.name : CONSENT_SHORT + ". " + PLUG_STATE.consent.hint,
+          onclick: () => toggle(d.id) }, (on ? "✓ " : "") + d.name + (d.plugins_allowed ? "" : " · bez zgody"));
+      }),
+      h("button", { type: "button", id: "sh-shared", class: "devchip shared" + (sh.shared ? " on" : ""), "aria-pressed": String(sh.shared), disabled: sh.busy,
+        title: "Dla wszystkich czytników, także przyszłych", onclick: () => { sh.shared = !sh.shared; render(); } }, (sh.shared ? "✓ " : "") + "★ wspólna")),
+    devs.some(d => !d.plugins_allowed) && h("p", { class: "muted small", style: "margin:6px 0 0" },
+      "Czytnik bez zgody dostanie wtyczkę dopiero po tym, jak sam pozwoli na wtyczki."));
+}
+
+function sheetWarn(sh) {
+  const comm = sh.src === "galeria" ? sh.picks.filter(p => !p.promoted) : [];
+  if (comm.length === 0) return null;
+  const one = comm.length === 1;
+  return h("div", { class: "plugin-warn", role: "note", style: "padding:10px 12px;border-radius:8px" },
+    h("b", {}, "⚠ To cudzy kod" + (one ? ". " : ` (${comm.length} z wybranych wtyczek: ${comm.map(p => galleryTitle(p.repo.full_name)).join(", ")}). `)),
+    (one ? "Napisał go ktoś spoza koligilo i KOReadera. Na czytniku ma" : "Napisali go ludzie spoza koligilo i KOReadera. Na czytniku mają") +
+    " pełny dostęp do plików, sieci i ustawień. " +
+    (one ? "Zajrzyj do repozytorium" : "Zajrzyj do repozytoriów") + ", zanim klikniesz „Dodaj”. Czytnik i tak zapyta o zgodę przed instalacją.");
+}
+
 function sheetFoot(sh) {
-  const devs = S.state.devices, picked = sh.src === "galeria" ? sh.repo : sh.sha;
-  if (!picked) return h("footer", { class: "sheet-foot" },
-    h("p", { class: "muted small", style: "margin:0" }, sh.src === "galeria" ? "Wybierz wtyczkę z listy." : "Wybierz wtyczkę z magazynu."),
-    sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
-  const chosen = sheetDevices(sh), n = devs.filter(d => chosen.has(d.id)).length;
-  const label = sh.shared ? (sh.src === "galeria" ? "Dodaj jako wspólną" : "Przypisz jako wspólną")
-    : sh.src === "galeria" ? (n > 0 ? `Dodaj i przypisz (${n})` : "Dodaj do magazynu") : `Przypisz (${n})`;
-  return h("footer", { class: "sheet-foot" },
-    sh.src === "galeria" && !sh.promoted && h("div", { class: "plugin-warn", role: "note", style: "padding:10px 12px;border-radius:8px" },
-      h("b", {}, "⚠ Zewnętrzny kod z pełnymi uprawnieniami. "),
-      "Tę wtyczkę pisze społeczność, nie autorzy koligilo ani KOReadera. Na czytniku ma te same uprawnienia co reszta systemu — dostęp do plików, sieci, ustawień. Sprawdź repozytorium (opis, gwiazdki, aktywność), zanim klikniesz „Dodaj”. Instalacja i tak wymaga osobnego potwierdzenia na czytniku."),
-    h("label", { class: "row sharedopt" },
-      h("input", { type: "checkbox", id: "sh-shared", checked: sh.shared, disabled: sh.busy,
-        onchange: ev => { sh.shared = ev.target.checked; render(); } }),
-      h("span", {}, h("b", {}, "Wtyczka wspólna"), " — trafi do wszystkich czytników i do każdego nowego")),
-    h("fieldset", { class: "shdev" + (sh.shared ? " off" : "") },
-      h("legend", {}, "Na które czytniki?"),
-      devs.length === 0 ? h("p", { class: "muted small", style: "margin:0" }, "Brak połączonych czytników — wtyczka trafi tylko do magazynu.")
-        : h("div", { class: "devpick" }, devs.map(d => h("label", { class: "row" },
-          h("input", { type: "checkbox", checked: sh.shared || chosen.has(d.id), disabled: sh.busy || sh.shared,
-            onchange: ev => { if (ev.target.checked) chosen.add(d.id); else chosen.delete(d.id); render(); } }),
-          d.name,
-          !d.plugins_allowed && h("span", { class: "muted small", title: PLUG_STATE.consent.hint }, " (" + CONSENT_SHORT + " — przypisanie poczeka)"))))),
-    sh.candidates && h("label", { class: "field" },
-      h("span", {}, "Wiele katalogów *.koplugin w repozytorium — wybierz jeden:"),
-      h("select", { onchange: ev => { sh.path = ev.target.value; } },
-        sh.candidates.map(c => h("option", { value: c === "." ? "" : c, selected: (sh.path === (c === "." ? "" : c)) || undefined }, c)))),
+  if (sh.src === "zip") return null;
+  const picked = sheetPicked(sh), n = picked.length;
+  const msg = sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text);
+  if (n === 0) return h("footer", { class: "sheet-foot" },
+    h("p", { class: "muted small" }, sh.src === "galeria" ? "Kliknij „Wybierz” przy jednej lub kilku wtyczkach." : "Kliknij „Wybierz” przy wtyczce."), msg);
+  if (!sheetStep2(sh)) return h("footer", { class: "sheet-foot" },
     h("div", { class: "row" },
-      h("button", { type: "button", id: "sh-go", class: "primary", disabled: sh.busy || (sh.src !== "galeria" && n === 0 && !sh.shared), onclick: sheetSubmit },
-        sh.busy ? "Pracuję…" : label),
+      h("span", { class: "grow shsum" }, `Wybrano ${n > 1 ? n + ": " : ""}`, h("b", {}, picked.map(x => x.name).join(", "))),
+      n > 1 && h("button", { type: "button", class: "linkbtn", disabled: sh.busy, onclick: () => { sh.picks = []; render(); } }, "Wyczyść"),
+      h("button", { type: "button", id: "sh-next", class: "primary", onclick: () => sheetGoStep(2) }, "Dalej →"),
       h("button", { type: "button", disabled: sh.busy, onclick: closeAddSheet }, "Anuluj")),
-    sh.msg && h("p", { class: sh.msg.ok ? "ok" : "err", role: "status" }, sh.msg.text));
+    msg);
+  const nDev = S.state.devices.filter(d => sheetDevices(sh).has(d.id)).length;
+  return h("footer", { class: "sheet-foot" },
+    sheetWarn(sh),
+    sheetDevChips(sh),
+    h("div", { class: "row" },
+      h("button", { type: "button", disabled: sh.busy, onclick: () => sheetGoStep(1) }, "← Wstecz"),
+      h("button", { type: "button", id: "sh-go", class: "primary", disabled: sh.busy || (sh.src !== "galeria" && nDev === 0 && !sh.shared), onclick: sheetSubmit },
+        sh.busy ? (sh.prog || "Pracuję…") : sheetBtnLabel(sh, sh.src === "galeria" ? n : 1, nDev)),
+      h("button", { type: "button", disabled: sh.busy, onclick: closeAddSheet }, "Anuluj")),
+    msg);
+}
+
+// Komunikat po dodaniu (na dole strony, znika sam) i chwilowe podświetlenie nowych wierszy macierzy.
+let plugToastTimer = null, plugFlashTimer = null;
+function plugToast(text) {
+  S.plugToast = text;
+  clearTimeout(plugToastTimer);
+  plugToastTimer = setTimeout(() => { S.plugToast = null; render(); }, 12000);
+}
+function plugFlash(dirs) {
+  S.plugFlash = new Set(dirs);
+  clearTimeout(plugFlashTimer);
+  plugFlashTimer = setTimeout(() => { S.plugFlash = null; render(); }, 5000);
+}
+function plugToastBox() {
+  return h("div", { class: "toast", role: "status" },
+    h("span", { class: "grow" }, S.plugToast),
+    h("button", { type: "button", "aria-label": "Zamknij komunikat", onclick: () => { S.plugToast = null; render(); } }, "×"));
 }
 
 async function sheetSubmit() {
   const sh = S.addSheet;
-  sh.busy = true; sh.msg = null; render();
-  let plugin;
+  sh.busy = true; sh.msg = null; sh.prog = null; render();
+  const added = [], failed = []; // added: {pk?, plugin}; failed: pk z błędem
   if (sh.src === "galeria") {
-    const body = { repo: sh.repo.full_name };
-    if (sh.repo.latest_release) body.ref = sh.repo.latest_release;
-    if (sh.path) body.path = sh.path;
-    const res = await apiRaw("POST", "/api/admin/gallery/install", body);
-    if (!res.ok) {
-      if (res.status === 400 && res.data && res.data.candidates) {
-        sh.candidates = res.data.candidates;
-        if (!sh.path) sh.path = sh.candidates[0] === "." ? "" : sh.candidates[0];
-      }
-      sh.msg = { ok: false, text: (res.data && res.data.error) || `HTTP ${res.status}` };
-      sh.busy = false; render();
-      return;
+    const todo = [...sh.picks];
+    for (const [i, pk] of todo.entries()) {
+      pk.err = null;
+      if (todo.length > 1) { sh.prog = `Pobieram ${i + 1} z ${todo.length}…`; render(); }
+      const body = { repo: pk.repo.full_name };
+      if (pk.repo.latest_release) body.ref = pk.repo.latest_release;
+      if (pk.path) body.path = pk.path;
+      try {
+        const res = await apiRaw("POST", "/api/admin/gallery/install", body);
+        if (res.ok) { added.push({ pk, plugin: res.data.plugin }); continue; }
+        if (res.status === 400 && res.data && res.data.candidates) {
+          pk.candidates = res.data.candidates;
+          if (!pk.path) pk.path = pk.candidates[0] === "." ? "" : pk.candidates[0];
+        }
+        pk.err = (res.data && res.data.error) || `HTTP ${res.status}`;
+      } catch (e) { pk.err = e.message; }
+      failed.push(pk);
     }
-    plugin = res.data.plugin;
   } else {
-    plugin = (S.plugins || []).find(v => v.sha256 === sh.sha);
+    const v = (S.plugins || []).find(x => x.sha256 === sh.sha);
+    if (v) added.push({ plugin: v });
   }
+  // jedno przypisanie na czytnik ze wszystkimi nowymi wtyczkami naraz
   const names = [], errs = [];
-  if (sh.shared) {
-    const r = await apiRaw("POST", "/api/admin/shared-plugins", { plugins: { ...(S.state.shared_plugins || {}), [plugin.dir]: plugin.sha256 } });
+  const add = Object.fromEntries(added.map(x => [x.plugin.dir, x.plugin.sha256]));
+  if (added.length && sh.shared) {
+    const r = await apiRaw("POST", "/api/admin/shared-plugins", { plugins: { ...(S.state.shared_plugins || {}), ...add } });
     if (r.ok) names.push(...((r.data && r.data.changed) || [])); else errs.push(`wtyczki wspólne: ${(r.data && r.data.error) || r.status}`);
+  } else if (added.length) {
+    for (const devId of sheetDevices(sh)) {
+      const d = S.state.devices.find(x => x.id === devId);
+      if (!d) continue;
+      const r = await apiRaw("POST", `/api/admin/devices/${devId}/plugins`, { plugins: { ...(d.plugins || {}), ...add } });
+      if (r.ok) names.push(d.name); else errs.push(`${d.name}: ${(r.data && r.data.error) || r.status}`);
+    }
   }
-  for (const devId of sh.shared ? [] : sheetDevices(sh)) {
-    const d = S.state.devices.find(x => x.id === devId);
-    if (!d) continue;
-    const r = await apiRaw("POST", `/api/admin/devices/${devId}/plugins`, { plugins: { ...(d.plugins || {}), [plugin.dir]: plugin.sha256 } });
-    if (r.ok) names.push(d.name); else errs.push(`${d.name}: ${(r.data && r.data.error) || r.status}`);
-  }
-  sh.busy = false;
-  const what = `„${pluginVerName(plugin)}” (${plugin.version || plugin.sha256.slice(0, 12)})`;
-  if (errs.length) {
-    sh.msg = { ok: false, text: `${what} jest w magazynie, ale nie udało się przypisać do: ${errs.join("; ")}` };
+  sh.busy = false; sh.prog = null;
+  const one = added.length === 1 ? added[0].plugin : null;
+  const what = one ? `„${pluginVerName(one)}” (${one.version || one.sha256.slice(0, 12)})`
+    : `${added.length} ${plPl(added.length, "wtyczkę", "wtyczki", "wtyczek")}: ${added.map(x => pluginVerName(x.plugin)).join(", ")}`;
+  if (sh.src === "galeria") { const ok = new Set(added.map(x => x.pk)); sh.picks = sh.picks.filter(p => !ok.has(p)); }
+  if (failed.length || errs.length) {
+    const parts = [];
+    if (added.length) parts.push(`Dodano ${what}${errs.length ? ", ale nie udało się przypisać do: " + errs.join("; ") : names.length ? " i przypisano do: " + names.join(", ") : " do panelu"}.`);
+    if (failed.length) parts.push(`Nie udało się dodać: ${failed.map(pk => galleryTitle(pk.repo.full_name)).join(", ")} — szczegóły na kartach powyżej.`);
+    sh.msg = { ok: false, text: parts.join(" ") };
     render();
     refresh();
     return;
   }
   S.addSheet = null;
   S.plugSel = null;
-  S.plugMsg = { ok: true, text: names.length
-    ? `Dodano ${what}${sh.shared ? " jako wspólną" : ""} i przypisano do: ${names.join(", ")}. ${SYNC_HINT}`
-    : sh.shared ? `Dodano ${what} jako wspólną — wszystkie czytniki już ją mają.`
-    : `Dodano ${what} do magazynu. Przypisz ją czytnikom w tabeli (znak ＋).` };
+  S.plugMsg = null;
+  plugFlash(added.map(x => x.plugin.dir));
+  plugToast(names.length
+    ? `Dodano ${what}${sh.shared ? " jako wspólne" : ""} i przypisano do: ${names.join(", ")}. ${SYNC_HINT}`
+    : sh.shared ? `Dodano ${what} jako wspólne — wszystkie czytniki już je mają.`
+    : `Dodano ${what} do panelu. Przypisz ${added.length > 1 ? "je" : "ją"} czytnikom w tabeli (znak ＋).`);
   await refresh();
+  document.querySelector("tr.flash")?.scrollIntoView({ block: "center" }); // środek, żeby komunikat u dołu nie zasłonił wiersza
   document.getElementById("b-add")?.focus();
 }
 
