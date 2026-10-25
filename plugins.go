@@ -69,6 +69,28 @@ type InstalledPlugin struct {
 	Version  string `json:"version,omitempty"`
 	Managed  bool   `json:"managed"` // ma znacznik .koligilo
 	SHA256   string `json:"sha256,omitempty"`
+	// Origin (TASK-43): skąd wtyczka na czytniku — "builtin" (wbudowana w KOReadera),
+	// "manual" (wgrana ręcznie do katalogu danych) albo "" (nie da się ustalić:
+	// stary plugin, wspólny katalog danych i instalacji, wtyczka zarządzana).
+	Origin string `json:"origin,omitempty"`
+}
+
+// normalizePluginOrigin: czytnik jest niezaufany, więc dopuszczamy tylko znane
+// wartości. Gdy pochodzenia brak (stary plugin albo ten sam katalog danych co
+// instalacja), zgaduje po nazwie z builtinPlugins — lista niepełna, więc to
+// tylko podpowiedź dla panelu, nigdy podstawa decyzji o ruszaniu wtyczki.
+func normalizePluginOrigin(dir, origin string, managed bool) string {
+	switch origin {
+	case "builtin", "manual":
+		return origin
+	}
+	if managed {
+		return ""
+	}
+	if builtinPlugins[strings.ToLower(strings.TrimSuffix(dir, ".koplugin"))] {
+		return "builtin"
+	}
+	return ""
 }
 
 // PluginResult — wynik jednej operacji na czytniku.
@@ -788,6 +810,7 @@ func (st *Store) ReportPlugins(d *Device, rep *PluginReport) error {
 		inv = append(inv, InstalledPlugin{
 			Dir: clip(p.Dir, 80), Name: clip(p.Name, 100), Fullname: clip(strings.TrimSpace(p.Fullname), 100), Version: clip(p.Version, 60),
 			Managed: p.Managed, SHA256: clip(p.SHA256, 64),
+			Origin: normalizePluginOrigin(clip(p.Dir, 80), clip(strings.TrimSpace(p.Origin), 20), p.Managed),
 		})
 	}
 	sort.Slice(inv, func(i, j int) bool { return inv[i].Dir < inv[j].Dir })

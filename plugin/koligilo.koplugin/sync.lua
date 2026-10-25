@@ -542,6 +542,20 @@ local function clip_utf8(s, n)
     return s:sub(1, cut)
 end
 
+--- Pochodzenie wtyczki w inwentarzu (TASK-43): "builtin" (wbudowana w KOReadera),
+-- "manual" (wgrana ręcznie do katalogu danych) albo nil, gdy nie da się ustalić.
+-- Pochodzenie wynika wyłącznie z TEGO, W KTÓRYM KATALOGU wpis leży, więc:
+--   * ten sam katalog instalacji i danych (Kindle/Kobo) → nil (serwer zgadnie po nazwie),
+--   * wtyczka zarządzana przez koligilo → nil (jej źródłem jest serwer),
+--   * jest w katalogu danych (także gdy ma kopię w instalacji) → "manual",
+--   * jest tylko w katalogu instalacji → "builtin".
+function Sync.pluginOrigin(in_install, in_data, managed, same_dir)
+    if same_dir or managed then return nil end
+    if in_data then return "manual" end
+    if in_install then return "builtin" end
+    return nil
+end
+
 --- Pole z _meta.lua wtyczki czytane WYŁĄCZNIE wyrażeniem regularnym
 -- (to kod obcej wtyczki — nigdy dofile/load). Tylko prosty literał "…"/'…',
 -- także w opakowaniu gettextu: fullname = _("X") / _ "X" (tak pisze _meta.lua

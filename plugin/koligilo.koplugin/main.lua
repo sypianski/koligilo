@@ -665,10 +665,12 @@ end
 
 --- Inwentarz: dir → { managed, sha256, name, version } ze wszystkich katalogów
 -- wtyczek (wbudowane w „plugins” obok KOReadera + katalog danych).
+Koligilo.BUILTIN_PLUGINS_DIR = "plugins" -- katalog wtyczek wbudowanych (obok KOReadera); w testach podmieniany
 function Koligilo:pluginInventory()
     local root = self:pluginRoot()
     local root_real = ffiutil.realpath(root) or root
     local inv = {}
+    local from_install, from_data = {}, {} -- gdzie znaleziono wpis (TASK-43: pochodzenie)
     local function scan(path, own)
         if not is_dir(path) then return end
         for entry in lfs.dir(path) do
@@ -687,6 +689,7 @@ function Koligilo:pluginInventory()
                     item.sha256 = m.sha256
                     item.version = item.version or m.version
                 end
+                if own then from_data[entry] = true else from_install[entry] = true end
                 local prev = inv[entry]
                 -- ta sama nazwa w dwóch katalogach: jeśli choć jedna kopia nie
                 -- jest nasza, całość traktujemy jak ręczną (konflikt, nie ruszamy)
@@ -695,16 +698,20 @@ function Koligilo:pluginInventory()
             end
         end
     end
-    local builtin = "plugins"
-    if (ffiutil.realpath(builtin) or builtin) ~= root_real then scan(builtin, false) end
+    local builtin = self.BUILTIN_PLUGINS_DIR
+    local same_dir = (ffiutil.realpath(builtin) or builtin) == root_real
+    if not same_dir then scan(builtin, false) end
     scan(root, true)
+    for entry, item in pairs(inv) do
+        item.origin = Sync.pluginOrigin(from_install[entry], from_data[entry], item.managed, same_dir)
+    end
     return inv
 end
 
 local function inventory_list(inv)
     local out = {}
     for _k, v in pairs(inv) do
-        out[#out + 1] = { dir = v.dir, name = v.name, fullname = v.fullname, version = v.version, managed = v.managed, sha256 = v.sha256 }
+        out[#out + 1] = { dir = v.dir, name = v.name, fullname = v.fullname, version = v.version, managed = v.managed, sha256 = v.sha256, origin = v.origin }
     end
     table.sort(out, function(a, b) return a.dir < b.dir end)
     return out

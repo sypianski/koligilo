@@ -233,6 +233,22 @@ check("inwentarz: ręczna niezarządzana, wersja z _meta", inv["reczna.koplugin"
     and inv["reczna.koplugin"].version == "9")
 check("inwentarz: fullname z _meta (gettext) idzie do panelu", inv["reczna.koplugin"] and inv["reczna.koplugin"].fullname == "Ręczna wtyczka")
 check("inwentarz: koligilo niezarządzany mimo znacznika", inv["koligilo.koplugin"] and not inv["koligilo.koplugin"].managed)
+-- pochodzenie (TASK-43): katalog wbudowanych różny od katalogu danych
+check("origin: ręczna w katalogu danych = manual", inv["reczna.koplugin"].origin == "manual")
+check("origin: zarządzana = puste", inv["foo.koplugin"].origin == nil)
+local BI = TMP .. "/builtin"
+sh("mkdir -p " .. q(BI .. "/calibre.koplugin") .. " " .. q(BI .. "/reczna.koplugin"))
+spit(BI .. "/calibre.koplugin/_meta.lua", 'return { name = "calibre", fullname = "Calibre", version = "1" }')
+spit(BI .. "/reczna.koplugin/_meta.lua", 'return { name = "reczna", version = "0" }')
+K.BUILTIN_PLUGINS_DIR = BI
+local inv_o = K:pluginInventory()
+check("origin: tylko w instalacji = builtin", inv_o["calibre.koplugin"] and inv_o["calibre.koplugin"].origin == "builtin")
+check("origin: kopia w instalacji i danych = manual", inv_o["reczna.koplugin"].origin == "manual")
+check("origin: zarządzana nadal puste", inv_o["foo.koplugin"].origin == nil)
+K.BUILTIN_PLUGINS_DIR = ROOT -- ten sam katalog co dane (Kindle/Kobo): pochodzenia nie da się ustalić
+local inv_s = K:pluginInventory()
+check("origin: wspólny katalog = puste", inv_s["reczna.koplugin"].origin == nil and inv_s["foo.koplugin"].origin == nil)
+K.BUILTIN_PLUGINS_DIR = nil -- wraca wartość z klasy
 
 -- 7) handlePlugins: bez potwierdzenia nic się nie zmienia; odmowa → rejected
 local bar = make_zip("bar.koplugin", "1.0")

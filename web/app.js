@@ -71,9 +71,12 @@ const S = {
   plugMsg: null,       // komunikat po zapisie przypisań: {ok, text}
   favBusy: null,       // klucz ulubionej w trakcie zapisu
   favOnly: false,      // filtr „Tylko ulubione” w macierzy „Zainstalowane” (TASK-20 AC2)
-  otherQ: "",         // pole „Szukaj wśród” w liście „Ręczne i wbudowane” (TASK-41)
+  otherQ: "",         // pole „Szukaj wśród” w liście „Wbudowane w KOReadera” (TASK-41)
   otherPart: false,    // filtr „Tylko na części czytników” w tej liście
-  otherOpen: false,    // lista „Ręczne i wbudowane” rozwinięta?
+  otherOpen: false,    // lista „Wbudowane w KOReadera” rozwinięta?
+  manualQ: "",         // to samo dla listy „Ręczne na czytnikach” (TASK-43)
+  manualPart: false,
+  manualOpen: true,    // ręczne są domyślnie widoczne — to one czekają na przejęcie
   gallery: null,       // /api/admin/gallery → {repos, total, page, updated_at, note, stale}
   galQ: "",
   galSort: "stars",
@@ -3370,7 +3373,7 @@ const PLUG_STATE = {
   rm: { g: "−", text: "usunięcie czeka na potwierdzenie na czytniku", hint: SYNC_HINT },
   rejected: { g: "✕", text: "odrzucona na czytniku", hint: "Przypisz ją ponownie albo usuń z czytnika." },
   err: { g: "✕", text: "błąd na czytniku" },
-  manual: { g: "▫", text: "ręczna lub wbudowana — koligilo jej nie rusza" },
+  manual: { g: "▫", text: "ręczna lub wbudowana — koligilo jej nie rusza" }, // gdy czytnik zgłosił pochodzenie: plugStateText/ORIGIN_TEXT
   none: { g: "＋", text: "nie ma na tym czytniku" },
 };
 const CONSENT_SHORT = "czytnik jeszcze nie pozwolił na wtyczki";
@@ -3397,9 +3400,18 @@ function plugVer(c) {
   if (c.k === "wait" || c.k === "consent") return t ? "→ " + t : i;
   return i || t;
 }
+// TASK-43: czytnik zgłasza pochodzenie wtyczki (origin) — "builtin" | "manual" | brak (nieustalone).
+const ORIGIN_TEXT = {
+  builtin: "wbudowana w KOReadera — koligilo jej nie rusza",
+  manual: "ręczna — koligilo jej nie rusza",
+};
 function plugStateText(c) {
-  return c.k === "err" ? "błąd na czytniku: " + ((c.res && c.res.error) || "?") : PLUG_STATE[c.k].text;
+  if (c.k === "err") return "błąd na czytniku: " + ((c.res && c.res.error) || "?");
+  if (c.k === "manual" && c.inv && ORIGIN_TEXT[c.inv.origin]) return ORIGIN_TEXT[c.inv.origin];
+  return PLUG_STATE[c.k].text;
 }
+// Jak ręczną wtyczkę oddać pod zarządzanie koligilo (droga już istnieje, TASK-13; zgoda zawsze na czytniku, PC-004).
+const TAKEOVER_HINT = `Żeby zarządzać taką wtyczką razem z koligilo: na czytniku ${MENU_PATH} → Wyślij wtyczkę na serwer… → wybierz ją; potem zatwierdź ją tutaj w tabeli (znaczek „czeka na akceptację”). Wtyczki nie da się przejąć z panelu.`;
 
 function latestApproved(dir) {
   return (S.plugins || []).filter(v => v.dir === dir && v.approved)
@@ -3420,11 +3432,16 @@ function pluginRows() {
     Object.keys(d.plugins || {}).forEach(x => managed.add(x));
     (d.plugin_inventory || []).filter(p => p.managed).forEach(p => managed.add(p.dir));
   }
+  // other: dir → { ids: czytniki, builtin: czy KAŻDY zgłaszający uznał ją za wbudowaną }.
+  // Ręczna na choć jednym czytniku, albo pochodzenie nieustalone (stary plugin, Kindle/Kobo
+  // bez rozpoznania po nazwie) → ląduje wśród ręcznych (TASK-43).
   const other = new Map();
   for (const d of devs) for (const p of d.plugin_inventory || []) {
     if (managed.has(p.dir)) continue;
-    if (!other.has(p.dir)) other.set(p.dir, new Set());
-    other.get(p.dir).add(d.id);
+    if (!other.has(p.dir)) other.set(p.dir, { ids: new Set(), builtin: true });
+    const o = other.get(p.dir);
+    o.ids.add(d.id);
+    if (p.origin !== "builtin") o.builtin = false;
   }
   const versions = S.plugins || [];
   const rows = [...managed].sort((a, b) => {
@@ -3479,34 +3496,45 @@ function pluginTable(rows, devs) {
         both && grp("Bez zmian", rest), rest.map(dir => pluginMatrixRow(dir, devs)))))];
 }
 
-// „Ręczne i wbudowane”: koligilo ich nie rusza, lista tylko pokazuje, co zgłosiły czytniki. Nazwy w kolumnach,
-// przy każdej kropki ●/○ w kolejności czytników (kształt, nie kolor), szukanie i filtr „tylko na części”.
-function otherPluginsBlock(other, devs) {
-  const all = [...other].map(([dir, ids]) => ({ dir, ids, label: pluginTitle(dir) }))
+// Listy poza tabelą (koligilo ich nie rusza, lista tylko pokazuje, co zgłosiły czytniki), osobno (TASK-43):
+//   "manual"  — ręczne (i nieustalone), domyślnie rozwinięte, z podpowiedzią jak je przejąć,
+//   "builtin" — wbudowane w KOReadera (kilkadziesiąt na czytnik), zwinięte.
+// Nazwy w kolumnach, przy każdej kropki ●/○ w kolejności czytników (kształt, nie kolor), szukanie i filtr „tylko na części”.
+const OTHER_KIND = {
+  manual: { pre: "manual", id: "f-manualq", cls: "otherplug manualplug", noun: "ręcznych", title: n => `Ręczne na czytnikach (${n})` },
+  builtin: { pre: "other", id: "f-otherq", cls: "otherplug", noun: "wbudowanych", title: n => `Wbudowane w KOReadera (${n})` },
+};
+function otherPluginsBlock(other, devs, kind) {
+  const K = OTHER_KIND[kind], key = x => K.pre + x;
+  const all = [...other].filter(([, o]) => o.builtin === (kind === "builtin")).map(([dir, o]) => ({ dir, ids: o.ids, label: pluginTitle(dir) }))
     .sort((a, b) => a.label.localeCompare(b.label, "pl"));
+  if (all.length === 0) return null;
   const partial = x => x.ids.size < devs.length;
-  const q = S.otherQ.trim().toLowerCase();
-  const hits = all.filter(x => (!S.otherPart || partial(x)) && (!q || (x.label + " " + x.dir).toLowerCase().includes(q)));
+  const q = S[key("Q")].trim().toLowerCase();
+  const hits = all.filter(x => (!S[key("Part")] || partial(x)) && (!q || (x.label + " " + x.dir).toLowerCase().includes(q)));
   const nPart = all.filter(partial).length;
   const dots = x => h("span", { class: "dots", "aria-label": devs.map(d => `${d.name}: ${x.ids.has(d.id) ? "jest" : "brak"}`).join(", "),
     title: devs.map(d => `${d.name}: ${x.ids.has(d.id) ? "jest" : "brak"}`).join("\n") }, devs.map(d => x.ids.has(d.id) ? "●" : "○").join(""));
-  return h("details", { class: "card otherplug", open: S.otherOpen, ontoggle: ev => { S.otherOpen = ev.target.open; } },
-    h("summary", {}, `Ręczne i wbudowane na czytnikach (${all.length})`),
-    h("p", { class: "muted small" }, "koligilo ich nie rusza — nie aktualizuje ani nie usuwa. Lista tylko pokazuje, co czytniki zgłosiły."),
+  return h("details", { class: K.cls, open: S[key("Open")], ontoggle: ev => { S[key("Open")] = ev.target.open; } },
+    h("summary", {}, K.title(all.length)),
+    kind === "manual"
+      ? h("p", { class: "muted small takeover" }, "koligilo ich nie aktualizuje ani nie usuwa, dopóki nie trafią na serwer. " + TAKEOVER_HINT)
+      : h("p", { class: "muted small" }, "Wbudowane w KOReadera — koligilo ich nie rusza i nie da się ich przejąć. Lista tylko pokazuje, co czytniki zgłosiły."),
     h("div", { class: "row otherbar" },
-      h("input", { type: "search", id: "f-otherq", "aria-label": "Szukaj wśród ręcznych i wbudowanych", placeholder: `Szukaj wśród ${all.length}…`, value: S.otherQ,
+      h("input", { type: "search", id: K.id, "aria-label": "Szukaj wśród " + K.noun, placeholder: `Szukaj wśród ${all.length}…`, value: S[key("Q")],
         oninput: ev => {
           const pos = ev.target.selectionStart;
-          S.otherQ = ev.target.value; render();
-          const el = document.getElementById("f-otherq");
+          S[key("Q")] = ev.target.value; render();
+          const el = document.getElementById(K.id);
           if (el) { el.focus(); el.setSelectionRange(pos, pos); }
         } }),
-      h("button", { type: "button", class: "chip" + (!S.otherPart ? " on" : ""), "aria-pressed": String(!S.otherPart),
-        onclick: () => { S.otherPart = false; render(); } }, `Wszystkie (${all.length})`),
-      h("button", { type: "button", class: "chip" + (S.otherPart ? " on" : ""), "aria-pressed": String(S.otherPart),
-        title: "Wtyczki, których nie ma na wszystkich czytnikach", onclick: () => { S.otherPart = true; render(); } }, `Tylko na części (${nPart})`)),
+      h("button", { type: "button", class: "chip" + (!S[key("Part")] ? " on" : ""), "aria-pressed": String(!S[key("Part")]),
+        onclick: () => { S[key("Part")] = false; render(); } }, `Wszystkie (${all.length})`),
+      h("button", { type: "button", class: "chip" + (S[key("Part")] ? " on" : ""), "aria-pressed": String(S[key("Part")]),
+        title: "Wtyczki, których nie ma na wszystkich czytnikach", onclick: () => { S[key("Part")] = true; render(); } }, `Tylko na części (${nPart})`)),
     h("p", { class: "muted small" }, "● jest na czytniku, ○ nie ma. Kolejność: " + devs.map(d => d.name).join(", ") + "."),
-    hits.length === 0 ? h("p", { class: "muted" }, q ? `Nic nie pasuje do „${S.otherQ.trim()}”.` : "Brak wtyczek do pokazania.")
+    kind === "manual" && h("p", { class: "muted small" }, "Czytnik, który nie rozróżnia katalogów (np. Kindle, Kobo) albo ma starszy plugin, nie zgłasza pochodzenia — wtedy wbudowana wtyczka spoza naszej listy też może trafić tutaj."),
+    hits.length === 0 ? h("p", { class: "muted" }, q ? `Nic nie pasuje do „${S[key("Q")].trim()}”.` : "Brak wtyczek do pokazania.")
       : h("div", { class: "othercols" }, hits.map(x => h("div", {}, x.label, " ", dots(x)))));
 }
 
@@ -3536,7 +3564,8 @@ function installedPanel() {
     h("div", { class: "legend small muted", "aria-label": "Znaczenie znaków" },
       ["ok", "upd", "wait", "consent", "manual"].map(k => h("span", { title: PLUG_STATE[k].text }, plugGlyph(k), PLUG_SHORT[k])),
       h("span", { title: "Trafia do każdego nowego czytnika i do wszystkich obecnych" }, h("b", {}, "⇄"), " wspólna")),
-    other.size > 0 && otherPluginsBlock(other, devs),
+    other.size > 0 && otherPluginsBlock(other, devs, "manual"),
+    other.size > 0 && otherPluginsBlock(other, devs, "builtin"),
     !S.favOnly && extraFav.length > 0 && h("section", { class: "card", style: "margin-top:var(--card-gap)" },
       h("h3", { style: "margin-top:0" }, "Ulubione z galerii (jeszcze niezainstalowane)"),
       h("p", { class: "muted small", style: "margin-top:0" }, "Gwiazdka nie instaluje wtyczki — to tylko zakładka."),
@@ -3685,7 +3714,9 @@ function plugDetail() {
       h("button", { type: "button", onclick: () => { S.plugSel = null; render(); } }, "Zamknij")),
     c && h("p", { class: "pdstate" }, plugGlyph(c.k), " ", h("b", {}, plugStateText(c)), plugVer(c) && h("span", { class: "vv" }, " · " + plugVer(c)),
       PLUG_STATE[c.k].hint && h("span", { class: "muted small", style: "display:block;margin-top:2px" }, PLUG_STATE[c.k].hint)),
-    c && c.k === "manual" && h("p", { class: "muted small" }, "Zainstalowana ręcznie albo wbudowana w KOReadera. koligilo jej nie aktualizuje ani nie usuwa."),
+    c && c.k === "manual" && h("p", { class: "muted small" },
+      (c.inv && c.inv.origin === "builtin" ? "Wbudowana w KOReadera." : c.inv && c.inv.origin === "manual" ? "Zainstalowana ręcznie." : "Zainstalowana ręcznie albo wbudowana w KOReadera.")
+      + " koligilo jej nie aktualizuje ani nie usuwa." + (!c.inv || c.inv.origin !== "builtin" ? " " + TAKEOVER_HINT : "")),
     c && c.k !== "manual" && h("div", { class: "row" },
       c.canRemove && h("button", { type: "button", class: "danger", disabled: S.devPluginBusy === d.id, onclick: () => removeDevicePlugin(d, dir) }, "Usuń z czytnika"),
       !c.canRemove && c.sha && h("span", { class: "muted small" }, "Zainstalowana ręcznie — nie da się usunąć z panelu.")),

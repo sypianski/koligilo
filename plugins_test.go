@@ -519,3 +519,46 @@ func TestFavoritesExport(t *testing.T) {
 		t.Errorf("favorites po imporcie = %v", got)
 	}
 }
+
+// TASK-43: pochodzenie wtyczki z inwentarza — tylko znane wartości, fallback po nazwie.
+func TestReportPluginsOrigin(t *testing.T) {
+	st, _, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{}
+	rep := &PluginReport{Installed: []InstalledPlugin{
+		{Dir: "reczna.koplugin", Origin: "manual"},
+		{Dir: "calibre.koplugin", Origin: "builtin"},
+		{Dir: "kosync.koplugin"},                                  // stary plugin: fallback po nazwie
+		{Dir: "Calibre.koplugin"},                                 // wielkość liter nie ma znaczenia
+		{Dir: "nieznana.koplugin"},                                // nieznana, bez pochodzenia
+		{Dir: "obca.koplugin", Origin: "<script>"},                // śmieci z czytnika
+		{Dir: "dluga.koplugin", Origin: strings.Repeat("m", 500)}, // przycięte i odrzucone
+		{Dir: "foo.koplugin", Managed: true, Origin: "builtin"},   // czytnik zgłosił, serwer przyjmuje znaną wartość
+		{Dir: "wsparta.koplugin", Managed: true},                  // zarządzana: bez zgadywania
+		{Dir: "statistics.koplugin", Origin: "manual"},            // zgłoszenie czytnika ma pierwszeństwo przed listą
+	}}
+	if err := st.ReportPlugins(d, rep); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, p := range d.PluginInventory {
+		got[p.Dir] = p.Origin
+	}
+	want := map[string]string{
+		"reczna.koplugin": "manual", "calibre.koplugin": "builtin", "kosync.koplugin": "builtin", "Calibre.koplugin": "builtin",
+		"nieznana.koplugin": "", "obca.koplugin": "", "dluga.koplugin": "", "foo.koplugin": "builtin", "wsparta.koplugin": "",
+		"statistics.koplugin": "manual",
+	}
+	for dir, w := range want {
+		if got[dir] != w {
+			t.Errorf("origin %s = %q, chcę %q", dir, got[dir], w)
+		}
+	}
+	// pole origin trafia do JSON-a panelu tylko, gdy jest ustawione
+	b, _ := json.Marshal(d.PluginInventory)
+	if !strings.Contains(string(b), `"origin":"manual"`) || strings.Contains(string(b), `"origin":""`) {
+		t.Errorf("JSON inwentarza: %s", b)
+	}
+}

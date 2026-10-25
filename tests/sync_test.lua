@@ -421,5 +421,14 @@ check("hint zgód: pierwszy raz, nie cicho", Sync.consentsHintDue(false, false) 
 check("hint zgód: nie w cichej synchronizacji", Sync.consentsHintDue(false, true) == false)
 check("hint zgód: tylko raz", Sync.consentsHintDue(true, false) == false)
 
+-- pochodzenie wtyczki w inwentarzu (TASK-43) ---------------------------------------
+local O = Sync.pluginOrigin
+check("origin: tylko w instalacji = builtin", O(true, false, false, false) == "builtin")
+check("origin: w katalogu danych = manual", O(false, true, false, false) == "manual")
+check("origin: kopia w obu katalogach = manual", O(true, true, false, false) == "manual")
+check("origin: wspólny katalog (Kindle/Kobo) = nieznane", O(true, true, false, true) == nil and O(false, true, false, true) == nil)
+check("origin: zarządzana = nieznane", O(false, true, true, false) == nil)
+check("origin: nigdzie = nieznane", O(false, false, false, false) == nil)
+
 print(string.format("%d ok, %d fail", passed, failed))
 os.exit(failed == 0 and 0 or 1)
