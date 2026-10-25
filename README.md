@@ -3,7 +3,7 @@
   <h1>koligilo</h1>
   <p>Set up KOReader from a panel on your computer and keep those settings the same on all your e-readers.</p>
   <p>by <a href="https://sypian.ski/">Jakub Sypiański</a> · License: AGPL-3.0</p>
-  <p>Version 0.7.0 · updated 24 October 2026</p>
+  <p>Version 0.9.1 · updated 25 October 2026</p>
   <p><strong>Beta.</strong> Feedback is very welcome: <a href="https://github.com/sypianski/koligilo/issues">open an issue</a>.</p>
 
   [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
@@ -26,7 +26,7 @@ The panel and the reader plugin are in Polish for now.
 
 ## Download
 
-**[Download koligilo.dmg](https://github.com/sypianski/koligilo/releases/latest/download/koligilo.dmg)** for macOS, version 0.7.0, released 24 October 2026. Windows, Linux and the e-reader plugin are in the table below.
+**[Download koligilo.dmg](https://github.com/sypianski/koligilo/releases/latest/download/koligilo.dmg)** for macOS, version 0.9.1, released 25 October 2026. Windows, Linux and the e-reader plugin are in the table below.
 
 The computer side runs on **macOS, Windows and Linux**. It is the same app with the same panel everywhere. The e-reader needs KOReader.
 
