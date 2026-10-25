@@ -1091,3 +1091,11 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .dtile b { font-size: 1.35rem; line-height: 1.2; }
 @media (max-width: 520px) { .dtiles { grid-template-columns: minmax(0, 1fr); } .dtile { flex-direction: row; align-items: baseline; gap: 10px; } }
 .dictmx td.cell { width: auto; min-width: 7em; font-size: 16px; }
+.dcat { align-items: flex-start; gap: 10px; }
+.dcat > input[type=checkbox] { margin-top: 5px; flex: none; }
+.dmulti { position: sticky; bottom: 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding: 8px 12px;
+  background: var(--ink); color: var(--paper); border-radius: 8px; }
+.dmulti .small { flex: 1 1 12em; min-width: 0; }
+.dmulti button { border-color: var(--paper); }
+.dmulti button.primary { background: var(--paper); color: var(--ink); margin-left: auto; }
+.dmulti button.linkbtn { color: var(--paper); border: 0; }

@@ -71,6 +71,7 @@ const S = {
   dictView: "lib",     // zakładka wewnętrzna „Słowników”: "lib" | "cat" | "dev"
   dictQ: "", dictIn: "", dictOut: "", dictOrigin: "", dictOnly: false, // filtry katalogu
   dictShown: 50,       // ile wierszy katalogu jest narysowanych („Pokaż więcej”)
+  dictPick: new Set(), // zaznaczone w katalogu (id) — „Pobierz zaznaczone”, TASK-58
   dictMsg: null,       // komunikat {ok, text}
   dictBusy: false,     // trwa wgrywanie
   plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
@@ -4868,12 +4869,18 @@ function dictPollSync() {
   }, 2000);
 }
 
-async function startDictJob(c) {
+// Start kilku pobrań naraz (TASK-58): wszystkie POST-y idą od razu, a serwer pobiera po dwa (reszta czeka w jego puli).
+async function startDictJobs(cs) {
   S.dictMsg = null;
-  try {
-    const r = await api("POST", `/api/admin/dict-catalog/${c.id}`);
-    S.dictJobs = { ...S.dictJobs, [c.id]: r.job };
-  } catch (e) { S.dictMsg = { ok: false, text: `Nie udało się zacząć pobierania „${c.name}”: ${e.message}` }; }
+  const bad = [];
+  for (const c of cs) {
+    try {
+      const r = await api("POST", `/api/admin/dict-catalog/${c.id}`);
+      S.dictJobs = { ...S.dictJobs, [c.id]: r.job };
+      S.dictPick.delete(c.id);
+    } catch (e) { bad.push(`„${c.name}”: ${e.message}`); }
+  }
+  if (bad.length) S.dictMsg = { ok: false, text: `Nie udało się zacząć pobierania: ${bad.join("; ")}` };
   dictPollSync();
   render();
 }
@@ -5000,7 +5007,10 @@ function dictCatalogRow(c, have, job) {
   const busy = job && job.state !== "błąd", failed = job && job.state === "błąd";
   const pair = c.lang_in === c.lang_out ? langName(c.lang_in) : `${langName(c.lang_in)} → ${langName(c.lang_out)}`;
   const origin = (Dicts.ORIGINS.find(o => o[0] === c.origin) || [0, c.origin])[1];
-  return h("li", { class: "row", "data-dict": c.id },
+  const id = "dp-" + c.id;
+  return h("li", { class: "row dcat", "data-dict": c.id },
+    h("input", { type: "checkbox", id, checked: S.dictPick.has(c.id) && !busy, disabled: busy, "aria-label": `Zaznacz: ${c.name}`,
+      onchange: ev => { if (ev.target.checked) S.dictPick.add(c.id); else S.dictPick.delete(c.id); render(); document.getElementById(id)?.focus(); } }),
     h("div", { class: "grow" },
       h("b", {}, c.name), have && h("span", { class: "badge" }, " pobrany"),
       h("div", { class: "muted small" }, [pair, c.entries > 0 ? hasWords(c.entries) : null, c.license, origin].filter(Boolean).join(" · ")),
@@ -5008,14 +5018,21 @@ function dictCatalogRow(c, have, job) {
         job.state === "pobieranie" && job.total > 0 && h("progress", { max: job.total, value: job.done, "aria-label": `Pobieranie: ${c.name}`, style: "width:12em;margin-right:8px" }),
         Dicts.jobText(job, fmtSize)),
       failed && h("div", { class: "err small", role: "alert" }, `Nie udało się: ${job.error}`)),
-    h("button", { type: "button", disabled: busy, onclick: () => startDictJob(c) },
-      busy ? "Pobieram…" : failed ? "Spróbuj ponownie" : have ? "Aktualizuj" : "Pobierz"));
+    failed && h("button", { type: "button", onclick: () => startDictJobs([c]) }, "Spróbuj ponownie"));
 }
 
 function dictFilterBar(cat) {
-  const sel = (id, label, key, val, set) => h("select", { id, "aria-label": label, onchange: ev => { set(ev.target.value); S.dictShown = DICT_PAGE; render(); document.getElementById(id)?.focus(); } },
+  // „Z języka” i „Na język” zawężają się wzajemnie (TASK-58): lista jednego pokazuje tylko języki, które mają parę
+  // z wybranym drugim, a zmiana jednego zeruje drugi, gdy para przestaje istnieć.
+  const sel = (id, label, key, val, other, set) => h("select", { id, "aria-label": label,
+    onchange: ev => {
+      set(ev.target.value);
+      if (S.dictIn && S.dictOut && !Dicts.filterCatalog(cat, { inL: S.dictIn, outL: S.dictOut }).length) { if (key === "lang_in") S.dictOut = ""; else S.dictIn = ""; }
+      S.dictShown = DICT_PAGE; render(); document.getElementById(id)?.focus();
+    } },
     h("option", { value: "" }, label),
-    Dicts.langCounts(cat, key).map(([code, n]) => h("option", { value: code, selected: code === val }, `${langName(code)} (${n})`)));
+    Dicts.langCounts(other ? Dicts.filterCatalog(cat, key === "lang_in" ? { outL: other } : { inL: other }) : cat, key)
+      .map(([code, n]) => h("option", { value: code, selected: code === val }, `${langName(code)} (${n})`)));
   return h("div", { class: "row", style: "gap:8px;flex-wrap:wrap;margin:6px 0 10px" },
     h("input", { type: "search", id: "f-dictq", "aria-label": "Szukaj słownika", placeholder: "Szukaj słownika, języka…", value: S.dictQ, style: "flex:1 1 14em",
       oninput: ev => {
@@ -5024,8 +5041,8 @@ function dictFilterBar(cat) {
         const el = document.getElementById("f-dictq");
         if (el) { el.focus(); el.setSelectionRange(pos, pos); }
       } }),
-    sel("f-dict-in", "Z języka", "lang_in", S.dictIn, v => { S.dictIn = v; }),
-    sel("f-dict-out", "Na język", "lang_out", S.dictOut, v => { S.dictOut = v; }),
+    sel("f-dict-in", "Z języka", "lang_in", S.dictIn, S.dictOut, v => { S.dictIn = v; }),
+    sel("f-dict-out", "Na język", "lang_out", S.dictOut, S.dictIn, v => { S.dictOut = v; }),
     h("select", { id: "f-dict-origin", "aria-label": "Pochodzenie", onchange: ev => { S.dictOrigin = ev.target.value; S.dictShown = DICT_PAGE; render(); document.getElementById("f-dict-origin")?.focus(); } },
       h("option", { value: "" }, "Każde pochodzenie"),
       Dicts.ORIGINS.map(([id, label]) => h("option", { value: id, selected: id === S.dictOrigin }, label))),
@@ -5038,23 +5055,33 @@ function dictCatalogPane() {
   const cat = S.dictCat;
   if (!cat) return h("p", { class: "loading" }, "Wczytuję katalog…");
   const haveIds = new Set((S.dicts || []).filter(d => d.source === "katalog").map(d => d.source_ref));
-  const hits = Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName);
+  const filtered = !!(S.dictQ || S.dictIn || S.dictOut || S.dictOrigin || S.dictOnly);
+  // Bez filtra nie rysujemy 1,7 tys. pozycji w kolejności kodów języków (pierwsze byłyby afarski i abchaski):
+  // najpierw wybór języka, potem lista od największego słownika.
+  const hits = filtered ? Dicts.bySize(Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName)) : [];
   const shown = hits.slice(0, S.dictShown);
-  const filtered = S.dictQ || S.dictIn || S.dictOut || S.dictOrigin || S.dictOnly;
+  const picks = cat.filter(c => S.dictPick.has(c.id) && !(S.dictJobs[c.id] && S.dictJobs[c.id].state !== "błąd"));
+  const langs = new Set(); for (const c of cat) { langs.add(c.lang_in); langs.add(c.lang_out); }
   return h("section", { class: "card" },
     h("h3", { style: "margin-top:0" }, "Katalog słowników"),
     h("p", { class: "muted small", style: "margin-top:0" }, "Lista pochodzi z KOReadera; pliki pobiera Twój serwer w chwili kliknięcia — wersje „latest” mogą się zmienić; serwer sprawdza format i nie instaluje plików .lua ani innych spoza słownika. ",
       h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")),
     dictFilterBar(cat),
     h("p", { class: "muted small", id: "dict-count", role: "status" },
-      filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)}` : `${fmtCount(cat.length)} słowników`,
+      filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)} · od największego (liczba haseł)` : `${fmtCount(cat.length)} słowników w ${fmtCount(langs.size)} językach`,
       filtered && h("button", { type: "button", class: "linkbtn", style: "margin-left:8px",
         onclick: () => { S.dictQ = ""; S.dictIn = ""; S.dictOut = ""; S.dictOrigin = ""; S.dictOnly = false; S.dictShown = DICT_PAGE; render(); } }, "Wyczyść filtry")),
-    hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
+    !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz język „z” albo „na”, albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
+      : hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
       : h("ul", { class: "plain" }, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id]))),
     hits.length > shown.length && h("p", {},
       h("button", { type: "button", id: "b-dict-more", onclick: () => { S.dictShown += DICT_PAGE; render(); } },
-        `Pokaż więcej (${fmtCount(hits.length - shown.length)} ${plPl(hits.length - shown.length, "została", "zostały", "zostało")})`)));
+        `Pokaż więcej (${fmtCount(hits.length - shown.length)} ${plPl(hits.length - shown.length, "została", "zostały", "zostało")})`)),
+    picks.length > 0 && h("div", { class: "dmulti", id: "dict-multi", role: "region", "aria-label": "Zaznaczone słowniki" },
+      h("b", {}, `Zaznaczono ${picks.length}`),
+      h("span", { class: "small" }, "rozmiar poznasz po pobraniu; serwer pobiera po dwa naraz"),
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.dictPick.clear(); render(); } }, "Wyczyść"),
+      h("button", { type: "button", class: "primary", id: "b-dict-pick-go", onclick: () => startDictJobs(picks) }, "Pobierz zaznaczone")));
 }
 
 // Macierz słownik × czytnik (TASK-58): ● jest · ○ czeka na synchronizację · ↻ inna wersja · ⊘ czytnik bez zgody.

@@ -64,6 +64,11 @@ eq("running: pusto", D.running({}), false);
 eq("finished: zniknęło", D.finished({ a: { state: "pobieranie" }, b: { state: "błąd" }, c: { state: "przetwarzanie" } }, { c: { state: "przetwarzanie" } }), ["a"]);
 eq("finished: brak poprzednich", D.finished(undefined, { a: {} }), []);
 
+// sortowanie wyniku od największego (TASK-58)
+const bs = [{ name: "b", entries: 5 }, { name: "a", entries: 5 }, { name: "z", entries: 9 }, { name: "n" }];
+eq("bySize", D.bySize(bs).map(c => c.name), ["z", "a", "b", "n"]);
+eq("bySize nie zmienia wejścia", bs[0].name, "b");
+
 // macierz słownik × czytnik (TASK-58)
 const dA = { name: "A", sha256: "1" };
 const dev = (allowed, inv) => ({ dicts_allowed: allowed, dict_inventory: inv });

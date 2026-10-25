@@ -33,6 +33,10 @@ const Dicts = (() => {
     });
   }
 
+  // Wynik od największego (liczba haseł), potem po nazwie — kolejność z katalogu to kody języków,
+  // więc pierwszy ekran bez sortowania to afarski i abchaski (TASK-58). Nie zmienia tablicy wejściowej.
+  const bySize = list => [...list].sort((a, b) => (b.entries || 0) - (a.entries || 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
   // Liczniki do list wyboru języka: kod → liczba pozycji, malejąco, potem po kodzie.
   function langCounts(cat, key) {
     const m = new Map();
@@ -88,7 +92,7 @@ const Dicts = (() => {
     return Object.keys(prev || {}).filter(id => prev[id].state !== "błąd" && !(next || {})[id]);
   }
 
-  return { ORIGINS, fold, filterCatalog, langCounts, deviceState, cellState, jobText, running, finished };
+  return { ORIGINS, fold, filterCatalog, bySize, langCounts, deviceState, cellState, jobText, running, finished };
 })();
 
 if (typeof module !== "undefined") module.exports = Dicts;
