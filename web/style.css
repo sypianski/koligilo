@@ -1099,3 +1099,5 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .dmulti button { border-color: var(--paper); }
 .dmulti button.primary { background: var(--paper); color: var(--ink); margin-left: auto; }
 .dmulti button.linkbtn { color: var(--paper); border: 0; }
+.djobs { border: 1.5px solid var(--ink); border-radius: 8px; background: var(--surface); padding: 8px 12px; margin: 0 0 14px; display: grid; gap: 4px; }
+.djobs progress { width: 10em; margin-right: 8px; vertical-align: middle; }

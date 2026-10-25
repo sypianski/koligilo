@@ -4932,6 +4932,27 @@ async function deleteDict(d) {
   return refresh();
 }
 
+// Stały pasek zadań (TASK-58): widoczny w każdym widoku (i w arkuszu „Dodaj słownik”). Pokazuje trwające
+// pobierania z postępem, błędy zadań i ostatni komunikat (S.dictMsg — pamiętany tylko w tej karcie przeglądarki).
+// Brak „Anuluj”: serwer nie umie przerwać pobierania. Kolejka serwera (po dwa naraz) nie odróżnia czekających
+// od aktywnych — wszystkie mają stan „pobieranie”.
+function dictJobBar() {
+  const jobs = Object.entries(S.dictJobs || {}), cat = S.dictCat || [];
+  const nameOf = id => (cat.find(c => c.id === id) || {}).name || id;
+  const run = jobs.filter(([, j]) => j.state !== "błąd"), bad = jobs.filter(([, j]) => j.state === "błąd");
+  if (!run.length && !bad.length && !S.dictMsg) return null;
+  return h("div", { class: "djobs", id: "dict-jobs", role: "status" },
+    run.length > 0 && h("div", {}, h("b", {}, "⬇ Pobieranie"), ` — ${run.length} ${plPl(run.length, "słownik", "słowniki", "słowników")}`),
+    run.slice(0, 3).map(([id, j]) => h("div", { class: "small djob" },
+      j.state === "pobieranie" && j.total > 0 && h("progress", { max: j.total, value: j.done, "aria-label": `Pobieranie: ${nameOf(id)}` }),
+      `${nameOf(id)} · ${Dicts.jobText(j, fmtSize)}`)),
+    run.length > 3 && h("div", { class: "muted small" }, `i ${run.length - 3} ${plPl(run.length - 3, "inny", "inne", "innych")}`),
+    bad.map(([id, j]) => h("div", { class: "err small", role: "alert" }, `Nie udało się: ${nameOf(id)} — ${j.error}`)),
+    S.dictMsg && h("div", { class: "row" },
+      h("span", { class: S.dictMsg.ok ? "ok" : "err" }, (S.dictMsg.ok ? "✓ Ostatnio: " : "") + S.dictMsg.text),
+      h("button", { type: "button", class: "linkbtn", onclick: () => { S.dictMsg = null; render(); } }, "Ukryj")));
+}
+
 // Kafle na górze (TASK-58): słowniki · MB w panelu · czytniki ze zgodą. Trwające pobieranie ma własny pasek (dictJobBar).
 function dictTiles(dicts, active) {
   const devs = S.state.devices || [];
@@ -4944,7 +4965,7 @@ function dictTiles(dicts, active) {
     tile(devs.length ? `${ok} z ${devs.length}` : "0", devs.length ? plPl(devs.length, "czytnik ze zgodą", "czytniki ze zgodą", "czytników ze zgodą") : "czytników"));
 }
 
-function showDictView(id) { S.dictView = id; S.dictMsg = null; render(); document.getElementById("dicttab-" + id)?.focus(); }
+function showDictView(id) { S.dictView = id; render(); document.getElementById("dicttab-" + id)?.focus(); }
 function dictTablist(cur, counts) {
   return h("div", { class: "tabs", role: "tablist", "aria-label": "Słowniki" },
     DICT_VIEWS.map(([id, label], i) => h("button", {
@@ -5130,8 +5151,8 @@ function dictsTab() {
   const body = cur === "lib" ? dictLibraryPane(dicts) : cur === "cat" ? dictCatalogPane() : dictDevicesBlock(active);
   return h("div", {},
     dictTiles(dicts, active),
+    dictJobBar(),
     dictTablist(cur, { lib: dicts.length, dev: S.state.devices.length }),
-    S.dictMsg && h("p", { class: S.dictMsg.ok ? "ok" : "err", role: "status" }, S.dictMsg.text),
     h("div", { id: "dictpanel", role: "tabpanel", "aria-labelledby": "dicttab-" + cur }, body));
 }
 
