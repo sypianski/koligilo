@@ -417,6 +417,9 @@ func (st *Store) Pending() []*PairRequest {
 func (st *Store) Decide(id string, approve bool) (*Device, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	// Bez tego wygasłą prośbę dało się zatwierdzić: powstawało urządzenie,
+	// którego token zniknąłby z pamięcią razem z prośbą przy najbliższym PollPair.
+	st.expireLocked()
 	p := st.S.pending[id]
 	if p == nil || p.Status != "pending" {
 		return nil, errors.New("prośba wygasła albo została już rozpatrzona")
