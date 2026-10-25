@@ -167,7 +167,7 @@ func (s *Server) syncGet(w http.ResponseWriter, r *http.Request, d *Device) {
 	}
 	q := r.URL.Query()
 	if err := s.st.SetPluginInfo(d, PluginInfo{Version: q.Get("plugin_version"), SelfUpdate: q.Get("self_update") == "1",
-		MergeAfterSync: q.Get("merge_after_sync") == "1"}); err != nil {
+		MergeAfterSync: q.Get("merge_after_sync") == "1", WallabagAfterSync: q.Get("wallabag_after_sync") == "1"}); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}

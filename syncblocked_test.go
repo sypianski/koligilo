@@ -115,3 +115,36 @@ func TestMergeAfterSyncReported(t *testing.T) {
 		t.Error("stary plugin nie zerował zgody")
 	}
 }
+
+// TASK-45: zgoda na pobieranie artykułów Wallabag — zgłasza ją czytnik, stary plugin zeruje.
+func TestWallabagAfterSyncReported(t *testing.T) {
+	e := newPluginEnv(t)
+	_, tok, _ := e.s.st.Provision("Kobo", "", "", "")
+	dev := func() map[string]any {
+		rec := e.do(e.admin, "GET", "/api/admin/state", nil, "")
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return out["devices"].([]any)[0].(map[string]any)
+	}
+	get := func(q string) { e.do(tok, "GET", "/api/v1/sync"+q, nil, "") }
+	get("")
+	if dev()["wallabag_after_sync"] != false {
+		t.Errorf("domyślnie wyłączone: %v", dev())
+	}
+	get("?wallabag_after_sync=1")
+	if dev()["wallabag_after_sync"] != true || dev()["merge_after_sync"] != false {
+		t.Errorf("zgoda niezapamiętana albo wpadła w scalanie: %v", dev())
+	}
+	for _, v := range []string{"true", "0", "2", "yes", ""} {
+		get("?wallabag_after_sync=1")
+		get("?wallabag_after_sync=" + v)
+		if dev()["wallabag_after_sync"] != false {
+			t.Errorf("wartość %q potraktowana jako zgoda", v)
+		}
+	}
+	get("?wallabag_after_sync=1")
+	get("") // stary plugin
+	if dev()["wallabag_after_sync"] != false {
+		t.Error("stary plugin nie zerował zgody")
+	}
+}

@@ -1,11 +1,11 @@
 ---
 id: TASK-45
 title: 'Wtyczka: opt-in pobierania artykułów Wallabag po synchronizacji'
-status: To Do
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-25 11:13'
-updated_date: '2026-10-25 11:24'
+updated_date: '2026-10-25 11:55'
 labels:
   - plugin
 dependencies: []
@@ -22,12 +22,22 @@ Wtyczka Wallabag ma zdarzenie SynchronizeWallabag. Analogicznie do merge_after_s
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Najpierw sprawdzone w źródle wallabag.koplugin (https://raw.githubusercontent.com/koreader/koreader/master/plugins/wallabag.koplugin/main.lua), czy zdarzenie SynchronizeWallabag bez argumentu jest ciche i nie rusza otwartej książki; wynik w notatce. Jeśli NIE jest bezpieczne w tle — zadanie kończy się notatką i statusem To Do z uzasadnieniem, bez kodu
-- [ ] #2 Opt-in wallabag_after_sync w menu koligilo (ConfirmBox z opisem: pobiera pliki i bywa wolne), domyślnie wyłączony, zgoda tylko z czytnika; decyzja w czystej funkcji Sync (jak Sync.mergeEvents: tylko za zgodą i gdy synchronizacja nie zmieniła ustawień) z testami
-- [ ] #3 Testy w tests/installer_test.lua (atrapa broadcastEvent), make test i make e2e zielone
+- [x] #2 Opt-in wallabag_after_sync w menu koligilo (ConfirmBox z opisem: pobiera pliki i bywa wolne), domyślnie wyłączony, zgoda tylko z czytnika; decyzja w czystej funkcji Sync (jak Sync.mergeEvents: tylko za zgodą i gdy synchronizacja nie zmieniła ustawień) z testami
+- [x] #3 Testy w tests/installer_test.lua (atrapa broadcastEvent), make test i make e2e zielone
+- [x] #4 Zdarzenie SynchronizeWallabag wysyłane WYŁĄCZNIE gdy czytnik nie jest w książce (brak ReaderUI.instance, czyli menedżer plików) i synchronizacja nie zmieniła ustawień; w trakcie czytania nic (bez kolejkowania); decyzja w czystej funkcji Sync z testami
+- [x] #5 Plugin zgłasza wallabag_after_sync=1 (tylko przy włączonej zgodzie), serwer zapisuje Device.WallabagAfterSync (rozszerzenie PluginInfo/SetPluginInfo), panel pokazuje stan obok scalania statystyk; testy Go i Lua
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Odrzucone na tym etapie: Wallabag:onSynchronizeWallabag nie jest ciche — pokazuje InfoMessage 'Connecting…', 'Downloaded article N of M…', na końcu okno 'Sync finished' bez timeout, przy niepełnej konfiguracji MultiConfirmBox, i pobiera synchronicznie (blokuje UI); w odróżnieniu od statystyk/słowniczka nie ma trybu interactive=nil. Opcja na później: wysyłać zdarzenie tylko gdy czytnik jest w FileManagerze (nie w dokumencie), ale okno końcowe i tak zostaje. AC2/AC3 niespełnione celowo (brak kodu).
+
+Zakres zawężony po ponownej analizie: Wallabag nie ma trybu cichego, więc SynchronizeWallabag idzie tylko poza książką (Koligilo:isReading, ReaderUI.instance), tylko za zgodą wallabag_after_sync z podmenu Zgody i tylko gdy synchronizacja nie zmieniła ustawień; bez kolejkowania na później. Okna postępu i końcowe 'Sync finished' pozostają (to zachowanie Wallabaga). Zgoda zgłaszana do Device.WallabagAfterSync i widoczna w tabeli urządzeń. Skutek: synchronizacja po wybudzeniu w trakcie czytania nie pobiera artykułów. make test + e2e zielone (dyrygent).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Opcjonalne pobieranie artykułów Wallabag po synchronizacji, tylko w menedżerze plików
+<!-- SECTION:FINAL_SUMMARY:END -->

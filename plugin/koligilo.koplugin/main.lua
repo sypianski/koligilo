@@ -290,6 +290,36 @@ function Koligilo:consentItems()
             })
         end,
     })
+    -- Pobieranie artykułów Wallabag (TASK-45): w odróżnieniu od scalania baz KOReader pokazuje
+    -- przy tym okna postępu i końcowe „Sync finished”, więc to osobna zgoda i tylko poza książką.
+    table.insert(items, {
+        text = _("Pobieraj artykuły Wallabag po synchronizacji"),
+        checked_func = function() return self.settings:isTrue("wallabag_after_sync") end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            local function tell_server()
+                if NetworkMgr:isOnline() then
+                    UIManager:nextTick(function() self:sync(true) end)
+                end
+            end
+            if self.settings:isTrue("wallabag_after_sync") then
+                self.settings:delSetting("wallabag_after_sync")
+                self.settings:flush()
+                tell_server()
+                return
+            end
+            UIManager:show(ConfirmBox:new{
+                text = _("Po każdej synchronizacji koligilo pobierać też nowe artykuły z Wallabaga?\n\nKOReader pokaże przy tym okna postępu i na końcu okno „Sync finished”, które trzeba zamknąć; pobieranie bywa wolne i blokuje ekran do końca. Dlatego dzieje się to tylko w menedżerze plików, nigdy w trakcie czytania (wtedy artykuły nie są pobierane).\n\nZadziała tylko tam, gdzie konto Wallabag jest ustawione w KOReaderze."),
+                ok_text = _("Włącz"),
+                ok_callback = function()
+                    self.settings:makeTrue("wallabag_after_sync")
+                    self.settings:flush()
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    tell_server()
+                end,
+            })
+        end,
+    })
     return items
 end
 
@@ -1419,6 +1449,7 @@ function Koligilo:sync(silent, after_move)
     if self_update_allowed then query[#query + 1] = "self_update=1" end
     -- zgoda na scalanie statystyk i słowniczka: panel tylko ją pokazuje (TASK-46)
     if self.settings:isTrue("merge_after_sync") then query[#query + 1] = "merge_after_sync=1" end
+    if self.settings:isTrue("wallabag_after_sync") then query[#query + 1] = "wallabag_after_sync=1" end
     -- wersja wtyczki: panel pokaże czytnik ze starą wtyczką (TASK-49); tylko poprawny X.Y.Z
     if Sync.versionParse(self.selfVersion) then query[#query + 1] = "plugin_version=" .. self.selfVersion end
     -- ekran: żeby panel mógł pokazać podgląd strony także dla modelu, którego nie zna
@@ -1568,6 +1599,7 @@ function Koligilo:sync(silent, after_move)
     end
     -- Wspólne bazy (statystyki, słowniczek): zdarzenia bez argumentu = ciche scalanie KOReadera.
     self:mergeSharedData(changed)
+    self:wallabagAfterSync(changed)
 
     if changed > 0 then
         UIManager:askForRestart(T(_("koligilo pobrał %1 zmienionych ustawień z innych urządzeń. KOReader musi się uruchomić ponownie, aby je zastosować."), changed)
@@ -1589,7 +1621,7 @@ function Koligilo:showConsentsHint(silent)
     if not Sync.consentsHintDue(self.settings:isTrue("consents_hint_shown"), silent) then return false end
     self.settings:makeTrue("consents_hint_shown")
     self.settings:flush()
-    UIManager:show(InfoMessage:new{ text = _("Zgody koligilo: instalowanie wtyczek, czcionki, aktualizacja koligilo i scalanie statystyk są na tym czytniku domyślnie wyłączone. Nic nie zostało włączone.\n\nGdybyś chciał z nich skorzystać, włączysz je tu: Menu → Narzędzia → koligilo → Zgody. Panel koligilo ich nie włącza — zgodę zawsze daje się na czytniku.") })
+    UIManager:show(InfoMessage:new{ text = _("Zgody koligilo: instalowanie wtyczek, czcionki, aktualizacja koligilo, scalanie statystyk i pobieranie artykułów Wallabag są na tym czytniku domyślnie wyłączone. Nic nie zostało włączone.\n\nGdybyś chciał z nich skorzystać, włączysz je tu: Menu → Narzędzia → koligilo → Zgody. Panel koligilo ich nie włącza — zgodę zawsze daje się na czytniku.") })
     return true
 end
 
@@ -1619,6 +1651,22 @@ function Koligilo:mergeSharedData(changed)
         local ok, err = pcall(function() UIManager:broadcastEvent(Event:new(name)) end)
         if not ok then logger.warn("koligilo: scalanie " .. name, err) end
     end
+end
+
+-- Czy czytnik jest teraz w książce (ReaderUI.instance istnieje tylko podczas czytania).
+function Koligilo:isReading()
+    local ok, ReaderUI = pcall(require, "apps/reader/readerui")
+    return ok and ReaderUI ~= nil and ReaderUI.instance ~= nil
+end
+
+-- Pobranie artykułów Wallabag (TASK-45): nie jest ciche, więc wyłącznie w menedżerze plików.
+function Koligilo:wallabagAfterSync(changed)
+    local name = Sync.wallabagEvent(self.settings:isTrue("wallabag_after_sync"), changed, self:isReading())
+    if not name then return false end
+    local Event = require("ui/event")
+    local ok, err = pcall(function() UIManager:broadcastEvent(Event:new(name)) end)
+    if not ok then logger.warn("koligilo: " .. name, err) end
+    return ok
 end
 
 function Koligilo:onNetworkConnected()

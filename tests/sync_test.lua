@@ -391,6 +391,13 @@ check("merge: za zgodą i bez zmian — statystyki i słowniczek",
     deep_eq(Sync.mergeEvents(true, 0), { "SyncBookStats", "SyncVocabBuilder" }) and #Sync.mergeEvents(true, nil) == 2)
 check("merge: po zmianie ustawień czeka na restart", #Sync.mergeEvents(true, 3) == 0)
 
+-- pobieranie artykułów Wallabag po synchronizacji (TASK-45) ----------------------
+check("wallabag: bez zgody nic", Sync.wallabagEvent(false, 0, false) == nil and Sync.wallabagEvent(nil, 0, false) == nil)
+check("wallabag: za zgodą, bez zmian, poza książką — zdarzenie",
+    Sync.wallabagEvent(true, 0, false) == "SynchronizeWallabag" and Sync.wallabagEvent(true, nil, nil) == "SynchronizeWallabag")
+check("wallabag: w trakcie czytania nic", Sync.wallabagEvent(true, 0, true) == nil)
+check("wallabag: po zmianie ustawień czeka na restart", Sync.wallabagEvent(true, 3, false) == nil)
+
 -- cicha synchronizacja po wybudzeniu (TASK-44) -----------------------------------
 local R = Sync.shouldSyncOnResume
 check("resume: wszystko gra, próg dokładnie osiągnięty", R(true, true, true, 1000, 1900, 900) == true)

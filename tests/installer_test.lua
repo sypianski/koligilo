@@ -29,6 +29,8 @@ local served = {} -- url → treść ZIP-a
 local broadcast, broadcast_fail = {}, false
 local scheduled = {} -- UIManager:scheduleIn: { secs, f }
 local P = package.preload
+local reader_ui = {} -- .instance ustawiane z testu: książka otwarta (true) / menedżer plików (nil)
+P["apps/reader/readerui"] = function() return reader_ui end
 P["ui/event"] = function() return { new = function(_, name) return { name = name } end } end
 P["ui/widget/confirmbox"] = function() return widget("confirm") end
 P["ui/widget/infomessage"] = function() return widget("info") end
@@ -489,6 +491,24 @@ K:mergeSharedData(0)
 check("merge: za zgodą — statystyki i słowniczek, po kolei", #broadcast == 2 and broadcast[1] == "SyncBookStats" and broadcast[2] == "SyncVocabBuilder")
 broadcast_fail = true
 check("merge: wyjątek w cudzej wtyczce nie wychodzi na zewnątrz", pcall(K.mergeSharedData, K, 0))
+broadcast_fail = false
+settings_data.merge_after_sync = nil
+
+-- pobieranie artykułów Wallabag po synchronizacji (TASK-45): tylko poza książką
+local function wb(changed) broadcast = {}; return K:wallabagAfterSync(changed), broadcast end
+settings_data.wallabag_after_sync, reader_ui.instance = nil, nil
+check("wallabag: bez zgody nic", wb(0) == false and #broadcast == 0)
+settings_data.wallabag_after_sync = true
+reader_ui.instance = {}
+check("wallabag: w trakcie czytania nic (bez kolejkowania)", wb(0) == false and #broadcast == 0)
+reader_ui.instance = nil
+check("wallabag: po zmianie ustawień czeka", wb(2) == false and #broadcast == 0)
+local sent, ev = wb(0)
+check("wallabag: za zgodą w menedżerze plików — jedno zdarzenie", sent == true and #ev == 1 and ev[1] == "SynchronizeWallabag")
+broadcast_fail = true
+check("wallabag: wyjątek nie wychodzi na zewnątrz", pcall(K.wallabagAfterSync, K, 0) and K:wallabagAfterSync(0) == false)
+broadcast_fail = false
+settings_data.wallabag_after_sync = nil
 
 -- cicha synchronizacja po wybudzeniu (TASK-44)
 local synced = 0
@@ -547,14 +567,14 @@ local citems = consents and consents.sub_item_table_func() or {}
 local keys = {}
 for _i, it in ipairs(citems) do
     local k
-    for _j, name in ipairs({ "self_update_allowed", "plugins_allowed", "fonts_allowed", "merge_after_sync" }) do
+    for _j, name in ipairs({ "self_update_allowed", "plugins_allowed", "fonts_allowed", "merge_after_sync", "wallabag_after_sync" }) do
         settings_data[name] = true
         if it.checked_func() then k = k or name end
         settings_data[name] = nil
     end
     keys[#keys + 1] = k
 end
-check("zgody: te same cztery klucze ustawień", table.concat(keys, ",") == "self_update_allowed,plugins_allowed,fonts_allowed,merge_after_sync", table.concat(keys, ","))
+check("zgody: pięć kluczy ustawień", table.concat(keys, ",") == "self_update_allowed,plugins_allowed,fonts_allowed,merge_after_sync,wallabag_after_sync", table.concat(keys, ","))
 -- włączenie nadal wymaga potwierdzenia w ConfirmBox (nic nie włącza się samo)
 shown = {}
 citems[2].callback(nil)
@@ -570,7 +590,7 @@ for i = 1, 60 do
     if name == "restart_pending" then debug.setupvalue(Koligilo.sync, i, false) break end
 end
 local function sync_query(setup)
-    settings_data.merge_after_sync, settings_data.sync_blocked = nil, nil
+    settings_data.merge_after_sync, settings_data.sync_blocked, settings_data.wallabag_after_sync = nil, nil, nil
     setup()
     requested = {}
     K:sync(true)
@@ -579,10 +599,22 @@ end
 local base_q = sync_query(function() end)
 check("query: zapytanie w ogóle poszło", base_q:find("/api/v1/sync?", 1, true), base_q)
 check("query: bez zgody brak merge_after_sync", not base_q:find("merge_after_sync", 1, true))
+check("query: bez zgody brak wallabag_after_sync", not base_q:find("wallabag_after_sync", 1, true))
+check("query: za zgodą wallabag_after_sync=1", sync_query(function() settings_data.wallabag_after_sync = true end):find("wallabag_after_sync=1", 1, true))
 check("query: za zgodą merge_after_sync=1", sync_query(function() settings_data.merge_after_sync = true end):find("merge_after_sync=1", 1, true))
 check("query: zapamiętane wstrzymanie idzie w pełnym GET", sync_query(function() settings_data.sync_blocked = { at = 1, deleted = 7 } end):find("sync_blocked=7", 1, true))
 check("query: zepsuty wpis wstrzymania nie trafia do zapytania", not sync_query(function() settings_data.sync_blocked = { at = 1, deleted = "x&y" } end):find("sync_blocked", 1, true))
-settings_data.merge_after_sync, settings_data.sync_blocked = nil, nil
+settings_data.merge_after_sync, settings_data.sync_blocked, settings_data.wallabag_after_sync = nil, nil, nil
+-- zgoda Wallabag: ConfirmBox z ostrzeżeniem, domyślnie wyłączone, wyłączenie bez okna
+shown = {}
+citems[5].callback(nil)
+check("wallabag menu: włączenie pyta oknem z ostrzeżeniem, nic samo się nie włącza", #shown == 1 and shown[1].kind == "confirm"
+    and not settings_data.wallabag_after_sync and tostring(shown[1].text):find("Sync finished", 1, true)
+    and tostring(shown[1].text):find("menedżerze plików", 1, true))
+shown[1].ok_callback()
+check("wallabag menu: po potwierdzeniu zapisane", settings_data.wallabag_after_sync == true)
+citems[5].callback(nil)
+check("wallabag menu: wyłączenie od razu, bez okna", settings_data.wallabag_after_sync == nil)
 -- jednorazowa informacja, gdzie są zgody
 shown = {}
 check("hint: cicha synchronizacja nie pokazuje", K:showConsentsHint(true) == false and #shown == 0 and not settings_data.consents_hint_shown)

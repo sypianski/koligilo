@@ -811,6 +811,16 @@ function Sync.mergeEvents(allowed, changed)
     return { "SyncBookStats", "SyncVocabBuilder" }
 end
 
+--- Zdarzenie pobrania artykułów Wallabag po synchronizacji (TASK-45). W odróżnieniu od
+--- `mergeEvents` NIE jest ciche: Wallabag:onSynchronizeWallabag pokazuje okna postępu i
+--- końcowe „Sync finished” bez limitu czasu, blokując ekran. Dlatego tylko za zgodą z czytnika
+--- (`allowed`), gdy synchronizacja nie zmieniła ustawień i tylko poza książką (`reading`):
+--- w trakcie czytania nic się nie dzieje i nic nie jest kolejkowane na później.
+function Sync.wallabagEvent(allowed, changed, reading)
+    if not allowed or reading or (changed or 0) > 0 then return nil end
+    return "SynchronizeWallabag"
+end
+
 --- Zapamiętane wstrzymanie synchronizacji (TASK-50): `{at, deleted}` w ustawieniach wtyczki.
 --- Zwraca liczbę ustawień do zgłoszenia serwerowi (całkowitą 1..1000000) albo nil — zepsuty
 --- albo ręcznie zmieniony wpis nie może wyprodukować śmieci w zapytaniu.

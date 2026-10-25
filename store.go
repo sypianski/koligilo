@@ -53,6 +53,9 @@ type Device struct {
 	// Zgoda na ciche scalanie statystyk i słowniczka po synchronizacji (TASK-42/46) — też tylko
 	// z menu czytnika; panel ją pokazuje, nie ustawia.
 	MergeAfterSync bool `json:"merge_after_sync"`
+	// Zgoda na pobieranie artykułów Wallabag po synchronizacji (TASK-45) — tylko poza książką;
+	// też wyłącznie z menu czytnika.
+	WallabagAfterSync bool `json:"wallabag_after_sync"`
 
 	// Synchronizacja wstrzymana przez bezpiecznik wtyczki (TASK-50): czytnik wraca przed
 	// wysłaniem czegokolwiek, więc bez tego zgłoszenia panel widziałby go jako „cicho”.
@@ -114,9 +117,10 @@ var pluginVersionRe = regexp.MustCompile(`^\d{1,4}\.\d{1,5}\.\d{1,6}$`)
 
 // PluginInfo to dane o wtyczce koligilo zgłaszane przez czytnik w zapytaniu o synchronizację.
 type PluginInfo struct {
-	Version        string
-	SelfUpdate     bool
-	MergeAfterSync bool
+	Version           string
+	SelfUpdate        bool
+	MergeAfterSync    bool
+	WallabagAfterSync bool
 }
 
 // SetPluginInfo zapamiętuje wersję wtyczki koligilo i zgody zgłoszone przez czytnik.
@@ -128,10 +132,11 @@ func (st *Store) SetPluginInfo(d *Device, in PluginInfo) error {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if d.PluginVersion == in.Version && d.SelfUpdateAllowed == in.SelfUpdate && d.MergeAfterSync == in.MergeAfterSync {
+	if d.PluginVersion == in.Version && d.SelfUpdateAllowed == in.SelfUpdate && d.MergeAfterSync == in.MergeAfterSync && d.WallabagAfterSync == in.WallabagAfterSync {
 		return nil
 	}
 	d.PluginVersion, d.SelfUpdateAllowed, d.MergeAfterSync = in.Version, in.SelfUpdate, in.MergeAfterSync
+	d.WallabagAfterSync = in.WallabagAfterSync
 	return st.saveLocked()
 }
 

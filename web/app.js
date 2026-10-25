@@ -1029,11 +1029,16 @@ function pluginCell(d) {
     class: "muted small", style: "display:block",
     title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody.",
   }, d.merge_after_sync ? "scalanie statystyk: włączone na czytniku" : "scalanie statystyk: wyłączone na czytniku");
-  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent, merge);
+  // TASK-45: pobieranie artykułów Wallabag (tylko poza książką, zgoda z menu czytnika)
+  const wallabag = h("span", {
+    class: "muted small", style: "display:block",
+    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody. Pobieranie rusza tylko w menedżerze plików, nigdy w trakcie czytania.",
+  }, d.wallabag_after_sync ? "Wallabag po synchronizacji: włączone na czytniku" : "Wallabag po synchronizacji: wyłączone na czytniku");
+  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent, merge, wallabag);
   const old = verOlder(v, cur);
   return h("span", {},
     v, old && h("span", { class: "badge warn", title: `Na serwerze jest wersja ${cur}.` }, "nieaktualna"),
-    consent, merge);
+    consent, merge, wallabag);
 }
 
 // TASK-29: urządzenia jako tabela — łatwo porównać wersje KOReadera i kiedy kto się synchronizował.
