@@ -1110,6 +1110,18 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .sugg > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 12px; cursor: pointer; }
 .sugg > div.on { background: var(--accent-soft); font-weight: 600; }
 .dsheet-tabs { margin: 4px 18px 8px; align-self: flex-start; }
+/* TASK-59: arkusz „Dodaj czytnik” (dwa kroki) i karta pustego stanu */
+.addr-tabs { margin: 4px 16px 8px; align-self: flex-start; }
+.addr-inline .addr-tabs { margin: 10px 0 14px; }
+.addr-tabs .stepn { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 4px; border-radius: 50%;
+  border: 1.5px solid currentColor; font-size: 12px; font-weight: 700; line-height: 1; }
+.addr-seg { margin: 2px 0 10px; }
+.addr .pair, .addr-inline .pair { margin: 0 0 12px; }
+.addr-wait { margin: 10px 0 6px; }
+.addr-foot { justify-content: flex-end; }
+.addr-inline .addr-foot { margin-top: 12px; }
+.view-act { margin-left: auto; align-self: center; }
+.dnote { margin: 0 0 var(--card-gap); padding: 8px 14px; border: 1.5px solid var(--st-ok); border-radius: 8px; background: var(--surface); }
 .dzrow .row { gap: 10px; }
 .dzdet { margin-top: 6px; }
 .dzdet summary { cursor: pointer; }

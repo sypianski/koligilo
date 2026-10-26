@@ -29,7 +29,7 @@ const S = {
   usb: null,           // {readers, adb} — tylko tryb desktop
   usbBusy: null,       // id czytnika w trakcie parowania
   usbMsg: null,
-  addTab: null,        // zakładka karty „Dodaj czytnik”: "usb" | "code" | "plugin" (null = zapamiętana lub domyślna, TASK-29)
+  addReader: null,     // dodawanie czytnika (TASK-59): {step: 1|2, hand, open}; null = zamknięte, domyślny krok 1
   devMenu: null,       // id czytnika z otwartym menu „⋯” (TASK-59)
   devEdit: null,       // otwarty pasek pod wierszem czytnika: {id, mode: "rename"|"forget", name, busy, error} (TASK-29)
   rvCode: "",          // wpisywany kod z czytnika
@@ -375,7 +375,7 @@ async function refresh() {
       const qs = new URLSearchParams({ q: S.galQ, sort: S.galSort, page: String(S.galPage) });
       try { S.gallery = await api("GET", "/api/admin/gallery?" + qs); } catch (e) { S.gallery = null; S.error = e.message; }
     }
-    if (S.mode === "desktop" && S.tab === "urzadzenia" && !S.usbBusy) {
+    if (usbWanted()) {
       try { S.usb = await (await fetch("/api/local/usb", { headers: { [HDR]: "1" } })).json(); } catch { S.usb = null; }
     }
   } catch (e) {
@@ -828,8 +828,9 @@ function main() {
   return h("div", { class: "view", role: "region", "aria-labelledby": "view-title" },
     h("header", { class: "view-head", "data-drag": true }, h("h1", { id: "view-title" }, view[1]),
       HOW_HELP[S.tab] && helpMark(HOW_HELP[S.tab]),
-      VIEW_SUB[S.tab] && h("span", { class: "sub" }, VIEW_SUB[S.tab](st))),
-    st.pending.map(pairBanner),
+      VIEW_SUB[S.tab] && h("span", { class: "sub" }, VIEW_SUB[S.tab](st)),
+      S.tab === "urzadzenia" && st.devices.length > 0 && h("button", { type: "button", class: "primary view-act", id: "b-add-reader", onclick: openAddReader }, "＋ Dodaj czytnik")),
+    pendingInAdd() ? null : st.pending.map(pairBanner),
     S.error && h("p", { class: "err" }, S.error),
     { urzadzenia: devicesTab, grupy: groupsTab, konta: accountsTab, wspolne: valuesTab,
       wtyczki: pluginsTab, czcionki: fontsTab, slowniki: dictsTab, jak: howTab, ustawienia: ustawieniaTab }[S.tab]());
@@ -863,77 +864,136 @@ function devicesTab() {
   if (S.devMenu && !devs.some(d => d.id === S.devMenu)) S.devMenu = null;
   return h("section", { class: "devs-view" },
     deviceStrip(devs),
-    devs.length ? h("div", { class: "dcards" }, devs.map(deviceCard)) : null,
-    addReaderCard(devs.length === 0));
+    addDoneNote(),
+    devs.length ? h("div", { class: "dcards" }, devs.map(deviceCard)) : addReaderInline(),
+    addSheetOpen() && addReaderSheet());
 }
 
-// TASK-29: „Dodaj czytnik” to jedna karta, a zakładki nazywają sytuację czytnika, nie technikę:
-// kabel (plugin wgrywa się sam), czytnik z pluginem (kod albo wykrycie w sieci), czytnik bez pluginu
-// (najpierw instalacja). Dawniej to były trzy równorzędne karty, choć instalacja pluginu jest
-// warunkiem dla kodu i dla wykrycia w sieci, a kabel robi ją za użytkownika.
-const ADD_TAB_KEY = "koligilo.addTab";
-function addTabList() {
-  const t = [["code", "Czytnik ma plugin"], ["plugin", "Czytnik bez pluginu"]];
-  return S.mode === "desktop" ? [["usb", "Kabel USB"], ...t] : t; // kabel tylko w aplikacji na komputerze
+// TASK-59: „Dodaj czytnik” to dwa kroki, bo tak to wygląda dla użytkownika: (1) plugin musi być na czytniku
+// (kablem USB wgrywa się sam, ręcznie z adresu), (2) czytnik się łączy (kod albo wykrycie w sieci).
+// Dawniej trzy równorzędne zakładki (TASK-29) mieszały sytuację czytnika z techniką, a krok zerowy
+// odsyłał do innej zakładki. Z listą czytników to arkusz otwierany przyciskiem w nagłówku; przy pustej
+// liście ta sama treść stoi w karcie na stronie. Prośba o połączenie jest w środku (jedna, nie dwie).
+// S.addReader: {step: 1|2, hand: bool, open: bool}; open = arkusz (karta pustego stanu nie ma open).
+function addState() { return S.addReader || { step: 1, hand: S.mode !== "desktop", open: false }; }
+function setAdd(patch) { S.addReader = { ...addState(), ...patch }; return render(); }
+function addSheetOpen() { return S.tab === "urzadzenia" && !!S.addReader?.open && S.state.devices.length > 0; }
+function addInline() { return S.tab === "urzadzenia" && S.state.devices.length === 0; }
+// prośby o połączenie rysuje wtedy dodawanie (w arkuszu / w karcie), a nie baner strony
+function pendingInAdd() { return addSheetOpen() || addInline(); }
+function usbWanted() {
+  if (S.mode !== "desktop" || S.tab !== "urzadzenia" || S.usbBusy) return false;
+  return (addSheetOpen() || addInline()) && !addState().hand && addState().step === 1;
 }
-function addTabCur() {
-  const list = addTabList();
-  let t = S.addTab;
-  if (!t) { try { t = localStorage.getItem(ADD_TAB_KEY); } catch {} }
-  return list.some(([id]) => id === t) ? t : list[0][0]; // domyślnie kabel („najprostsza droga”), bez niego kod
+function openAddReader() {
+  S.rvMsg = null; S.usbMsg = null; S.rvFound = null;
+  S.addReader = { step: 1, hand: S.mode !== "desktop", open: true };
+  const p = usbWanted() ? refresh() : render();
+  Promise.resolve(p).then(() => document.getElementById("addr-tab-1")?.focus());
 }
-function showAddTab(id) {
-  S.addTab = id;
-  try { localStorage.setItem(ADD_TAB_KEY, id); } catch {}
-  return refresh(); // zakładka kabla potrzebuje świeżej listy czytników USB
-}
-function addTablist(cur) {
-  const list = addTabList();
-  return h("div", { class: "tabs", role: "tablist", "aria-label": "Jak dodać czytnik" },
-    list.map(([id, label], i) => h("button", {
-      type: "button", role: "tab", id: "addtab-" + id, "aria-selected": String(cur === id),
-      "aria-controls": "addpanel-" + id, tabindex: cur === id ? "0" : "-1", class: "tab" + (cur === id ? " selected" : ""),
-      onclick: () => showAddTab(id),
+function closeAddReader() { S.addReader = null; render(); document.getElementById("b-add-reader")?.focus(); }
+
+const ADD_STEPS = [[1, "Plugin na czytniku"], [2, "Połączenie"]];
+function addStepTabs(cur) {
+  const go = (n, focus) => { Promise.resolve(setAdd({ step: n })).then(() => { if (usbWanted()) return refresh(); }).then(() => { if (focus) document.getElementById("addr-tab-" + n)?.focus(); }); };
+  return h("div", { class: "tabs addr-tabs", role: "tablist", "aria-label": "Kroki dodawania czytnika" },
+    ADD_STEPS.map(([n, label]) => h("button", {
+      type: "button", role: "tab", id: "addr-tab-" + n, "aria-selected": String(cur === n), tabindex: cur === n ? "0" : "-1",
+      class: "tab" + (cur === n ? " selected" : ""), onclick: () => go(n, false),
       onkeydown: ev => {
-        const d = { ArrowRight: 1, ArrowLeft: -1 }[ev.key], home = ev.key === "Home", end = ev.key === "End";
-        if (d == null && !home && !end) return;
-        ev.preventDefault();
-        const nid = list[home ? 0 : end ? list.length - 1 : (i + d + list.length) % list.length][0];
-        Promise.resolve(showAddTab(nid)).then(() => document.getElementById("addtab-" + nid)?.focus());
-      },
-    }, label)));
+        const to = { ArrowRight: 2, ArrowLeft: 1, Home: 1, End: 2 }[ev.key];
+        if (!to) return;
+        ev.preventDefault(); go(to, true);
+      } }, h("span", { class: "stepn", "aria-hidden": "true" }, n), " ", label)));
 }
 
-function addReaderCard(empty) {
-  const cur = addTabCur();
-  const to = (id, label) => h("button", { type: "button", class: "linkbtn", onclick: () => showAddTab(id) }, label);
-  const bodies = {
-    usb: () => usbBody(),
-    code: () => [
-      h("ol", { class: "steps" },
-        h("li", {}, "Na czytniku: ", h("b", {}, "Menu → Narzędzia → koligilo → Połącz z komputerem…")),
-        h("li", {}, "W tej samej sieci domowej czytnik sam znajdzie ten komputer — pojawi się tu prośba z czterocyfrowym kodem do porównania."),
-        h("li", {}, "W każdej innej sieci (także uczelnianej, hotelowej, przez VPN) czytnik pokaże sześciocyfrowy kod — wpisz go tutaj:",
-          codeForm()),
-        h("li", {}, "Na czytniku potwierdź pierwszą synchronizację. Gotowe.")),
-      // informacja o punkcie kontaktowym zostaje widoczna przy wpisywaniu kodu
-      h("p", { class: "muted small" },
-        "Kod przechodzi przez punkt kontaktowy koligilo.sypian.ski — serwer autora koligilo. Na czas parowania (najwyżej 10 minut, tylko w pamięci) trafia tam model czytnika oraz adres tego komputera i klucz dla czytnika; po odebraniu przez czytnik są kasowane. Ustawień ani książek ten serwer nie widzi. W tej samej sieci Wi-Fi albo po kablu parowanie go nie używa."),
-    ],
-    plugin: () => [
-      h("ol", { class: "steps" },
-        h("li", {}, "Zainstaluj na czytniku plugin: otwórz w przeglądarce czytnika ",
-          h("code", {}, serverURL() + "/koligilo.koplugin.zip"),
-          ", rozpakuj do ", h("code", {}, "koreader/plugins/"), " (na Androidzie: ", h("code", {}, "/sdcard/koreader/plugins/"), ") i uruchom KOReader ponownie."),
-        h("li", {}, "Gdy plugin jest już na czytniku, ", to("code", "przejdź do łączenia czytnika"), ".")),
-      S.mode === "desktop" && h("p", { class: "muted small" }, "Z kablem USB plugin wgra się sam — zobacz zakładkę ", to("usb", "Kabel USB"), "."),
-    ],
-  };
-  return h("section", { class: "card", style: "margin-bottom:var(--card-gap)" },
-    h("h3", { style: "margin-top:0" }, empty ? "Połącz pierwszy czytnik" : "Dodaj czytnik"),
-    empty && h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik po połączeniu z Wi-Fi sam wysyła swoje zmiany i odbiera zmiany z pozostałych."),
-    addTablist(cur),
-    h("div", { id: "addpanel-" + cur, role: "tabpanel", "aria-labelledby": "addtab-" + cur, tabindex: "0", class: "tabpanel" }, bodies[cur]()));
+function addPending() {
+  return S.state.pending.map(pairBanner);
+}
+
+// Krok 1: kabel USB (tylko aplikacja na komputerze) albo ręcznie. Kabel robi też krok 2, stąd zdanie i brak „Dalej”.
+function addStep1() {
+  const st = addState(), desk = S.mode === "desktop";
+  const seg = desk && h("div", { class: "seg addr-seg", role: "group", "aria-label": "Jak wgrać plugin" },
+    [[false, "Kablem USB"], [true, "Ręcznie, bez kabla"]].map(([hand, label]) => h("button", {
+      type: "button", "aria-pressed": String(st.hand === hand), id: "addr-seg-" + (hand ? "hand" : "usb"),
+      onclick: () => Promise.resolve(setAdd({ hand })).then(() => usbWanted() && refresh()) }, label)));
+  const manual = [
+    h("ol", { class: "steps" },
+      h("li", {}, "Otwórz w przeglądarce czytnika ", h("code", {}, serverURL() + "/koligilo.koplugin.zip"),
+        ", rozpakuj do ", h("code", {}, "koreader/plugins/"), " (na Androidzie: ", h("code", {}, "/sdcard/koreader/plugins/"), ")."),
+      h("li", {}, "Uruchom KOReader ponownie.")),
+    h("p", { class: "muted small" }, "Plugin koligilo instalujesz na czytniku raz. Potem krok 2 łączy go z tym panelem."),
+  ];
+  return [seg, !desk || st.hand ? manual : [
+    usbBody(),
+    h("p", { class: "muted small" }, "Z kablem krok 2 odpada: czytnik dostaje adres serwera i łączy się sam — na czytniku zostaje potwierdzić pierwszą synchronizację."),
+  ]];
+}
+
+// Krok 2: czytnik ma plugin i się zgłasza. Prośba z state.pending to ta sama prośba co w banerze;
+// zatwierdzenie dalej tylko ręczne, po porównaniu kodu z ekranem czytnika.
+function addStep2() {
+  return [
+    h("ol", { class: "steps" },
+      h("li", {}, "Na czytniku: ", h("b", {}, MENU_PATH_PAIR)),
+      h("li", {}, "W tej samej sieci czytnik sam znajdzie ten komputer — pojawi się tu prośba z czterocyfrowym kodem do porównania."),
+      h("li", {}, "W każdej innej sieci (także uczelnianej, hotelowej, przez VPN) czytnik pokaże sześciocyfrowy kod — wpisz go tutaj:",
+        codeForm()),
+      h("li", {}, "Na czytniku potwierdź pierwszą synchronizację. Gotowe.")),
+    S.state.pending.length === 0 && h("p", { class: "muted small addr-wait", role: "status", "aria-live": "polite" }, "Czekam na zgłoszenie czytnika…"),
+    // informacja o punkcie kontaktowym zostaje widoczna przy wpisywaniu kodu
+    h("p", { class: "muted small" },
+      "Kod przechodzi przez punkt kontaktowy koligilo.sypian.ski — serwer autora koligilo. Na czas parowania (najwyżej 10 minut, tylko w pamięci) trafia tam model czytnika oraz adres tego komputera i klucz dla czytnika; po odebraniu przez czytnik są kasowane. Ustawień ani książek ten serwer nie widzi. W tej samej sieci Wi-Fi albo po kablu parowanie go nie używa."),
+  ];
+}
+const MENU_PATH_PAIR = "Menu → Narzędzia → koligilo → Połącz z komputerem…";
+
+function addBody() {
+  const cur = addState().step;
+  return [
+    addPending(),
+    h("div", { id: "addr-panel-" + cur, role: "tabpanel", "aria-labelledby": "addr-tab-" + cur }, cur === 1 ? addStep1() : addStep2()),
+  ];
+}
+function addFoot(sheet) {
+  const cur = addState().step, st = addState();
+  const usb = S.mode === "desktop" && !st.hand;
+  const close = sheet && h("button", { type: "button", id: "addr-close2", onclick: closeAddReader }, "Zamknij");
+  const next = h("button", { type: "button", class: "primary", id: "addr-next",
+    onclick: () => Promise.resolve(setAdd({ step: 2 })).then(() => document.getElementById("f-rvcode")?.focus()) }, "Dalej: połącz →");
+  const back = h("button", { type: "button", id: "addr-back", onclick: () => Promise.resolve(setAdd({ step: 1 })).then(() => usbWanted() && refresh()) }, "← Wstecz");
+  return cur === 1 ? [close, !usb && next] : [back, close];
+}
+
+function addReaderSheet() {
+  return h("div", { class: "sheet-back", onmousedown: ev => { if (ev.target === ev.currentTarget) closeAddReader(); } },
+    h("div", { class: "sheet addsheet addr", role: "dialog", "aria-modal": "true", "aria-labelledby": "addr-title" },
+      h("header", { class: "sheet-head" },
+        h("h2", { id: "addr-title" }, "Dodaj czytnik"),
+        h("button", { type: "button", id: "addr-close", "aria-label": "Zamknij", onclick: closeAddReader }, "×")),
+      addStepTabs(addState().step),
+      h("div", { class: "sheet-body" }, addBody()),
+      h("footer", { class: "sheet-foot addr-foot" }, h("div", { class: "row" }, addFoot(true)))));
+}
+
+// Pusta lista: ta sama treść w karcie na stronie, bez „Zamknij”.
+function addReaderInline() {
+  return h("section", { class: "card addr-inline", style: "margin-bottom:var(--card-gap)" },
+    h("h3", { style: "margin-top:0" }, "Połącz pierwszy czytnik"),
+    h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik po połączeniu z Wi-Fi sam wysyła swoje zmiany i odbiera zmiany z pozostałych."),
+    addStepTabs(addState().step),
+    addBody(),
+    h("div", { class: "row addr-foot" }, addFoot(false)));
+}
+
+// Po połączeniu pierwszego czytnika karta pustego stanu znika, więc wynik („Połączono …”) pokazujemy
+// jednym zdaniem nad listą, dopóki go nie zamkniesz.
+function addDoneNote() {
+  const m = [S.rvMsg, S.usbMsg].find(x => x && x.ok);
+  if (!m || addSheetOpen() || addInline()) return null;
+  return h("p", { class: "dnote", role: "status" }, "✓ " + m.text + " ",
+    h("button", { type: "button", class: "linkbtn", onclick: () => { S.rvMsg = null; S.usbMsg = null; render(); } }, "OK"));
 }
 
 function codeForm() {
@@ -5272,7 +5332,7 @@ function showTab(id) {
   const changed = S.tab !== id;
   S.tab = id;
   history.replaceState(null, "", "#" + id);
-  if (changed) { app.scrollTop = 0; S.devEdit = null; S.devMenu = null; S.addSheet = null; S.dictSheet = false; S.dictTab = "cat"; }
+  if (changed) { app.scrollTop = 0; S.devEdit = null; S.devMenu = null; S.addReader = null; S.rvMsg = null; S.usbMsg = null; S.addSheet = null; S.dictSheet = false; S.dictTab = "cat"; }
   if (id === "konta" || id === "wtyczki" || id === "czcionki" || id === "slowniki") return refresh();
   render();
 }
@@ -5298,13 +5358,14 @@ document.addEventListener("keydown", ev => {
     return;
   }
   const dsheet = S.dictSheet && S.tab === "slowniki";
+  const asheet = S.state && addSheetOpen();
   if (dsheet && S.dictLangOpen && ev.key === "Escape") {
     ev.preventDefault();
     const w = S.dictLangOpen; S.dictLangOpen = null; render(); document.getElementById("f-dict-" + w)?.focus();
     return;
   }
-  if (dsheet || (S.addSheet && S.tab === "wtyczki")) {
-    if (ev.key === "Escape" && (dsheet || !S.addSheet.busy)) { ev.preventDefault(); if (dsheet) closeDictSheet(); else closeAddSheet(); return; }
+  if (dsheet || asheet || (S.addSheet && S.tab === "wtyczki")) {
+    if (ev.key === "Escape" && (dsheet || asheet || !S.addSheet.busy)) { ev.preventDefault(); if (asheet) closeAddReader(); else if (dsheet) closeDictSheet(); else closeAddSheet(); return; }
     if (ev.key === "Tab") {
       const sheet = document.querySelector(".sheet");
       const f = sheet ? [...sheet.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]')] : [];
