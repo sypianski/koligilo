@@ -1087,8 +1087,6 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .dtile b { font-size: 1.35rem; line-height: 1.2; }
 @media (max-width: 520px) { .dtiles { grid-template-columns: minmax(0, 1fr); } .dtile { flex-direction: row; align-items: baseline; gap: 10px; } }
 .dictmx td.cell { width: auto; min-width: 7em; font-size: 16px; position: relative; } /* position: ukryty .sr nie ucieka z przewijanego kontenera */
-.dcat { align-items: flex-start; gap: 10px; }
-.dcat > input[type=checkbox] { margin-top: 5px; flex: none; }
 .dmulti { position: sticky; bottom: 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding: 8px 12px;
   background: var(--ink); color: var(--paper); border-radius: 8px; }
 .dmulti .small { flex: 1 1 12em; min-width: 0; }
@@ -1125,3 +1123,45 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .dzrow .row { gap: 10px; }
 .dzdet { margin-top: 6px; }
 .dzdet summary { cursor: pointer; }
+
+/* Słowniki jako tabele (TASK-60; wybory wybor/slowniki3 i slowniki4): komórki dwuwierszowe, pasek haseł, ikony źródła. */
+.dtable td, .dtable th { vertical-align: middle; }
+.pmx.dtable thead th { text-align: left; }
+.pmx.dtable thead th.ctr, .dtable td.ctr { text-align: center; width: 1%; white-space: nowrap; }
+.pmx.dtable thead th.num, .dtable td.num { text-align: right; white-space: nowrap; }
+.dtable th.dev { min-width: 6.5em; white-space: normal; }
+.dtable .dname { white-space: normal; min-width: 11em; }
+.dtable .dlang { white-space: nowrap; }
+.dtable .dst { display: block; line-height: 1.3; }
+.dtable .dst i { display: inline-block; width: 2.1em; color: var(--subtext); font-size: 11px; font-weight: 600; font-style: normal; }
+.dnum { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.dnum .dn1 { line-height: 1.3; }
+.dnum .dn2 { color: var(--subtext); font-size: 12px; line-height: 1.3; }
+.dnum .dbar { display: block; height: 3px; max-width: 100%; background: var(--ink); border-radius: 2px; margin: 2px 0 1px; }
+.dsrc { display: inline-flex; vertical-align: middle; color: var(--subtext); }
+.dsrc svg { display: block; }
+.dlegend { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.dlegend > span { display: inline-flex; gap: 5px; align-items: center; }
+.dbulk { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; padding: 6px 10px; background: var(--accent-soft); border-radius: 8px; }
+.dbulk button.danger { margin-left: auto; }
+.dcattable td.dname b { overflow-wrap: anywhere; }
+.dseg { display: inline-flex; margin: 0 0 8px; border: 1.5px solid var(--ink); border-radius: 8px; overflow: hidden; }
+.dseg button { border: 0; border-radius: 0; padding: 3px 12px; background: var(--paper); }
+.dseg button + button { border-left: 1.5px solid var(--ink); }
+.dseg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.mg { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 4px; border: 1.5px solid var(--ink); border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 1; }
+/* wąskie okno: wiersz = „karta” jak w tabelach wtyczek (labelCells); pole wyboru w prawym górnym rogu */
+@media (max-width: 620px) {
+  .dtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dtable, .dtable tbody, .dtable tr { display: block; }
+  .dtable tr { position: relative; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .dtable tr:last-child { border-bottom: 0; }
+  .dtable td { display: grid; grid-template-columns: minmax(6em, 38%) minmax(0, 1fr); gap: 8px; padding: 3px 0; border: 0; text-align: left !important; width: auto !important; white-space: normal !important; }
+  .dtable td::before { content: attr(data-label); color: var(--subtext); font-size: 12.5px; }
+  .dtable td:nth-child(1) { position: absolute; top: 6px; right: 0; display: block; padding: 0; }
+  .dtable td:nth-child(1)::before, .dtable td:nth-child(2)::before { content: none; }
+  .dtable td:nth-child(2) { display: block; padding-right: 2em; font-size: 15px; }
+  .dtable td.num .dnum { align-items: flex-start; width: 12em; max-width: 100%; }
+  .dtable td .mg, .dtable td .dsrc { justify-self: start; }
+  .dtable td.cell span[aria-hidden] { justify-self: start; }
+}

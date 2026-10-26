@@ -73,6 +73,8 @@ const S = {
   dictQ: "", dictIn: [], dictOut: [], dictLangOpen: null, dictLangQ: { in: "", out: "" }, dictLangHi: 0, dictTab: "cat", dictOrigin: "", dictOnly: false, // filtry katalogu (języki: listy kodów)
   dictShown: 50,       // ile wierszy katalogu jest narysowanych („Pokaż więcej”)
   dictPick: new Set(), // zaznaczone w katalogu (id) — „Pobierz zaznaczone”, TASK-58
+  dictSel: new Set(),  // zaznaczone w bibliotece (sha256) — „Usuń zaznaczone”, TASK-60
+  dictSort: "size",    // kolejność katalogu: "size" (największe) | "name" (A–Z), TASK-60
   dictMsg: null,       // komunikat {ok, text}
   dictBusy: false,     // trwa wgrywanie
   plugSteps: stepsGet(), // kartka „Trzy kroki” widoczna?
@@ -3429,7 +3431,7 @@ function galleryTitle(full) {
 // a sam nagłówek zostaje w DOM dla czytników ekranu.
 function labelCells(table) {
   const heads = [...table.querySelectorAll("thead th")].map(t => t.textContent);
-  for (const tr of table.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => td.setAttribute("data-label", heads[i] || ""));
+  for (const tr of table.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => { if (!td.hasAttribute("data-label")) td.setAttribute("data-label", heads[i] || ""); }); // gotowa etykieta (np. sama nazwa czytnika) wygrywa z tekstem nagłówka
   return table;
 }
 // TASK-33: „Wtyczki” to jedna strona — macierz „Zainstalowane”, kartka „Trzy kroki”
@@ -5028,12 +5030,21 @@ async function uploadDicts(files) {
   await refresh();
 }
 
-async function deleteDict(d) {
-  if (!confirm(`Usunąć słownik „${d.title || d.name}” z panelu?\n\nCzytniki, które go mają, usuną jego pliki (tylko te od koligilo) przy najbliższej synchronizacji. Słowników dodanych ręcznie to nie dotyczy.`)) return;
-  try {
-    await api("DELETE", `/api/admin/dicts/${d.sha256}`);
-    S.dictMsg = { ok: true, text: `Usunięto „${d.title || d.name}”.` };
-  } catch (e) { S.dictMsg = { ok: false, text: `Nie udało się usunąć: ${e.message}` }; }
+// Usuwanie zbiorcze (TASK-60): jedno potwierdzenie z listą nazw, ale osobne DELETE na każdy słownik — serwer nie ma
+// zbiorczego wywołania, a częściowa porażka ma zostawić resztę usuniętą i nazwać te, które zostały.
+async function deleteDicts(list) {
+  if (!list.length) return;
+  const names = list.map(d => d.title || d.name);
+  const shown = names.slice(0, 8).map(n => `• ${n}`).join("\n") + (names.length > 8 ? `\n… i ${names.length - 8} ${plPl(names.length - 8, "inny", "inne", "innych")}` : "");
+  if (!confirm(`Usunąć z panelu ${list.length === 1 ? "słownik" : `${list.length} ${plPl(list.length, "słownik", "słowniki", "słowników")}`}?\n\n${shown}\n\nCzytniki, które je mają, usuną ich pliki (tylko te od koligilo) przy najbliższej synchronizacji. Słowników dodanych ręcznie to nie dotyczy.`)) return;
+  const bad = [];
+  for (const d of list) {
+    try { await api("DELETE", `/api/admin/dicts/${d.sha256}`); S.dictSel.delete(d.sha256); }
+    catch (e) { bad.push(`${d.title || d.name} (${e.message})`); }
+  }
+  S.dictMsg = bad.length
+    ? { ok: false, text: `Nie udało się usunąć: ${bad.join("; ")}.` + (bad.length < list.length ? ` Reszta usunięta (${list.length - bad.length}).` : "") }
+    : { ok: true, text: list.length === 1 ? `Usunięto „${names[0]}”.` : `Usunięto ${list.length} ${plPl(list.length, "słownik", "słowniki", "słowników")}.` };
   return refresh();
 }
 
@@ -5091,43 +5102,121 @@ function dictOwnTab() {
       h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")));
 }
 
-function dictRow(d) {
-  return h("li", { class: "row" },
-    h("div", { class: "grow" },
-      h("b", {}, d.title || d.name),
-      h("div", { class: "muted small" },
-        [d.title && d.title !== d.name ? d.name : null, d.words > 0 ? hasWords(d.words) : null,
-          `${fmtSize(d.size)} (${fmtSize(d.unpacked)} po rozpakowaniu)`, DICT_SRC[d.source] || d.source,
-          d.added && new Date(d.added).toLocaleDateString("pl")].filter(Boolean).join(" · ")),
-      d.dropped > 0 && h("div", { class: "dwarn small" }, `⚠ Pominięto ${d.dropped} ${plPl(d.dropped, "plik", "pliki", "plików")} spoza słownika (m.in. .lua — KOReader wykonuje je jako kod).`)),
-    h("button", { type: "button", class: "danger", onclick: () => deleteDict(d) }, "Usuń"));
+// Biblioteka jako tabela (TASK-60, wybory wybor/slowniki3 i slowniki4): ☐ · Słownik · Język (dwa wiersze „z”/„na”) ·
+// Hasła / rozmiar (dwa wiersze + pasek) · Źr. (ikona) · po jednej kolumnie na czytnik. Usuwa się zbiorczo
+// („Usuń zaznaczone”), nie przyciskiem w wierszu. Język serwer zapisuje tylko w katalogu, więc słownik z katalogu
+// bierze go przez source_ref, a wgrany pokazuje „—”.
+const DICT_ICON = {
+  katalog: ["M5 12.5h6a3 3 0 0 0 .4-5.97A4 4 0 0 0 3.7 7.2 2.7 2.7 0 0 0 5 12.5zM8 6.8v4.2M6.4 9.5 8 11l1.6-1.5", "z katalogu"],
+  upload: ["M4 1.8h5l3 3v9.4H4zM8 12V7.6M6.4 9.2 8 7.6l1.6 1.6", "wgrany z panelu"],
+};
+function dictSrcIcon(src) {
+  const [path, text] = DICT_ICON[src] || DICT_ICON.upload;
+  const s = h("span", { class: "dsrc", title: text, role: "img", "aria-label": text });
+  s.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+  return s;
+}
+let dictCatMapFor = null, dictCatMap = null;
+function dictCatById() {
+  if (!S.dictCat) return null;
+  if (dictCatMapFor !== S.dictCat) { dictCatMapFor = S.dictCat; dictCatMap = new Map(S.dictCat.map(c => [c.id, c])); }
+  return dictCatMap;
+}
+function dictLangCell(d) {
+  const l = Dicts.dictLangs(d, dictCatById());
+  if (!l) return h("span", { class: "muted", title: d.source === "katalog" && !S.dictCat ? "katalog się wczytuje" : "język znamy tylko dla słowników z katalogu" }, "—");
+  if (l.a === l.b) return h("span", { class: "dst" }, langName(l.a));
+  return h("div", {}, h("span", { class: "dst" }, h("i", {}, "z"), langName(l.a)), h("span", { class: "dst" }, h("i", {}, "na"), langName(l.b)));
+}
+function dictSizeCell(d, maxWords) {
+  const full = [d.words > 0 ? hasWords(d.words) : null, `${fmtSize(d.size)} (${fmtSize(d.unpacked)} po rozpakowaniu)`].filter(Boolean).join(" · ");
+  return h("div", { class: "dnum", title: full },
+    d.words > 0 ? [h("span", { class: "dn1" }, `${Dicts.shortCount(d.words)} ${d.words < 1000 ? plPl(d.words, "hasło", "hasła", "haseł") : "haseł"}`),
+      h("i", { class: "dbar", style: `width:${Dicts.logBar(d.words, maxWords)}%` })] : h("span", { class: "dn1 muted" }, "— haseł"),
+    h("span", { class: "dn2" }, fmtSize(d.size)));
 }
 
-function dictLibrary(dicts) {
+function dictLibrary(dicts, active) {
   const list = [...dicts].sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, "pl"));
+  const devs = S.state.devices || [];
+  const sel = list.filter(d => S.dictSel.has(d.sha256));
+  const maxWords = Math.max(0, ...list.map(d => d.words || 0));
+  const allOn = list.length > 0 && sel.length === list.length;
+  const rerender = id => { render(); document.getElementById(id)?.focus(); };
+  const allBox = h("input", { type: "checkbox", id: "dl-all", checked: allOn, "aria-label": "Zaznacz wszystkie słowniki",
+    onchange: ev => { if (ev.target.checked) list.forEach(d => S.dictSel.add(d.sha256)); else S.dictSel.clear(); rerender("dl-all"); } });
+  allBox.indeterminate = sel.length > 0 && !allOn; // tylko właściwość, nie atrybut
+  const head = h("thead", {}, h("tr", {},
+    h("th", { scope: "col", class: "ctr" }, allBox),
+    h("th", { scope: "col" }, "Słownik"),
+    h("th", { scope: "col" }, "Język"),
+    h("th", { scope: "col", class: "num" }, "Hasła / rozmiar"),
+    h("th", { scope: "col", class: "ctr", title: "Skąd słownik jest w panelu" }, "Źr."),
+    devs.map(dev => {
+      const st = Dicts.deviceState(dev, active);
+      const sub = st.kind === "no-consent" ? "bez zgody" : st.kind === "waiting" ? "czeka na synchronizację" : `${st.have} z ${st.total}`;
+      return h("th", { scope: "col", class: "ctr dev" }, dev.name, h("div", { class: "muted small", style: "font-weight:400" }, sub));
+    })));
+  const body = list.map(d => {
+    const id = "dl-" + d.sha256.slice(0, 12), isActive = d.active && d.approved;
+    return h("tr", { class: S.dictSel.has(d.sha256) ? "sel" : "", "data-sha": d.sha256 },
+      h("td", { class: "ctr" }, h("input", { type: "checkbox", id, checked: S.dictSel.has(d.sha256), "aria-label": `Zaznacz: ${d.title || d.name}`,
+        onchange: ev => { if (ev.target.checked) S.dictSel.add(d.sha256); else S.dictSel.delete(d.sha256); rerender(id); } })),
+      h("td", { class: "dname", title: [d.added && "Dodano " + new Date(d.added).toLocaleDateString("pl"), d.name].filter(Boolean).join(" · ") },
+        h("b", {}, d.title || d.name),
+        d.title && d.title !== d.name && h("div", { class: "muted small" }, d.name),
+        d.dropped > 0 && h("div", { class: "dwarn small" }, `⚠ Pominięto ${d.dropped} ${plPl(d.dropped, "plik", "pliki", "plików")} spoza słownika (m.in. .lua — KOReader wykonuje je jako kod).`)),
+      h("td", { class: "dlang" }, dictLangCell(d)),
+      h("td", { class: "num" }, dictSizeCell(d, maxWords)),
+      h("td", { class: "ctr" }, dictSrcIcon(d.source)),
+      devs.map(dev => {
+        if (!isActive) return h("td", { class: "cell ctr muted" }, "—");
+        const [sym, text] = DICT_CELL[Dicts.cellState(dev, d)];
+        return h("td", { class: "cell ctr", title: text, "data-label": dev.name }, h("span", { "aria-hidden": "true" }, sym), h("span", { class: "sr" }, text));
+      }));
+  });
+  const noc = devs.filter(d => !d.dicts_allowed);
   return h("section", { class: "card", id: "dict-library" },
     h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
     list.length === 0
       ? h("p", { class: "muted" }, "Nic tu jeszcze nie ma. „＋ Dodaj słownik” pobierze go z katalogu albo wgra Twój plik.")
-      : h("ul", { class: "plain" }, list.map(dictRow)));
+      : [sel.length > 0 && h("div", { class: "dbulk", id: "dict-bulk", role: "region", "aria-label": "Zaznaczone słowniki" },
+          h("b", {}, `Zaznaczono ${sel.length}`),
+          h("button", { type: "button", class: "linkbtn", onclick: () => { S.dictSel.clear(); render(); } }, "Wyczyść"),
+          h("button", { type: "button", class: "danger", id: "b-dict-del", onclick: () => deleteDicts(sel) }, "Usuń zaznaczone")),
+        h("div", { class: "matrix-wrap" },
+          labelCells(h("table", { class: "matrix pmx dense dtable dictmx", "aria-label": "Słowniki w panelu" }, head, h("tbody", {}, body)))),
+        h("p", { class: "muted small dlegend" },
+          h("span", {}, dictSrcIcon("katalog"), " z katalogu"), h("span", {}, dictSrcIcon("upload"), " wgrany z panelu"),
+          devs.length > 0 && active.length > 0 && h("span", {}, "● jest na czytniku · ○ czeka na synchronizację · ↻ starsza wersja · ⊘ czytnik bez zgody")),
+        devs.length === 0 && h("p", { class: "muted small" }, "Nie połączono jeszcze żadnego czytnika — po połączeniu dostanie wszystkie słowniki z panelu (do 150 MB na jedną synchronizację)."),
+        devs.length > 0 && h("p", { class: "muted small" }, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu (do 150 MB na jedną synchronizację). Niczego tu nie zmieniasz — zgodę daje czytnik."),
+        noc.length > 0 && h("p", { class: "muted small", style: "margin-bottom:0" },
+          `Bez zgody: ${noc.map(d => d.name).join(", ")}. Zgodę daje się na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki.`)]);
 }
 
-function dictCatalogRow(c, have, job) {
+// Katalog jako tabela (TASK-60): ☐ · Słownik · Para · Hasła · Źr. (monogram pochodzenia: K = KOReader, W = WikDict,
+// kd = koreader-dicts; legenda pod tabelą). Stan pobierania zostaje pod nazwą, a „pobrany” jest plakietką (po nazwie).
+const ORIGIN_MONO = { koreader: "K", wikdict: "W", "koreader-dicts": "kd" };
+function dictCatalogRow(c, have, job, maxEntries) {
   const busy = job && job.state !== "błąd", failed = job && job.state === "błąd";
-  const pair = c.lang_in === c.lang_out ? langName(c.lang_in) : `${langName(c.lang_in)} → ${langName(c.lang_out)}`;
   const origin = (Dicts.ORIGINS.find(o => o[0] === c.origin) || [0, c.origin])[1];
   const id = "dp-" + c.id;
-  return h("li", { class: "row dcat", "data-dict": c.id },
-    h("input", { type: "checkbox", id, checked: S.dictPick.has(c.id) && !busy, disabled: busy, "aria-label": `Zaznacz: ${c.name}`,
-      onchange: ev => { if (ev.target.checked) S.dictPick.add(c.id); else S.dictPick.delete(c.id); render(); document.getElementById(id)?.focus(); } }),
-    h("div", { class: "grow" },
+  return h("tr", { class: "dcat" + (S.dictPick.has(c.id) && !busy ? " sel" : ""), "data-dict": c.id },
+    h("td", { class: "ctr" }, h("input", { type: "checkbox", id, checked: S.dictPick.has(c.id) && !busy, disabled: busy, "aria-label": `Zaznacz: ${c.name}`,
+      onchange: ev => { if (ev.target.checked) S.dictPick.add(c.id); else S.dictPick.delete(c.id); render(); document.getElementById(id)?.focus(); } })),
+    h("td", { class: "dname", title: c.license ? "Licencja: " + c.license : null },
       h("b", {}, c.name), have && h("span", { class: "badge" }, " pobrany"),
-      h("div", { class: "muted small" }, [pair, c.entries > 0 ? hasWords(c.entries) : null, c.license, origin].filter(Boolean).join(" · ")),
       busy && h("div", { class: "small", role: "status" },
-        job.state === "pobieranie" && job.total > 0 && h("progress", { max: job.total, value: job.done, "aria-label": `Pobieranie: ${c.name}`, style: "width:12em;margin-right:8px" }),
+        job.state === "pobieranie" && job.total > 0 && h("progress", { max: job.total, value: job.done, "aria-label": `Pobieranie: ${c.name}`, style: "width:10em;margin-right:8px" }),
         Dicts.jobText(job, fmtSize)),
-      failed && h("div", { class: "err small", role: "alert" }, `Nie udało się: ${job.error}`)),
-    failed && h("button", { type: "button", onclick: () => startDictJobs([c]) }, "Spróbuj ponownie"));
+      failed && h("div", { class: "err small", role: "alert" }, `Nie udało się: ${job.error} `,
+        h("button", { type: "button", class: "linkbtn", onclick: () => startDictJobs([c]) }, "Spróbuj ponownie"))),
+    h("td", { class: "dlang" }, c.lang_in === c.lang_out ? langName(c.lang_in) : `${langName(c.lang_in)} → ${langName(c.lang_out)}`),
+    h("td", { class: "num" }, c.entries > 0
+      ? h("div", { class: "dnum", title: hasWords(c.entries) }, h("span", { class: "dn1" }, Dicts.shortCount(c.entries)), h("i", { class: "dbar", style: `width:${Dicts.logBar(c.entries, maxEntries)}%` }))
+      : h("span", { class: "muted" }, "—")),
+    h("td", { class: "ctr" }, h("span", { class: "mg", title: origin, role: "img", "aria-label": origin }, ORIGIN_MONO[c.origin] || "?")));
 }
 
 // Wybór wielu języków (TASK-58): pole z żetonami i podpowiedziami. W obrębie jednego pola języki się sumują
@@ -5218,7 +5307,8 @@ function dictCatalogPane(inSheet) {
   const filtered = !!(S.dictQ || S.dictIn.length || S.dictOut.length || S.dictOrigin || S.dictOnly);
   // Bez filtra nie rysujemy 1,7 tys. pozycji w kolejności kodów języków (pierwsze byłyby afarski i abchaski):
   // najpierw wybór języka, potem lista od największego słownika.
-  const hits = filtered ? Dicts.bySize(Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName)) : [];
+  const hits = filtered ? Dicts.sortCatalog(Dicts.filterCatalog(cat, { q: S.dictQ, inL: S.dictIn, outL: S.dictOut, origin: S.dictOrigin, only: S.dictOnly }, haveIds, langName), S.dictSort) : [];
+  const maxEntries = Math.max(0, ...hits.map(c => c.entries || 0));
   const shown = hits.slice(0, S.dictShown);
   const picks = cat.filter(c => S.dictPick.has(c.id) && !(S.dictJobs[c.id] && S.dictJobs[c.id].state !== "błąd"));
   const langs = new Set(); for (const c of cat) { langs.add(c.lang_in); langs.add(c.lang_out); }
@@ -5228,12 +5318,19 @@ function dictCatalogPane(inSheet) {
       h("button", { type: "button", class: "linkbtn", onclick: () => showHow("dicts") }, "Jak to działa ›")),
     dictFilterBar(cat),
     h("p", { class: "muted small", id: "dict-count", role: "status" },
-      filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)} · od największego (liczba haseł)` : `${fmtCount(cat.length)} słowników w ${fmtCount(langs.size)} językach`,
+      filtered ? `Pasuje ${fmtCount(hits.length)} z ${fmtCount(cat.length)}` : `${fmtCount(cat.length)} słowników w ${fmtCount(langs.size)} językach`,
       filtered && h("button", { type: "button", class: "linkbtn", style: "margin-left:8px",
         onclick: () => { S.dictQ = ""; S.dictIn = []; S.dictOut = []; S.dictLangOpen = null; S.dictLangQ = { in: "", out: "" }; S.dictOrigin = ""; S.dictOnly = false; S.dictShown = DICT_PAGE; render(); } }, "Wyczyść filtry")),
+    filtered && hits.length > 1 && h("div", { class: "dseg", role: "group", "aria-label": "Kolejność" },
+      [["size", "Największe"], ["name", "A–Z"]].map(([k, label]) => h("button", { type: "button", id: "b-dsort-" + k, "aria-pressed": String(S.dictSort === k),
+        onclick: () => { S.dictSort = k; S.dictShown = DICT_PAGE; render(); document.getElementById("b-dsort-" + k)?.focus(); } }, label))),
     !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz języki „z” albo „na” (możesz kilka) albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
       : hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
-      : h("ul", { class: "plain" }, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id]))),
+      : [h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix pmx dense dtable dcattable", "aria-label": "Katalog słowników" },
+          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ctr" }, h("span", { class: "sr" }, "Zaznacz")), h("th", { scope: "col" }, "Słownik"), h("th", { scope: "col" }, "Para"),
+            h("th", { scope: "col", class: "num" }, "Hasła"), h("th", { scope: "col", class: "ctr", title: "Skąd pochodzi pozycja katalogu" }, "Źr."))),
+          h("tbody", {}, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id], maxEntries)))))),
+        h("p", { class: "muted small dlegend" }, Dicts.ORIGINS.map(([id, label]) => h("span", {}, h("span", { class: "mg" }, ORIGIN_MONO[id]), " " + label)))],
     hits.length > shown.length && h("p", {},
       h("button", { type: "button", id: "b-dict-more", onclick: () => { S.dictShown += DICT_PAGE; render(); } },
         `Pokaż więcej (${fmtCount(hits.length - shown.length)} ${plPl(hits.length - shown.length, "została", "zostały", "zostało")})`)),
@@ -5250,39 +5347,6 @@ const DICT_CELL = {
   ok: ["●", "jest na czytniku"], missing: ["○", "czeka na synchronizację"],
   stale: ["↻", "czytnik ma starszą wersję"], "no-consent": ["⊘", "czytnik bez zgody na słowniki"],
 };
-function dictMatrix(active, devs) {
-  const rows = [...active].sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name, "pl"));
-  const head = h("thead", {}, h("tr", {},
-    h("th", { scope: "col" }, "Słownik"),
-    devs.map(d => {
-      const st = Dicts.deviceState(d, active);
-      const sub = st.kind === "no-consent" ? "bez zgody" : st.kind === "waiting" ? "czeka na pierwszą synchronizację" : `${st.have} z ${st.total}`;
-      return h("th", { scope: "col" }, d.name, h("div", { class: "muted small", style: "font-weight:400" }, sub));
-    })));
-  const body = rows.map(d => h("tr", {},
-    h("th", { scope: "row", title: d.title && d.title !== d.name ? d.title : null }, d.name),
-    devs.map(dev => {
-      const [sym, text] = DICT_CELL[Dicts.cellState(dev, d)];
-      return h("td", { class: "cell", title: text }, h("span", { "aria-hidden": "true" }, sym), h("span", { class: "sr" }, text));
-    })));
-  return h("div", { class: "matrix-wrap" },
-    h("table", { class: "matrix pmx dense dictmx", "aria-label": "Słowniki na czytnikach" }, head, h("tbody", {}, body)));
-}
-
-function dictDevicesBlock(active) {
-  const devs = S.state.devices;
-  const noc = devs.filter(d => !d.dicts_allowed);
-  return h("section", { class: "card", id: "dict-devices" },
-    h("h3", { style: "margin-top:0" }, "Na czytnikach"),
-    devs.length === 0 ? h("p", { class: "muted" }, "Nie połączono jeszcze żadnego czytnika.")
-      : active.length === 0 ? h("p", { class: "muted" }, "W panelu nie ma jeszcze słowników. Każdy czytnik ze zgodą dostanie wszystkie, które dodasz.")
-      : [h("p", { class: "muted small", style: "margin-top:0" }, "Każdy czytnik ze zgodą dostaje wszystkie słowniki z panelu (do 150 MB na jedną synchronizację)."),
-        dictMatrix(active, devs),
-        h("p", { class: "muted small", style: "margin-bottom:0" }, "● jest na czytniku · ○ czeka na synchronizację · ↻ czytnik ma starszą wersję · ⊘ czytnik bez zgody"),
-        noc.length > 0 && h("p", { class: "muted small", style: "margin-bottom:0" },
-          `Bez zgody: ${noc.map(d => d.name).join(", ")}. Zgodę daje się na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki.`)]);
-}
-
 // Arkusz „Dodaj słownik” (TASK-58): katalog z filtrami i wyborem wielu słowników; pasek zadań widać też w nim,
 // bo arkusz zasłania stronę, a pobieranie startuje właśnie stąd. Zostaje otwarty po „Pobierz zaznaczone”.
 function openDictSheet() { S.dictSheet = true; S.dictTab = "cat"; render(); document.getElementById("f-dictq")?.focus(); }
@@ -5321,8 +5385,7 @@ function dictsTab() {
     dictJobBar(false),
     h("div", { class: "row", style: "margin:0 0 14px" },
       h("button", { type: "button", class: "primary", id: "b-dict-add", onclick: openDictSheet }, "＋ Dodaj słownik")),
-    dictLibrary(dicts),
-    dictDevicesBlock(active),
+    dictLibrary(dicts, active),
     S.dictSheet && dictSheet());
 }
 
