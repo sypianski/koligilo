@@ -862,6 +862,7 @@ function devicesTab() {
   if (S.devEdit && !devs.some(d => d.id === S.devEdit.id)) S.devEdit = null; // czytnik zniknął (np. zapomniany gdzie indziej)
   if (S.devMenu && !devs.some(d => d.id === S.devMenu)) S.devMenu = null;
   return h("section", { class: "devs-view" },
+    deviceStrip(devs),
     devs.length ? h("div", { class: "dcards" }, devs.map(deviceCard)) : null,
     addReaderCard(devs.length === 0));
 }
@@ -1071,6 +1072,19 @@ function deviceScope(d) {
   const cat = S.state.catalog || [], n = cat.filter(g => d.groups[g.id]).length, np = Object.keys(d.plugins || {}).length;
   return `dostaje ${n} z ${cat.length} ${cat.length === 1 ? "grupy" : "grup"} · `
     + (np === 0 ? "bez wtyczek" : `${np} ${plPl(np, "wtyczka", "wtyczki", "wtyczek")}`);
+}
+
+// Pasek nad kartami: jedna linia o czytnikach, które się zatrzymały (wstrzymana synchronizacja albo cisza od
+// QUIET_DAYS). Zdrowa lista nie ma paska. Stan liczy syncHealth, więc próg i teksty są w jednym miejscu.
+function deviceStrip(devs) {
+  const items = devs.map(d => [d, syncHealth(d)]).filter(([, x]) => x.k === "stop" || x.k === "warn");
+  if (!items.length) return null;
+  return h("div", { class: "dstrip", role: "status" },
+    h("span", { class: "hdot stop", "aria-hidden": "true" }),
+    h("span", {}, items.map(([d, x], i) => [
+      i > 0 && " · ", h("b", {}, d.name), ": ",
+      x.k === "stop" ? `synchronizacja wstrzymana (${x.text.replace(/^wstrzymana: /, "")})` : x.text,
+    ])));
 }
 
 function deviceCard(d) {

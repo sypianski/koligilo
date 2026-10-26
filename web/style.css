@@ -838,6 +838,8 @@ details.explain > p:last-child { margin-bottom: 0; }
 .cc.on::before { content: "✓ "; }
 .dedit { margin: 8px -14px -10px; padding: 10px 14px; background: var(--warn-soft); border-top: 2px solid var(--rule); border-radius: 0 0 8px 8px; }
 .dedit .row { gap: 10px; }
+.dstrip { display: flex; gap: 2px; align-items: center; padding: 8px 14px; margin-bottom: var(--card-gap); border: 2px solid var(--st-warn); border-radius: 8px; background: var(--warn-soft); }
+.dstrip .hdot { margin-right: 8px; }
 @media (max-width: 760px) { .dcards { grid-template-columns: minmax(0, 1fr); } }
 .dlabel { font-weight: 600; }
 
