@@ -72,6 +72,29 @@ const bs = [{ name: "b", entries: 5 }, { name: "a", entries: 5 }, { name: "z", e
 eq("bySize", D.bySize(bs).map(c => c.name), ["z", "a", "b", "n"]);
 eq("bySize nie zmienia wejścia", bs[0].name, "b");
 
+// sortowanie A–Z, język słownika z katalogu, skrócone liczby i pasek (TASK-60)
+const ns = [{ name: "żółw" }, { name: "Zebra" }, { name: "apple" }, { name: "Äpfel" }];
+eq("byName", D.byName(ns).map(c => c.name), ["Äpfel", "apple", "Zebra", "żółw"]);
+eq("sortCatalog name", D.sortCatalog(bs, "name").map(c => c.name), ["a", "b", "n", "z"]);
+eq("sortCatalog size", D.sortCatalog(bs, "size").map(c => c.name), ["z", "a", "b", "n"]);
+const byId = new Map(cat.map(c => [c.id, c]));
+eq("język z katalogu", D.dictLangs({ source: "katalog", source_ref: "a" }, byId), { a: "deu", b: "eng" });
+eq("język: wgrany", D.dictLangs({ source: "upload" }, byId), null);
+eq("język: nieznany wpis", D.dictLangs({ source: "katalog", source_ref: "x" }, byId), null);
+eq("język: katalog jeszcze niewczytany", D.dictLangs({ source: "katalog", source_ref: "a" }, null), null);
+eq("skrót: małe", D.shortCount(842), "842");
+eq("skrót: tysiące", D.shortCount(1610), "1,6 tys.");
+eq("skrót: bez ,0", D.shortCount(3000), "3 tys.");
+eq("skrót: 10,8 tys.", D.shortCount(10782), "10,8 tys.");
+eq("skrót: setki tysięcy", D.shortCount(354000), "354 tys.");
+eq("skrót: 138 520", D.shortCount(138520), "139 tys.");
+eq("skrót: miliony", D.shortCount(1470678), "1,47 mln");
+eq("skrót: pełne miliony", D.shortCount(2000000), "2 mln");
+eq("pasek: największy", D.logBar(354000, 354000), 100);
+eq("pasek: typowy", D.logBar(10782, 354000), 73);
+eq("pasek: minimum", D.logBar(1, 354000), 8);
+eq("pasek: brak danych", D.logBar(0, 354000), 8);
+
 // macierz słownik × czytnik (TASK-58)
 const dA = { name: "A", sha256: "1" };
 const dev = (allowed, inv) => ({ dicts_allowed: allowed, dict_inventory: inv });

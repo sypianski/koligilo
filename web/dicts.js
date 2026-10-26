@@ -40,6 +40,34 @@ const Dicts = (() => {
   // więc pierwszy ekran bez sortowania to afarski i abchaski (TASK-58). Nie zmienia tablicy wejściowej.
   const bySize = list => [...list].sort((a, b) => (b.entries || 0) - (a.entries || 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
+  // Sortowanie A–Z po nazwie (bez diakrytyków i wielkości liter, TASK-60); drugi tryb obok bySize. Nie zmienia wejścia.
+  const byName = list => [...list].sort((a, b) => { const x = fold(a.name), y = fold(b.name); return x < y ? -1 : x > y ? 1 : 0; });
+  const sortCatalog = (list, mode) => mode === "name" ? byName(list) : bySize(list);
+
+  // Para języków słownika z panelu (TASK-60): serwer jej nie zapisuje, ale słownik z katalogu wskazuje wpis
+  // przez source_ref. Wgrany plik nie ma języka — zwraca null.
+  function dictLangs(d, catById) {
+    if (!d || d.source !== "katalog" || !d.source_ref || !catById) return null;
+    const c = catById.get(d.source_ref);
+    return c ? { a: c.lang_in, b: c.lang_out } : null;
+  }
+
+  // Liczba haseł skrócona do rzędu wielkości: „1,6 tys.”, „10,8 tys.”, „354 tys.”, „1,5 mln”.
+  function shortCount(n) {
+    n = Number(n) || 0;
+    if (n < 1000) return String(n);
+    if (n < 100000) return (n / 1000).toFixed(1).replace(".", ",").replace(/,0$/, "") + " tys.";
+    if (n < 1000000) return Math.round(n / 1000) + " tys.";
+    return (n / 1000000).toFixed(2).replace(".", ",").replace(/0$/, "").replace(/,0$/, "") + " mln";
+  }
+
+  // Szerokość paska liczby haseł w % (TASK-60): skala logarytmiczna, bo największy słownik bywa 100× większy
+  // od typowego; najmniejszy ma co najmniej 8%, żeby pasek było widać.
+  function logBar(n, max) {
+    if (!(n > 0) || !(max > 1)) return 8;
+    return Math.max(8, Math.min(100, Math.round(100 * Math.log10(Math.max(n, 1)) / Math.log10(max))));
+  }
+
   // Liczniki do list wyboru języka: kod → liczba pozycji, malejąco, potem po kodzie.
   function langCounts(cat, key) {
     const m = new Map();
@@ -95,7 +123,7 @@ const Dicts = (() => {
     return Object.keys(prev || {}).filter(id => prev[id].state !== "błąd" && !(next || {})[id]);
   }
 
-  return { ORIGINS, fold, filterCatalog, bySize, langCounts, deviceState, cellState, jobText, running, finished };
+  return { ORIGINS, fold, filterCatalog, bySize, byName, sortCatalog, dictLangs, shortCount, logBar, langCounts, deviceState, cellState, jobText, running, finished };
 })();
 
 if (typeof module !== "undefined") module.exports = Dicts;
