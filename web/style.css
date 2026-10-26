@@ -1135,8 +1135,6 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .pmx.dtable thead th.dev { white-space: normal; min-width: 5em; }
 .pmx.dtable td.cell { min-width: 0; padding-left: 4px; padding-right: 4px; }
 .dtable .dlang { white-space: nowrap; }
-.dtable .dst { display: block; line-height: 1.3; }
-.dtable .dst i { display: inline-block; width: 2.1em; color: var(--subtext); font-size: 11px; font-weight: 600; font-style: normal; }
 .dnum { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
 .dnum .dn1 { line-height: 1.3; }
 .dnum .dn2 { color: var(--subtext); font-size: 12px; line-height: 1.3; }
@@ -1162,9 +1160,21 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
   .dtable td { display: grid; grid-template-columns: minmax(6em, 38%) minmax(0, 1fr); gap: 8px; padding: 3px 0; border: 0; text-align: left !important; width: auto !important; white-space: normal !important; }
   .dtable td::before { content: attr(data-label); color: var(--subtext); font-size: 12.5px; }
   .dtable td:nth-child(1) { position: absolute; top: 6px; right: 0; display: block; padding: 0; }
-  .dtable td:nth-child(1)::before, .dtable td:nth-child(2)::before { content: none; }
-  .dtable td:nth-child(2) { display: block; padding-right: 2em; font-size: 15px; }
+  .dtable td:nth-child(1)::before, .dtable td.dname::before { content: none; }
+  .dtable td.dname { display: block; padding-right: 2em; font-size: 15px; }
+  .dcattable tr { display: flex; flex-direction: column; }
+  .dcattable td.dname { order: -1; }
+  .dtable tr.grp { padding: 0; border-bottom: 0; }
+  .dtable tr.grp th { display: block; padding: 5px 8px; }
   .dtable td.num .dnum { align-items: flex-start; width: 12em; max-width: 100%; }
   .dtable td .mg, .dtable td .dsrc { justify-self: start; }
   .dtable td.cell span[aria-hidden] { justify-self: start; }
 }
+/* kolumna Język (TASK-61): nagłówki grup wg języka haseł, drugi język w wierszu, w katalogu pierwsza kolumna */
+.pmx.dtable.dense tr.grp th { width: auto; padding: 5px 10px; }
+.dtable tr.grp th span { font-weight: 400; color: var(--subtext); margin-left: 8px; }
+.dtable .l1 { white-space: nowrap; }
+.dtable .l1 b { font-size: 14px; }
+.dtable .l1 .in { color: var(--subtext); font-weight: 400; margin-left: 6px; }
+.dtable .lo, .dtable .upl { color: var(--subtext); font-size: 12.5px; white-space: nowrap; }
+.dtable .upl { font-style: italic; }

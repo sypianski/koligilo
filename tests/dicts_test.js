@@ -95,6 +95,16 @@ eq("pasek: typowy", D.logBar(10782, 354000), 73);
 eq("pasek: minimum", D.logBar(1, 354000), 8);
 eq("pasek: brak danych", D.logBar(0, 354000), 8);
 
+// grupy biblioteki wg języka haseł (TASK-61)
+const gcat = new Map([["a", { lang_in: "deu", lang_out: "eng" }], ["b", { lang_in: "pol", lang_out: "eng" }], ["c", { lang_in: "deu", lang_out: "pol" }]]);
+const gnames = { deu: "niemiecki", pol: "polski" };
+const gl = [{ title: "Z", source: "katalog", source_ref: "a" }, { name: "up", source: "upload" }, { title: "B", source: "katalog", source_ref: "c" },
+  { title: "P", source: "katalog", source_ref: "b" }, { title: "A", source: "katalog", source_ref: "a" }];
+eq("grupy: kolejność i zawartość", D.groupByLang(gl, gcat, c => gnames[c]).map(g => [g.code, g.name, g.items.map(d => d.title || d.name)]),
+  [["deu", "niemiecki", ["A", "B", "Z"]], ["pol", "polski", ["P"]], [null, null, ["up"]]]);
+eq("grupy: katalog niewczytany", D.groupByLang([{ source: "katalog", source_ref: "a", title: "A" }], null, c => c).map(g => g.code), [null]);
+eq("grupy: puste", D.groupByLang([], gcat, c => c), []);
+
 // macierz słownik × czytnik (TASK-58)
 const dA = { name: "A", sha256: "1" };
 const dev = (allowed, inv) => ({ dicts_allowed: allowed, dict_inventory: inv });

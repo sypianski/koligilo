@@ -5122,11 +5122,13 @@ function dictCatById() {
   if (dictCatMapFor !== S.dictCat) { dictCatMapFor = S.dictCat; dictCatMap = new Map(S.dictCat.map(c => [c.id, c])); }
   return dictCatMap;
 }
-function dictLangCell(d) {
+// „Drugi język” (TASK-61): główny język słownika (język haseł „z”) jest nagłówkiem grupy, w wierszu zostaje drugi.
+// Strzałka mówi, że słownik tłumaczy na ten język; jednojęzyczny i wgrany (serwer nie zna jego języka) są opisani słowami.
+function dictOtherCell(d) {
   const l = Dicts.dictLangs(d, dictCatById());
-  if (!l) return h("span", { class: "muted", title: d.source === "katalog" && !S.dictCat ? "katalog się wczytuje" : "język znamy tylko dla słowników z katalogu" }, "—");
-  if (l.a === l.b) return h("span", { class: "dst" }, langName(l.a));
-  return h("div", {}, h("span", { class: "dst" }, h("i", {}, "z"), langName(l.a)), h("span", { class: "dst" }, h("i", {}, "na"), langName(l.b)));
+  if (!l) return h("span", { class: "upl", title: d.source === "katalog" && !S.dictCat ? "katalog się wczytuje" : "język znamy tylko dla słowników z katalogu" }, "brak danych");
+  if (l.a === l.b) return h("span", { class: "lo" }, "jednojęzyczny");
+  return h("span", { class: "l1" }, "→ " + langName(l.b));
 }
 function dictSizeCell(d, maxWords) {
   const full = [d.words > 0 ? hasWords(d.words) : null, `${fmtSize(d.size)} (${fmtSize(d.unpacked)} po rozpakowaniu)`].filter(Boolean).join(" · ");
@@ -5149,7 +5151,7 @@ function dictLibrary(dicts, active) {
   const head = h("thead", {}, h("tr", {},
     h("th", { scope: "col", class: "ctr" }, allBox),
     h("th", { scope: "col", class: "dname" }, "Słownik"),
-    h("th", { scope: "col" }, "Język"),
+    h("th", { scope: "col" }, "Drugi język"),
     h("th", { scope: "col", class: "num" }, "Hasła / rozmiar"),
     h("th", { scope: "col", class: "ctr", title: "Skąd słownik jest w panelu" }, "Źr."),
     devs.map(dev => {
@@ -5157,7 +5159,7 @@ function dictLibrary(dicts, active) {
       const sub = st.kind === "no-consent" ? "bez zgody" : st.kind === "waiting" ? "czeka na synchronizację" : `${st.have} z ${st.total}`;
       return h("th", { scope: "col", class: "ctr dev" }, dev.name, h("div", { class: "muted small", style: "font-weight:400" }, sub));
     })));
-  const body = list.map(d => {
+  const row = d => {
     const id = "dl-" + d.sha256.slice(0, 12), isActive = d.active && d.approved;
     return h("tr", { class: S.dictSel.has(d.sha256) ? "sel" : "", "data-sha": d.sha256 },
       h("td", { class: "ctr" }, h("input", { type: "checkbox", id, checked: S.dictSel.has(d.sha256), "aria-label": `Zaznacz: ${d.title || d.name}`,
@@ -5166,7 +5168,7 @@ function dictLibrary(dicts, active) {
         h("b", {}, d.title || d.name),
         d.title && d.title !== d.name && h("div", { class: "muted small" }, d.name),
         d.dropped > 0 && h("div", { class: "dwarn small" }, `⚠ Pominięto ${d.dropped} ${plPl(d.dropped, "plik", "pliki", "plików")} spoza słownika (m.in. .lua — KOReader wykonuje je jako kod).`)),
-      h("td", { class: "dlang" }, dictLangCell(d)),
+      h("td", { class: "dlang" }, dictOtherCell(d)),
       h("td", { class: "num" }, dictSizeCell(d, maxWords)),
       h("td", { class: "ctr" }, dictSrcIcon(d.source)),
       devs.map(dev => {
@@ -5174,7 +5176,17 @@ function dictLibrary(dicts, active) {
         const [sym, text] = DICT_CELL[Dicts.cellState(dev, d)];
         return h("td", { class: "cell ctr", title: text, "data-label": dev.name }, h("span", { "aria-hidden": "true" }, sym), h("span", { class: "sr" }, text));
       }));
-  });
+  };
+  // Nagłówki grup wg języka haseł (TASK-61). Dopóki katalog się wczytuje, a w bibliotece są słowniki z katalogu,
+  // języków nie znamy — lista idzie płasko, żeby nie mignęła grupa „Bez języka” z całą zawartością.
+  const known = !!dictCatById() || !list.some(d => d.source === "katalog");
+  const cols = 4 + devs.length + 1;
+  const body = known
+    ? Dicts.groupByLang(list, dictCatById(), langName).flatMap(g => [
+        h("tr", { class: "grp" }, h("th", { colspan: cols, scope: "colgroup" }, g.name || "Bez języka",
+          h("span", {}, `${g.items.length} ${plPl(g.items.length, "słownik", "słowniki", "słowników")}`))),
+        ...g.items.map(row)])
+    : list.map(row);
   const noc = devs.filter(d => !d.dicts_allowed);
   return h("section", { class: "card", id: "dict-library" },
     h("h3", { style: "margin-top:0" }, "Słowniki w panelu"),
@@ -5195,7 +5207,7 @@ function dictLibrary(dicts, active) {
           `Bez zgody: ${noc.map(d => d.name).join(", ")}. Zgodę daje się na czytniku: ${MENU_PATH} → Zgody → Synchronizuj słowniki.`)]);
 }
 
-// Katalog jako tabela (TASK-60): ☐ · Słownik · Para · Hasła · Źr. (monogram pochodzenia: K = KOReader, W = WikDict,
+// Katalog jako tabela (TASK-60, TASK-61): ☐ · Język (główny pogrubiony, → drugi) · Słownik · Hasła · Źr. (monogram pochodzenia: K = KOReader, W = WikDict,
 // kd = koreader-dicts; legenda pod tabelą). Stan pobierania zostaje pod nazwą, a „pobrany” jest plakietką (po nazwie).
 const ORIGIN_MONO = { koreader: "K", wikdict: "W", "koreader-dicts": "kd" };
 function dictCatalogRow(c, have, job, maxEntries) {
@@ -5205,6 +5217,8 @@ function dictCatalogRow(c, have, job, maxEntries) {
   return h("tr", { class: "dcat" + (S.dictPick.has(c.id) && !busy ? " sel" : ""), "data-dict": c.id },
     h("td", { class: "ctr" }, h("input", { type: "checkbox", id, checked: S.dictPick.has(c.id) && !busy, disabled: busy, "aria-label": `Zaznacz: ${c.name}`,
       onchange: ev => { if (ev.target.checked) S.dictPick.add(c.id); else S.dictPick.delete(c.id); render(); document.getElementById(id)?.focus(); } })),
+    h("td", { class: "dlang" }, h("span", { class: "l1" }, h("b", {}, langName(c.lang_in)),
+      c.lang_in !== c.lang_out && h("span", { class: "in" }, "→ " + langName(c.lang_out)))),
     h("td", { class: "dname", title: c.license ? "Licencja: " + c.license : null },
       h("b", {}, c.name), have && h("span", { class: "badge" }, " pobrany"),
       busy && h("div", { class: "small", role: "status" },
@@ -5212,7 +5226,6 @@ function dictCatalogRow(c, have, job, maxEntries) {
         Dicts.jobText(job, fmtSize)),
       failed && h("div", { class: "err small", role: "alert" }, `Nie udało się: ${job.error} `,
         h("button", { type: "button", class: "linkbtn", onclick: () => startDictJobs([c]) }, "Spróbuj ponownie"))),
-    h("td", { class: "dlang" }, c.lang_in === c.lang_out ? langName(c.lang_in) : `${langName(c.lang_in)} → ${langName(c.lang_out)}`),
     h("td", { class: "num" }, c.entries > 0
       ? h("div", { class: "dnum", title: hasWords(c.entries) }, h("span", { class: "dn1" }, Dicts.shortCount(c.entries)), h("i", { class: "dbar", style: `width:${Dicts.logBar(c.entries, maxEntries)}%` }))
       : h("span", { class: "muted" }, "—")),
@@ -5327,7 +5340,7 @@ function dictCatalogPane(inSheet) {
     !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz języki „z” albo „na” (możesz kilka) albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
       : hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
       : [h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix pmx dense dtable dcattable", "aria-label": "Katalog słowników" },
-          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ctr" }, h("span", { class: "sr" }, "Zaznacz")), h("th", { scope: "col", class: "dname" }, "Słownik"), h("th", { scope: "col" }, "Para"),
+          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ctr" }, h("span", { class: "sr" }, "Zaznacz")), h("th", { scope: "col" }, "Język"), h("th", { scope: "col", class: "dname" }, "Słownik"),
             h("th", { scope: "col", class: "num" }, "Hasła"), h("th", { scope: "col", class: "ctr", title: "Skąd pochodzi pozycja katalogu" }, "Źr."))),
           h("tbody", {}, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id], maxEntries)))))),
         h("p", { class: "muted small dlegend" }, Dicts.ORIGINS.map(([id, label]) => h("span", {}, h("span", { class: "mg" }, ORIGIN_MONO[id]), " " + label)))],

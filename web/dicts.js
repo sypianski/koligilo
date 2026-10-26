@@ -52,6 +52,21 @@ const Dicts = (() => {
     return c ? { a: c.lang_in, b: c.lang_out } : null;
   }
 
+  // Grupy biblioteki wg głównego języka, czyli języka haseł „z” (TASK-61): grupy A–Z po nazwie języka (nameOf: kod → nazwa),
+  // w grupie słowniki A–Z po tytule, a słowniki bez znanego języka (wgrane) w osobnej grupie na końcu (code: null).
+  function groupByLang(list, catById, nameOf) {
+    const title = d => d.title || d.name;
+    const by = new Map();
+    for (const d of list) {
+      const l = dictLangs(d, catById), code = l ? l.a : null;
+      if (!by.has(code)) by.set(code, []);
+      by.get(code).push(d);
+    }
+    const cmp = (x, y) => String(x).localeCompare(String(y), "pl");
+    return [...by].map(([code, items]) => ({ code, name: code === null ? null : nameOf(code), items: items.sort((x, y) => cmp(title(x), title(y))) }))
+      .sort((g, h) => g.code === null ? 1 : h.code === null ? -1 : cmp(g.name, h.name));
+  }
+
   // Liczba haseł skrócona do rzędu wielkości: „1,6 tys.”, „10,8 tys.”, „354 tys.”, „1,5 mln”.
   function shortCount(n) {
     n = Number(n) || 0;
@@ -123,7 +138,7 @@ const Dicts = (() => {
     return Object.keys(prev || {}).filter(id => prev[id].state !== "błąd" && !(next || {})[id]);
   }
 
-  return { ORIGINS, fold, filterCatalog, bySize, byName, sortCatalog, dictLangs, shortCount, logBar, langCounts, deviceState, cellState, jobText, running, finished };
+  return { ORIGINS, fold, filterCatalog, bySize, byName, sortCatalog, dictLangs, groupByLang, shortCount, logBar, langCounts, deviceState, cellState, jobText, running, finished };
 })();
 
 if (typeof module !== "undefined") module.exports = Dicts;
