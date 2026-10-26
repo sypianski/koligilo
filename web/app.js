@@ -30,6 +30,7 @@ const S = {
   usbBusy: null,       // id czytnika w trakcie parowania
   usbMsg: null,
   addTab: null,        // zakładka karty „Dodaj czytnik”: "usb" | "code" | "plugin" (null = zapamiętana lub domyślna, TASK-29)
+  devMenu: null,       // id czytnika z otwartym menu „⋯” (TASK-59)
   devEdit: null,       // otwarty pasek pod wierszem czytnika: {id, mode: "rename"|"forget", name, busy, error} (TASK-29)
   rvCode: "",          // wpisywany kod z czytnika
   rvFound: null,       // {name, platform, ...} po sprawdzeniu kodu
@@ -859,8 +860,9 @@ async function decide(id, approve) {
 function devicesTab() {
   const devs = S.state.devices;
   if (S.devEdit && !devs.some(d => d.id === S.devEdit.id)) S.devEdit = null; // czytnik zniknął (np. zapomniany gdzie indziej)
-  return h("section", {},
-    devs.length ? devicesTable(devs) : null,
+  if (S.devMenu && !devs.some(d => d.id === S.devMenu)) S.devMenu = null;
+  return h("section", { class: "devs-view" },
+    devs.length ? h("div", { class: "dcards" }, devs.map(deviceCard)) : null,
     addReaderCard(devs.length === 0));
 }
 
@@ -1036,90 +1038,117 @@ function verOlder(a, b) {
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
   return false;
 }
-// Zgoda na samoaktualizację pochodzi tylko z menu czytnika (PC-019) — panel jej nie ustawia, więc tu wyłącznie opis.
-function pluginCell(d) {
+// TASK-59: urządzenia jako karty (dwie kolumny, jedna poniżej 760 px) zamiast tabeli o siedmiu kolumnach:
+// wiersz tabeli miał 276–300 px, bo wersja wtyczki i zgody siedziały w jednej wąskiej kolumnie.
+// Karta mówi: kto (nazwa, KOReader), czy żyje (stan), jaka wtyczka, na co się zgodził, co dostaje.
+// Zmiana nazwy i „Zapomnij” są w menu „⋯”; pasek potwierdzenia (S.devEdit) rozwija się w karcie,
+// więc stan edycji żyje w S i odświeżanie co 3 s go nie zamyka.
+
+// Zgody czytnika jako sześć żetonów: ciągła ramka i ✓ = pozwolone, kreskowana = nie (kształt niesie stan,
+// nie kolor). Zgodę daje się wyłącznie na czytniku (menu koligilo → Zgody; PC-004, PC-018, PC-019, PC-020) —
+// panel jej nie ustawia, tylko opisuje.
+const DEV_CONSENTS = [
+  ["plugins_allowed", "Wtyczki"], ["fonts_allowed", "Czcionki"], ["dicts_allowed", "Słowniki"],
+  ["self_update_allowed", "Aktualizacja koligilo"], ["merge_after_sync", "Scalanie statystyk"], ["wallabag_after_sync", "Wallabag"],
+];
+function consentChips(d) {
+  return h("div", { class: "cchips", title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody." },
+    DEV_CONSENTS.map(([k, label]) => h("span", { class: "cc" + (d[k] ? " on" : "") },
+      label, h("span", { class: "sr" }, d[k] ? " (pozwolone na czytniku)" : " (niepozwolone na czytniku)"))));
+}
+
+// Wersja wtyczki koligilo na czytniku (TASK-49); stara wtyczka nie zgłasza numeru.
+function koligiloVer(d) {
   const cur = S.state?.server_plugin_version, v = d.plugin_version;
-  const allowed = !!d.self_update_allowed;
-  const consent = h("span", {
-    class: "muted small", style: "display:block",
-    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody → „Pozwól aktualizować koligilo”.",
-  }, allowed ? "aktualizacja: pozwolona na czytniku" : "aktualizacja: niepozwolona na czytniku");
-  // TASK-46: to samo dla scalania statystyk i słowniczka (zgoda z menu czytnika → Zgody)
-  const merge = h("span", {
-    class: "muted small", style: "display:block",
-    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody.",
-  }, d.merge_after_sync ? "scalanie statystyk: włączone na czytniku" : "scalanie statystyk: wyłączone na czytniku");
-  // TASK-45: pobieranie artykułów Wallabag (tylko poza książką, zgoda z menu czytnika)
-  const wallabag = h("span", {
-    class: "muted small", style: "display:block",
-    title: "Zgodę daje się wyłącznie na czytniku: menu koligilo → Zgody. Pobieranie rusza tylko w menedżerze plików, nigdy w trakcie czytania.",
-  }, d.wallabag_after_sync ? "Wallabag po synchronizacji: włączone na czytniku" : "Wallabag po synchronizacji: wyłączone na czytniku");
-  if (!v) return h("span", {}, h("span", { class: "muted" }, "nieznana (stara wtyczka)"), consent, merge, wallabag);
-  const old = verOlder(v, cur);
-  return h("span", {},
-    v, old && h("span", { class: "badge warn", title: `Na serwerze jest wersja ${cur}.` }, "nieaktualna"),
-    consent, merge, wallabag);
+  if (!v) return h("span", { class: "muted" }, "koligilo: nieznana wersja (stara wtyczka)");
+  return h("span", {}, "koligilo " + v,
+    verOlder(v, cur) && h("span", { class: "badge warn", title: `Na serwerze jest wersja ${cur}.` }, "nieaktualna"));
 }
 
-// TASK-29: urządzenia jako tabela — łatwo porównać wersje KOReadera i kiedy kto się synchronizował.
-// W wąskim oknie (≤ 620 px) wiersz rozpada się na „kartę” z etykietami (labelCells, jak tabele wtyczek).
-// Zmiana nazwy i „Zapomnij” otwierają pasek pod wierszem (S.devEdit), a nie systemowe okno:
-// stan edycji żyje w S, więc odświeżanie co 3 s go nie zamyka ani nie kasuje wpisanej nazwy.
-function devicesTable(devs) {
-  const rows = [];
-  for (const d of devs) {
-    rows.push(deviceRow(d));
-    if (S.devEdit && S.devEdit.id === d.id) rows.push(deviceEditRow(d));
-  }
-  const th = t => h("th", { scope: "col" }, t);
-  return h("div", { class: "card matrix-wrap", style: "margin-bottom:var(--card-gap);padding:0" },
-    labelCells(h("table", { class: "matrix devtable", "aria-label": "Urządzenia" },
-      h("thead", {}, h("tr", {}, th("Nazwa"), th("Platforma · model"), th("KOReader"), th("Wtyczka"), th("Ostatnia synchronizacja"), th("Wysłał / pobrał"),
-        h("th", { scope: "col" }, h("span", { class: "sr" }, "Akcje")))),
-      h("tbody", {}, rows))));
+// „Co czytnik dostaje” zamiast liczników z ostatniej synchronizacji (dawniej „Wysłał / pobrał 0 / 3”):
+// ile grup z katalogu jest włączonych i ile wtyczek ma przypisanych. Dane już są w /api/admin/state.
+function deviceScope(d) {
+  const cat = S.state.catalog || [], n = cat.filter(g => d.groups[g.id]).length, np = Object.keys(d.plugins || {}).length;
+  return `dostaje ${n} z ${cat.length} ${cat.length === 1 ? "grupy" : "grup"} · `
+    + (np === 0 ? "bez wtyczek" : `${np} ${plPl(np, "wtyczka", "wtyczki", "wtyczek")}`);
 }
 
-function deviceRow(d) {
-  const ls = d.last_sync, E = S.devEdit && S.devEdit.id === d.id ? S.devEdit : null;
-  const act = (mode, label, cls) => h("button", {
-    type: "button", class: cls, id: `f-dev-${d.id}-${mode}`, "aria-expanded": String(!!E && E.mode === mode),
+function deviceCard(d) {
+  const open = S.devMenu === d.id, E = S.devEdit && S.devEdit.id === d.id ? S.devEdit : null;
+  // model pomijamy, gdy powtarza nazwę („Steam Deck” obok „Linux · Steam Deck”)
+  const meta = [d.platform, d.model && d.model !== d.name ? d.model : null].filter(Boolean).join(" · ");
+  const item = (mode, label, cls) => h("button", {
+    type: "button", role: "menuitem", class: cls || "", id: `f-dev-${d.id}-${mode}`,
     "aria-label": `${label} ${d.name}`, onclick: () => devEditStart(d, mode),
   }, label);
-  return h("tr", {},
-    h("td", {}, h("b", { class: "dn" }, d.name)),
-    h("td", { class: "muted" }, [d.platform, d.model].filter(Boolean).join(" · ") || "?"),
-    h("td", {}, d.ko_version || "?"),
-    h("td", {}, pluginCell(d)),
-    h("td", {}, healthCell(d)),
-    h("td", {}, ls ? `${ls.sent} / ${ls.received}` : "—"),
-    h("td", {}, h("div", { class: "dact" }, act("rename", "Zmień nazwę", ""), act("forget", "Zapomnij", "danger"))));
+  return h("article", { class: "dcard", "aria-label": d.name },
+    h("div", { class: "dc-h" },
+      h("h3", { class: "dn" }, d.name),
+      h("span", { class: "chip-ko" }, "KOReader " + (d.ko_version || "?")),
+      h("div", { class: "dmenu" },
+        h("button", {
+          type: "button", class: "grp-more", id: `f-dev-${d.id}-menu`, "aria-haspopup": "menu", "aria-expanded": String(open),
+          "aria-label": `Operacje na urządzeniu ${d.name}`, title: "Operacje na urządzeniu",
+          onclick: ev => { ev.stopPropagation(); devMenuToggle(d); },
+        }, "⋯"),
+        open && h("div", { class: "cmenu", role: "menu", "aria-label": `Operacje na urządzeniu ${d.name}`, onkeydown: devMenuKey },
+          item("rename", "Zmień nazwę"), item("forget", "Zapomnij", "danger")))),
+    meta && h("div", { class: "muted small" }, meta),
+    h("div", {}, healthCell(d)),
+    h("div", { class: "small" }, koligiloVer(d)),
+    consentChips(d),
+    h("div", { class: "muted small", title: "Grupy ustawień włączone na tym czytniku i wtyczki, które mu przypisano. Zmienisz to w „Co synchronizować” i „Wtyczki”." }, deviceScope(d)),
+    E && deviceEditBar(d));
 }
 
-function deviceEditRow(d) {
+function deviceEditBar(d) {
   const E = S.devEdit;
   const cancel = h("button", { type: "button", id: "f-devcancel", onclick: devEditCancel }, "Anuluj");
-  const onkey = ev => { if (ev.key === "Escape") { ev.preventDefault(); devEditCancel(); } };
+  const onkey = ev => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); devEditCancel(); } };
   if (E.mode === "rename") {
-    return h("tr", { class: "x" }, h("td", { colspan: "7", onkeydown: onkey },
+    return h("div", { class: "dedit", onkeydown: onkey },
       h("form", { class: "row", onsubmit: ev => { ev.preventDefault(); devRenameSave(d); } },
         h("label", { for: "f-devname", class: "dlabel" }, "Nowa nazwa (np. „Kobo w sypialni”)"),
         h("input", { type: "text", id: "f-devname", value: E.name, autocomplete: "off", style: "max-width:300px",
           oninput: ev => { E.name = ev.target.value; } }),
         h("button", { type: "submit", class: "primary", id: "f-devsave", disabled: E.busy }, E.busy ? "Zapisuję…" : "Zapisz"),
         cancel,
-        E.error && h("span", { class: "err", role: "alert" }, E.error))));
+        E.error && h("span", { class: "err", role: "alert" }, E.error)));
   }
-  return h("tr", { class: "x" }, h("td", { colspan: "7", onkeydown: onkey },
+  return h("div", { class: "dedit", onkeydown: onkey },
     h("div", { class: "row" },
-      h("div", { style: "flex:1;min-width:240px" }, h("b", {}, `Zapomnieć „${d.name}”?`), " ",
+      h("div", { style: "flex:1;min-width:200px" }, h("b", {}, `Zapomnieć „${d.name}”?`), " ",
         "Urządzenie przestanie się synchronizować. Jego ustawienia zostaną takie, jakie są. Żeby je znowu połączyć, trzeba będzie sparować je od nowa."),
       h("button", { type: "button", class: "danger", id: "f-devforget", disabled: E.busy, onclick: () => devForget(d) }, E.busy ? "Zapominam…" : "Zapomnij"),
       cancel,
-      E.error && h("span", { class: "err", role: "alert" }, E.error))));
+      E.error && h("span", { class: "err", role: "alert" }, E.error)));
 }
+
+function devMenuToggle(d) {
+  S.devMenu = S.devMenu === d.id ? null : d.id;
+  render();
+  if (S.devMenu) document.getElementById(`f-dev-${d.id}-rename`)?.focus();
+}
+function devMenuKey(ev) {
+  const d = { ArrowDown: 1, ArrowUp: -1 }[ev.key];
+  if (d == null) return;
+  ev.preventDefault();
+  const items = [...ev.currentTarget.querySelectorAll("button")], i = items.indexOf(document.activeElement);
+  items[(i + d + items.length) % items.length].focus();
+}
+document.addEventListener("click", ev => {
+  if (S.devMenu && !ev.target.closest(".dmenu")) { S.devMenu = null; if (S.tab === "urzadzenia") render(); }
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && S.devMenu) {
+    const id = `f-dev-${S.devMenu}-menu`;
+    S.devMenu = null; render(); document.getElementById(id)?.focus();
+  }
+});
 
 // Fokus: przy zapomnieniu ląduje na „Anuluj” (nie na przycisku nieodwracalnym), przy zmianie nazwy w polu.
 function devEditStart(d, mode) {
+  S.devMenu = null;
   S.devEdit = { id: d.id, mode, name: d.name, busy: false, error: null };
   render();
   const el = document.getElementById(mode === "rename" ? "f-devname" : "f-devcancel");
@@ -1131,7 +1160,7 @@ function devEditCancel() {
   const E = S.devEdit;
   S.devEdit = null;
   render();
-  if (E) document.getElementById(`f-dev-${E.id}-${E.mode}`)?.focus(); // wróć na przycisk, który otworzył pasek
+  if (E) document.getElementById(`f-dev-${E.id}-menu`)?.focus(); // wróć na „⋯”, z którego otwarto pasek
 }
 
 function serverURL() {
@@ -5229,7 +5258,7 @@ function showTab(id) {
   const changed = S.tab !== id;
   S.tab = id;
   history.replaceState(null, "", "#" + id);
-  if (changed) { app.scrollTop = 0; S.devEdit = null; S.addSheet = null; S.dictSheet = false; S.dictTab = "cat"; }
+  if (changed) { app.scrollTop = 0; S.devEdit = null; S.devMenu = null; S.addSheet = null; S.dictSheet = false; S.dictTab = "cat"; }
   if (id === "konta" || id === "wtyczki" || id === "czcionki" || id === "slowniki") return refresh();
   render();
 }

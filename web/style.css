@@ -820,49 +820,43 @@ details.explain[open] > summary { margin-bottom: 8px; }
 details.explain:not([open]) { padding-block: 10px; }
 details.explain > p:last-child { margin-bottom: 0; }
 
-/* urządzenia jako tabela (TASK-29) */
-table.matrix.devtable th, table.matrix.devtable td { text-align: left; padding: 11px 14px; vertical-align: middle; }
-table.matrix.devtable thead th { position: static; }
-table.matrix.devtable .dn { font-size: 15.5px; }
-table.matrix.devtable .hcell { white-space: nowrap; }
-table.matrix.devtable .dact { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
-table.matrix.devtable tr.x td { background: var(--warn-soft); }
-table.matrix.devtable tr.x .row { gap: 10px; }
-/* zawartość paska (komórka colspan) nie może poszerzać kolumn tabeli: width 0 + min-width 100% */
-table.matrix.devtable td[colspan] > .row, table.matrix.devtable td[colspan] > form { width: 0; min-width: 100%; }
+/* urządzenia jako karty (TASK-59): dwie kolumny, jedna poniżej 760 px; gęściej niż reszta panelu (14 px), tylko w tym widoku */
+.devs-view { font-size: 14px; }
+.dcards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: var(--card-gap); }
+.dcard { position: relative; background: var(--surface); border: 2px solid var(--rule); border-radius: 10px; padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dcard .dc-h { display: flex; align-items: center; gap: 8px; }
+.dcard .dn { margin: 0; font-size: 15.5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chip-ko { font-size: 12px; border: 1.5px solid var(--hair); border-radius: 99px; padding: 0 8px; color: var(--subtext); white-space: nowrap; flex: none; }
+.dmenu { position: relative; flex: none; }
+.dcard .cmenu { min-width: 170px; }
+.dcard .cmenu button.danger { color: var(--err); }
+.dcard .grp-more { margin-left: 0; }
+.cchips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.cc { font-size: 12px; padding: 0 8px; border-radius: 99px; border: 1.5px dashed var(--hair); color: var(--subtext); white-space: nowrap; }
+.cc.on { border: 2px solid var(--rule); color: var(--text); font-weight: 600; }
+.cc.on::before { content: "✓ "; }
+.dedit { margin: 8px -14px -10px; padding: 10px 14px; background: var(--warn-soft); border-top: 2px solid var(--rule); border-radius: 0 0 8px 8px; }
+.dedit .row { gap: 10px; }
+@media (max-width: 760px) { .dcards { grid-template-columns: minmax(0, 1fr); } }
 .dlabel { font-weight: 600; }
 
 /* tabele wtyczek w wąskim oknie: wiersz = „karta”, komórki z etykietą kolumny (labelCells w app.js).
    Nagłówek zostaje dla czytników ekranu, tylko niewidoczny. Próg 620 px — tyle (zmierzone)
    potrzebują sześć kolumn, zanim zaczną się ucinać. */
 @media (max-width: 620px) {
-  table.matrix.plugins thead,
-  table.matrix.devtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  table.matrix.plugins, table.matrix.plugins tbody, table.matrix.plugins tr,
-  table.matrix.devtable, table.matrix.devtable tbody, table.matrix.devtable tr { display: block; }
-  table.matrix.plugins tr,
-  table.matrix.devtable tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
-  table.matrix.plugins tr:last-child,
-  table.matrix.devtable tr:last-child { border-bottom: 0; }
-  table.matrix.plugins td,
-  table.matrix.devtable td { display: grid; grid-template-columns: minmax(7.5em, 38%) minmax(0, 1fr); gap: 8px; padding: 3px 0; border: 0; text-align: left; }
-  table.matrix.plugins td::before,
-  table.matrix.devtable td::before { content: attr(data-label); color: var(--subtext); font-size: 12.5px; }
-  table.matrix.plugins td:first-child,
-  table.matrix.devtable td:first-child { display: block; font-size: 15px; padding-bottom: 4px; }
-  table.matrix.plugins td:first-child::before,
-  table.matrix.devtable td:first-child::before { content: none; }
-  table.matrix.plugins td:empty,
-  table.matrix.devtable td:empty { display: none; }
-  table.matrix.plugins td button,
-  table.matrix.devtable td button { justify-self: start; }
+  table.matrix.plugins thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  table.matrix.plugins, table.matrix.plugins tbody, table.matrix.plugins tr { display: block; }
+  table.matrix.plugins tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  table.matrix.plugins tr:last-child { border-bottom: 0; }
+  table.matrix.plugins td { display: grid; grid-template-columns: minmax(7.5em, 38%) minmax(0, 1fr); gap: 8px; padding: 3px 0; border: 0; text-align: left; }
+  table.matrix.plugins td::before { content: attr(data-label); color: var(--subtext); font-size: 12.5px; }
+  table.matrix.plugins td:first-child { display: block; font-size: 15px; padding-bottom: 4px; }
+  table.matrix.plugins td:first-child::before { content: none; }
+  table.matrix.plugins td:empty { display: none; }
+  table.matrix.plugins td button { justify-self: start; }
 }
 
-@media (max-width: 620px) {
-  table.matrix.devtable td[colspan] { display: block; }
-  table.matrix.devtable td[colspan]::before { content: none; }
-  table.matrix.devtable .dact { justify-content: flex-start; }
-}
 
 /* „Dodaj czytnik” (TASK-29) */
 code { overflow-wrap: anywhere; } /* długi adres pluginu nie poszerza karty w wąskim oknie */
