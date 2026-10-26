@@ -1129,8 +1129,11 @@ ul.plain.fam-files { margin: 6px 0 0 18px; }
 .pmx.dtable thead th { text-align: left; }
 .pmx.dtable thead th.ctr, .dtable td.ctr { text-align: center; width: 1%; white-space: nowrap; }
 .pmx.dtable thead th.num, .dtable td.num { text-align: right; white-space: nowrap; }
-.dtable th.dev { min-width: 6.5em; white-space: normal; }
-.dtable .dname { white-space: normal; min-width: 11em; }
+/* szerokości: nazwa bierze całą wolną szerokość (width: 100%), reszta kolumn tyle, ile ma treść (width: 1% + nowrap) */
+.pmx.dtable td.dname, .pmx.dtable th.dname { width: 100%; min-width: 12em; white-space: normal; }
+.pmx.dtable td.dlang, .pmx.dtable td.num, .pmx.dtable td.cell, .pmx.dtable th.num, .pmx.dtable th.dev, .pmx.dtable th:not(.dname) { width: 1%; }
+.pmx.dtable thead th.dev { white-space: normal; min-width: 5em; }
+.pmx.dtable td.cell { min-width: 0; padding-left: 4px; padding-right: 4px; }
 .dtable .dlang { white-space: nowrap; }
 .dtable .dst { display: block; line-height: 1.3; }
 .dtable .dst i { display: inline-block; width: 2.1em; color: var(--subtext); font-size: 11px; font-weight: 600; font-style: normal; }

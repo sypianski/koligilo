@@ -5148,7 +5148,7 @@ function dictLibrary(dicts, active) {
   allBox.indeterminate = sel.length > 0 && !allOn; // tylko właściwość, nie atrybut
   const head = h("thead", {}, h("tr", {},
     h("th", { scope: "col", class: "ctr" }, allBox),
-    h("th", { scope: "col" }, "Słownik"),
+    h("th", { scope: "col", class: "dname" }, "Słownik"),
     h("th", { scope: "col" }, "Język"),
     h("th", { scope: "col", class: "num" }, "Hasła / rozmiar"),
     h("th", { scope: "col", class: "ctr", title: "Skąd słownik jest w panelu" }, "Źr."),
@@ -5327,7 +5327,7 @@ function dictCatalogPane(inSheet) {
     !filtered ? h("p", { class: "muted", id: "dict-prompt" }, "Wybierz języki „z” albo „na” (możesz kilka) albo wpisz nazwę — pokażę pasujące słowniki, największe pierwsze.")
       : hits.length === 0 ? h("p", { class: "muted" }, "Nic nie pasuje do filtrów.")
       : [h("div", { class: "matrix-wrap" }, labelCells(h("table", { class: "matrix pmx dense dtable dcattable", "aria-label": "Katalog słowników" },
-          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ctr" }, h("span", { class: "sr" }, "Zaznacz")), h("th", { scope: "col" }, "Słownik"), h("th", { scope: "col" }, "Para"),
+          h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "ctr" }, h("span", { class: "sr" }, "Zaznacz")), h("th", { scope: "col", class: "dname" }, "Słownik"), h("th", { scope: "col" }, "Para"),
             h("th", { scope: "col", class: "num" }, "Hasła"), h("th", { scope: "col", class: "ctr", title: "Skąd pochodzi pozycja katalogu" }, "Źr."))),
           h("tbody", {}, shown.map(c => dictCatalogRow(c, haveIds.has(c.id), S.dictJobs[c.id], maxEntries)))))),
         h("p", { class: "muted small dlegend" }, Dicts.ORIGINS.map(([id, label]) => h("span", {}, h("span", { class: "mg" }, ORIGIN_MONO[id]), " " + label)))],
